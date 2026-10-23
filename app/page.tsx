@@ -25,6 +25,8 @@ import {
   CardEfficiencyResult,
   SavedSquad,
   SquadSlot,
+  SystemRules,
+  DEFAULT_SYSTEM_RULES,
   formatBpKorean,
   getPositionToneClass,
 } from "@/lib/fclab-types";
@@ -102,6 +104,11 @@ export default function FClabAppPage() {
   // Bookmarked players stored in localStorage
   const [bookmarkedCards, setBookmarkedCards] = useState<PlayerCard[]>([]);
 
+  // Dynamic Game Rules (Self-Updating Architecture: Crawler + Match Heuristics)
+  const [rules, setRules] = useState<SystemRules>(DEFAULT_SYSTEM_RULES);
+  const [syncingRules, setSyncingRules] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+
   // Dashboard payload from Node.js server engine
   const [dashboard, setDashboard] = useState<DashboardState>({
     metaCount: 0,
@@ -114,6 +121,37 @@ export default function FClabAppPage() {
     positionWeights: {},
   });
   const [loadingDashboard, setLoadingDashboard] = useState(true);
+
+  const fetchRules = useCallback(async () => {
+    try {
+      const res = await fetch("/api/fclab/rules");
+      const json = await res.json();
+      if (json.ok && json.rules) {
+        setRules(json.rules);
+      }
+    } catch {
+      // ignore transient error
+    }
+  }, []);
+
+  const handleSyncRulesFromWeb = async () => {
+    setSyncingRules(true);
+    setSyncMessage(null);
+    try {
+      const res = await fetch("/api/fclab/rules/sync", { method: "POST" });
+      const json = await res.json();
+      if (json.ok && json.rules) {
+        setRules(json.rules);
+        setSyncMessage(
+          `동기화 완료 (급여 ${json.rules.salaryCap} · 최대 +${json.rules.maxEnhanceLevel}강)`
+        );
+      }
+    } catch {
+      setSyncMessage("동기화 중 일시적 오류가 발생했습니다.");
+    } finally {
+      setSyncingRules(false);
+    }
+  };
 
   const fetchDashboard = useCallback(async () => {
     setLoadingDashboard(true);
@@ -131,6 +169,9 @@ export default function FClabAppPage() {
           nexonKeyPreview: json.nexon_key_preview || "미설정",
           positionWeights: json.position_weights || {},
         });
+        if (json.system_rules) {
+          setRules(json.system_rules);
+        }
       }
     } catch {
       // ignore transient error
@@ -140,6 +181,7 @@ export default function FClabAppPage() {
   }, []);
 
   useEffect(() => {
+    fetchRules();
     fetchDashboard();
     try {
       const saved = localStorage.getItem("fclab_bookmarks_v1");
@@ -149,7 +191,7 @@ export default function FClabAppPage() {
     } catch {
       // ignore storage error
     }
-  }, [fetchDashboard]);
+  }, [fetchRules, fetchDashboard]);
 
   const handleToggleBookmark = (card: PlayerCard) => {
     setBookmarkedCards((prev) => {
@@ -264,18 +306,41 @@ export default function FClabAppPage() {
           </button>
         </form>
 
-        {/* Zone 3: Server Engine & Data Pipeline Status */}
-        <div className="flex items-center gap-2.5 shrink-0">
-          <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs font-mono tabular-nums">
+        {/* Zone 3: Server Engine & Self-Updating Rules Status */}
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs font-mono tabular-nums">
+            <span className="text-slate-400">인게임 룰:</span>
+            <span className="text-emerald-400 font-semibold">
+              급여 {rules.salaryCap} FP
+            </span>
+            <span className="text-slate-700">·</span>
+            <span className="text-amber-300 font-semibold">
+              최대 +{rules.maxEnhanceLevel}강
+            </span>
+            <button
+              type="button"
+              onClick={handleSyncRulesFromWeb}
+              disabled={syncingRules}
+              title="공식 스쿼드메이커/데이터센터 기준 최신 급여 상한선 및 최대 강화 단계 동기화"
+              className="ml-1 px-2 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-[11px] text-emerald-300 flex items-center gap-1 transition-colors whitespace-nowrap"
+            >
+              <RefreshCw
+                className={`w-3 h-3 ${syncingRules ? "animate-spin" : ""}`}
+              />
+              최신 메타 동기화
+            </button>
+          </div>
+
+          <div className="hidden 2xl:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs font-mono tabular-nums">
             <Database className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="text-slate-400">공식 메타:</span>
+            <span className="text-slate-400">메타:</span>
             <span className="text-slate-200 font-semibold">
               {dashboard.metaCount > 0
                 ? `${dashboard.metaCount.toLocaleString()}명`
                 : "동기화 중"}
             </span>
             <span className="text-slate-700">|</span>
-            <span className="text-slate-400">크롤링 캐시:</span>
+            <span className="text-slate-400">캐시:</span>
             <span className="text-emerald-400 font-semibold">
               {dashboard.cachedPlayerCount}장
             </span>
@@ -418,7 +483,7 @@ export default function FClabAppPage() {
                         onClick={() => setActiveTab("squad")}
                         className="px-4 py-2.5 rounded-lg bg-[#0B0F17] hover:bg-slate-800 border border-slate-700 text-slate-200 font-semibold text-sm flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
                       >
-                        270급여 스쿼드 빌더
+                        {rules.salaryCap}급여 스쿼드 빌더
                       </button>
                       <button
                         type="button"
@@ -427,14 +492,32 @@ export default function FClabAppPage() {
                       >
                         시즌/강화 가성비 비교
                       </button>
+                      <button
+                        type="button"
+                        onClick={handleSyncRulesFromWeb}
+                        disabled={syncingRules}
+                        className="px-3.5 py-2.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 font-semibold text-xs flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                      >
+                        <RefreshCw
+                          className={`w-3.5 h-3.5 ${
+                            syncingRules ? "animate-spin" : ""
+                          }`}
+                        />
+                        최신 메타 동기화 (급여 {rules.salaryCap} · +{rules.maxEnhanceLevel}강)
+                      </button>
                     </div>
+                    {syncMessage && (
+                      <p className="text-xs font-mono text-emerald-400 pt-1">
+                        {syncMessage}
+                      </p>
+                    )}
                   </div>
 
                   {/* Server Architecture & Connection Status Card */}
                   <div className="lg:col-span-5 bg-[#0B0F17]/90 border border-slate-800 rounded-xl p-4 space-y-3">
                     <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
                       <span className="text-xs font-mono uppercase tracking-wider text-emerald-400">
-                        SERVER-SIDE NODE.JS ENGINE STATUS
+                        SELF-UPDATING ENGINE &amp; RULES STATUS
                       </span>
                       <button
                         type="button"
@@ -454,14 +537,14 @@ export default function FClabAppPage() {
                       <div className="flex items-start justify-between gap-2 p-2 rounded bg-[#131B2E]/70">
                         <div>
                           <div className="font-semibold text-slate-200">
-                            1. 넥슨 공식 메타 API (SPID / 시즌 / 포지션)
+                            1. 무인 자율 동기화 인게임 규칙 (SystemRules)
                           </div>
                           <div className="text-slate-400 text-[11px]">
-                            公開 엔드포인트 (API 키 불필요 · 서버 자동 동기화)
+                            웹 크롤러 + 공식경기 선발 11명 매치 휴리스틱스 자동 갱신
                           </div>
                         </div>
                         <span className="font-mono text-emerald-400 font-semibold whitespace-nowrap">
-                          {dashboard.metaCount.toLocaleString()}명 로드됨
+                          {rules.salaryCap} FP / +{rules.maxEnhanceLevel}강 ({rules.syncSource})
                         </span>
                       </div>
 
@@ -471,7 +554,7 @@ export default function FClabAppPage() {
                             2. FC 온라인 데이터센터 실시간 크롤러
                           </div>
                           <div className="text-slate-400 text-[11px]">
-                            34개 세부 능력치 + 강화별 BP 시세 실시간 수집
+                            34개 세부 능력치 + 미등록 선수 급여(Salary) 온디맨드 수집
                           </div>
                         </div>
                         <span className="font-mono text-emerald-400 font-semibold whitespace-nowrap">
@@ -512,14 +595,14 @@ export default function FClabAppPage() {
                     id: "player" as LabTab,
                     title: "1. Player Lab",
                     sub: "선수 연구소",
-                    desc: "실시간 34개 세부 스탯, 강화(+1~+13)·팀컬러 시뮬레이터, 30일 시세 추이",
+                    desc: `실시간 34개 세부 스탯, 강화(+1~+${rules.maxEnhanceLevel})·팀컬러 시뮬레이터, 30일 시세 추이`,
                     metric: `${dashboard.cachedPlayerCount}장 실시간 분석 준비`,
                   },
                   {
                     id: "squad" as LabTab,
                     title: "2. Squad Lab",
                     sub: "스쿼드 빌더",
-                    desc: "270 급여 캡 검증, 총 BP 예산 관리, 포지션 약점 진단 및 대체 선수 추천",
+                    desc: `${rules.salaryCap} 급여 캡 검증, 총 BP 예산 관리, 포지션 약점 진단 및 대체 선수 추천`,
                     metric: `${dashboard.savedSquads.length}개 저장 스쿼드`,
                   },
                   {
@@ -540,7 +623,7 @@ export default function FClabAppPage() {
                     id: "match" as LabTab,
                     title: "5. Match Lab",
                     sub: "전적 분석실",
-                    desc: "넥슨 Open API 실경기 텔레메트리 수집 및 3단계 전술/스쿼드 처방",
+                    desc: "넥슨 Open API 실경기 텔레메트리 수집 및 매치 휴리스틱스 룰 자동 역추적",
                     metric: dashboard.nexonKeyConfigured
                       ? "실시간 조회 가능"
                       : "서버 API 키 등록 필요",
@@ -741,6 +824,7 @@ export default function FClabAppPage() {
             <PlayerLabView
               initialSpid={targetPlayerSpid}
               initialQuery={targetPlayerQuery}
+              rules={rules}
               bookmarkedSpids={bookmarkedCards.map((c) => c.spid)}
               onToggleBookmark={handleToggleBookmark}
               onSendToEfficiencyLab={openPlayerInEfficiencyLab}
@@ -753,6 +837,7 @@ export default function FClabAppPage() {
             <SquadLabView
               savedSquads={dashboard.savedSquads}
               externalSlots={importedSquadSlots}
+              rules={rules}
               onRefreshSquads={fetchDashboard}
               onInspectPlayerInLab={openPlayerInPlayerLab}
             />
@@ -763,6 +848,7 @@ export default function FClabAppPage() {
               initialPlayerName={targetEfficiencyName}
               initialPosition={targetEfficiencyPos}
               positionWeightsMap={dashboard.positionWeights}
+              rules={rules}
               onInspectInPlayerLab={openPlayerInPlayerLab}
             />
           )}
@@ -771,6 +857,7 @@ export default function FClabAppPage() {
             <PlayerProfileLabView
               initialSpid={targetProfileSpid}
               initialCompareSpid={targetProfileCompareSpid}
+              rules={rules}
               onInspectInPlayerLab={openPlayerInPlayerLab}
               onSendToEfficiencyLab={openPlayerInEfficiencyLab}
             />
@@ -780,6 +867,8 @@ export default function FClabAppPage() {
             <MatchLabView
               nexonKeyConfigured={dashboard.nexonKeyConfigured}
               nexonKeyPreview={dashboard.nexonKeyPreview}
+              rules={rules}
+              onRulesUpdated={setRules}
               onImportStartingXIToSquadLab={(slots) => {
                 setImportedSquadSlots(slots);
                 setActiveTab("squad");
@@ -960,7 +1049,7 @@ export default function FClabAppPage() {
                       Node.js 분석 엔진 (/lib/server/fclab-engine.ts)
                     </div>
                     <p className="text-xs text-slate-400 leading-relaxed">
-                      포지션별 가중치 기반 실성능(Core Score), 로그 스케일 가성비 지수, 17종 전술 아키타입 적합도, 스쿼드 270 급여 및 약점 보강 추천 알고리즘을 서버에서 수행합니다.
+                      포지션별 가중치 기반 실성능(Core Score), 로그 스케일 가성비 지수, 17종 전술 아키타입 적합도, 동적 급여 상한({rules.salaryCap} FP) 및 최대 강화(+{rules.maxEnhanceLevel}강) 자율 동기화·약점 보강 추천 알고리즘을 서버에서 수행합니다.
                     </p>
                   </div>
 

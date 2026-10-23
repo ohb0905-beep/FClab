@@ -9,7 +9,10 @@ import {
   SavedSquad,
   SquadAnalysisResult,
   SquadReplacementRecommendation,
-  ENHANCEMENT_BONUS_MAP,
+  SystemRules,
+  DEFAULT_ENHANCE_OVR_BOOSTS,
+  expandEnhanceOvrBoosts,
+  getEnhanceOvrBoost,
   formatBpKorean,
 } from "@/lib/fclab-types";
 
@@ -373,6 +376,7 @@ interface FClabStore {
   cards: Record<number, PlayerCard>;
   priceHistory: Record<string, PriceHistoryData>;
   savedSquads: SavedSquad[];
+  systemRules: SystemRules;
   seeded: boolean;
   updatedAt: string;
 }
@@ -383,12 +387,59 @@ function nowIso(): string {
   return new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
 }
 
+function createInitialSystemRules(): SystemRules {
+  return {
+    salaryCap: 310,
+    maxEnhanceLevel: 13,
+    enhanceOvrBoosts: [...DEFAULT_ENHANCE_OVR_BOOSTS],
+    lastSyncedAt: nowIso(),
+    syncSource: "initial",
+  };
+}
+
+function normalizeSystemRules(raw?: Partial<SystemRules> | null): SystemRules {
+  const initial = createInitialSystemRules();
+  if (!raw) return initial;
+  const salaryCap = Math.max(310, Number(raw.salaryCap || 310));
+  const maxEnhanceLevel = Math.max(
+    13,
+    Math.min(20, Number(raw.maxEnhanceLevel || 13))
+  );
+  const baseBoosts =
+    Array.isArray(raw.enhanceOvrBoosts) && raw.enhanceOvrBoosts.length >= 13
+      ? raw.enhanceOvrBoosts
+      : DEFAULT_ENHANCE_OVR_BOOSTS;
+  const enhanceOvrBoosts = expandEnhanceOvrBoosts(maxEnhanceLevel, baseBoosts);
+  const syncSource =
+    raw.syncSource === "crawler" ||
+    raw.syncSource === "match_heuristics" ||
+    raw.syncSource === "initial"
+      ? raw.syncSource
+      : "initial";
+  return {
+    salaryCap,
+    maxEnhanceLevel,
+    enhanceOvrBoosts,
+    lastSyncedAt: raw.lastSyncedAt || nowIso(),
+    syncSource,
+  };
+}
+
 function loadStore(): FClabStore {
   if (memoryStore) return memoryStore;
   try {
     if (fs.existsSync(CACHE_FILE_PATH)) {
       const raw = fs.readFileSync(CACHE_FILE_PATH, "utf-8");
-      memoryStore = JSON.parse(raw) as FClabStore;
+      const parsed = JSON.parse(raw) as FClabStore;
+      parsed.systemRules = normalizeSystemRules(parsed.systemRules);
+      if (Array.isArray(parsed.savedSquads)) {
+        for (const sq of parsed.savedSquads) {
+          if (!sq.salary_cap || sq.salary_cap < parsed.systemRules.salaryCap) {
+            sq.salary_cap = parsed.systemRules.salaryCap;
+          }
+        }
+      }
+      memoryStore = parsed;
       return memoryStore;
     }
   } catch {
@@ -402,6 +453,7 @@ function loadStore(): FClabStore {
     cards: {},
     priceHistory: {},
     savedSquads: [],
+    systemRules: createInitialSystemRules(),
     seeded: false,
     updatedAt: nowIso(),
   };
@@ -416,6 +468,48 @@ function saveStore(): void {
   } catch {
     // ignore write error on read-only fs
   }
+}
+
+export function getSystemRules(): SystemRules {
+  const store = loadStore();
+  store.systemRules = normalizeSystemRules(store.systemRules);
+  return store.systemRules;
+}
+
+export function updateSystemRules(partial: Partial<SystemRules>): SystemRules {
+  const store = loadStore();
+  const current = getSystemRules();
+  const nextSalaryCap =
+    partial.salaryCap !== undefined
+      ? Math.max(current.salaryCap, Number(partial.salaryCap))
+      : current.salaryCap;
+  const nextMaxEnhance =
+    partial.maxEnhanceLevel !== undefined
+      ? Math.max(
+          current.maxEnhanceLevel,
+          Math.min(20, Number(partial.maxEnhanceLevel))
+        )
+      : current.maxEnhanceLevel;
+  const baseBoosts = partial.enhanceOvrBoosts || current.enhanceOvrBoosts;
+  const nextBoosts = expandEnhanceOvrBoosts(nextMaxEnhance, baseBoosts);
+
+  store.systemRules = {
+    salaryCap: nextSalaryCap,
+    maxEnhanceLevel: nextMaxEnhance,
+    enhanceOvrBoosts: nextBoosts,
+    lastSyncedAt: partial.lastSyncedAt || nowIso(),
+    syncSource: partial.syncSource || current.syncSource,
+  };
+
+  // Keep saved squads' salary cap aligned when cap expands
+  for (const sq of store.savedSquads) {
+    if (sq.salary_cap < nextSalaryCap) {
+      sq.salary_cap = nextSalaryCap;
+    }
+  }
+
+  saveStore();
+  return store.systemRules;
 }
 
 function cleanApiKeyString(raw: string): string {
@@ -1050,9 +1144,169 @@ function getStatWithBonus(
   teamColorBonus = 0,
   fallbackOvr = 105
 ): number {
+  const rules = getSystemRules();
   const raw = stats[statName] ?? Math.max(70, fallbackOvr - 5);
-  const enhAdd = ENHANCEMENT_BONUS_MAP[Math.max(1, Math.min(13, grade))] ?? 0;
+  const clampedGrade = Math.max(1, Math.min(rules.maxEnhanceLevel, grade));
+  const enhAdd = getEnhanceOvrBoost(clampedGrade, rules.enhanceOvrBoosts);
   return Number(raw) + enhAdd + Number(teamColorBonus);
+}
+
+export async function syncGameRulesFromWeb(): Promise<SystemRules> {
+  const current = getSystemRules();
+  let detectedSalaryCap = current.salaryCap;
+  let detectedMaxEnhance = current.maxEnhanceLevel;
+
+  try {
+    const [squadMakerResp, datacenterResp] = await Promise.all([
+      fetch("https://fconline.nexon.com/datacenter/squadmaker", {
+        headers: { "User-Agent": USER_AGENT },
+        cache: "no-store",
+      }).catch(() => null),
+      fetch("https://fconline.nexon.com/datacenter", {
+        headers: { "User-Agent": USER_AGENT },
+        cache: "no-store",
+      }).catch(() => null),
+    ]);
+
+    const htmlParts: string[] = [];
+    if (squadMakerResp && squadMakerResp.ok) {
+      htmlParts.push(await squadMakerResp.text());
+    }
+    if (datacenterResp && datacenterResp.ok) {
+      htmlParts.push(await datacenterResp.text());
+    }
+    const combinedHtml = htmlParts.join("\n");
+
+    if (combinedHtml.length > 200) {
+      const salaryPatterns = [
+        /\/\s*(2[789][05]|3[0-9][05])\b/g,
+        /max[_-]?pay["'\s:=]+(2[789][05]|3[0-9][05])\b/gi,
+        /급여[^0-9]{0,25}(2[789][05]|3[0-9][05])\b/g,
+        /<span[^>]*class="[^"]*pay[^"]*"[^>]*>\s*(2[789][05]|3[0-9][05])\s*<\/span>/gi,
+      ];
+      for (const regex of salaryPatterns) {
+        let m: RegExpExecArray | null;
+        while ((m = regex.exec(combinedHtml)) !== null) {
+          const val = Number(m[1]);
+          if (val >= 270 && val <= 400 && val % 5 === 0) {
+            if (val > detectedSalaryCap) {
+              detectedSalaryCap = val;
+            }
+          }
+        }
+      }
+
+      const enhancePatterns = [
+        /<option[^>]*value=["']?(\d{1,2})["']?[^>]*>\s*\+?\1(?:강)?\s*<\/option>/gi,
+        /span_bp(\d{1,2})/gi,
+        /strStrong[^>]*value=["']?(\d{1,2})["']?/gi,
+      ];
+      for (const regex of enhancePatterns) {
+        let m: RegExpExecArray | null;
+        while ((m = regex.exec(combinedHtml)) !== null) {
+          const lvl = Number(m[1]);
+          if (lvl >= 10 && lvl <= 20 && lvl > detectedMaxEnhance) {
+            detectedMaxEnhance = lvl;
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore network failure and preserve existing rules
+  }
+
+  return updateSystemRules({
+    salaryCap: detectedSalaryCap,
+    maxEnhanceLevel: detectedMaxEnhance,
+    lastSyncedAt: nowIso(),
+    syncSource: "crawler",
+  });
+}
+
+export async function ensurePlayerSalaryAndMeta(
+  spid: number
+): Promise<PlayerCard | null> {
+  if (!spid || spid <= 0) return null;
+  const store = loadStore();
+  const existing = store.cards[spid];
+  if (existing && existing.salary > 0) {
+    return existing;
+  }
+
+  await syncNexonMetadata(false);
+  const seasonId = Math.floor(spid / 1000000);
+  const pid = spid % 1000000;
+
+  try {
+    const infoUrl = `https://fconline.nexon.com/DataCenter/PlayerInfo?spid=${spid}&n1Strong=1`;
+    const resp = await fetch(infoUrl, {
+      method: "GET",
+      headers: { "User-Agent": USER_AGENT },
+      cache: "no-store",
+    });
+
+    if (resp.ok) {
+      const html = await resp.text();
+      const cleanHtml = html.replace(/<script[^>]*>[\s\S]*?<\/script>/g, "");
+      const mPay = cleanHtml.match(
+        /<div class="pay_side">\s*(\d+)\s*<\/div>|<span class="pay">\s*(\d+)\s*<\/span>/
+      );
+      const mName = cleanHtml.match(/<div class="name">\s*([^<]+)\s*<\/div>/);
+      const mPos = cleanHtml.match(
+        /<span class="txt">\s*([A-Z]{2,3})\s*<\/span>\s*<span class="[^"]*value">\s*(\d+)\s*<\/span>/
+      );
+
+      if (mPay) {
+        const salaryVal = Number(mPay[1] || mPay[2] || 20);
+        const nameVal = mName ? mName[1].trim() : `선수 #${pid}`;
+        const posVal = mPos ? mPos[1].trim() : "ST";
+        const ovrVal = mPos ? Number(mPos[2]) : 105;
+        const sMeta = store.seasons[seasonId];
+
+        const quickCard: PlayerCard = {
+          spid,
+          pid,
+          name: nameVal,
+          season_id: seasonId,
+          season_code: sMeta?.season_code || String(seasonId),
+          season_name: sMeta?.class_name || String(seasonId),
+          season_img: sMeta?.season_img || "",
+          thumb_url: `https://fco.dn.nexoncdn.co.kr/live/externalAssets/common/playersAction/p${spid}.png`,
+          primary_position: posVal,
+          positions: [{ pos: posVal, ovr: ovrVal }],
+          ovr: ovrVal,
+          salary: salaryVal,
+          foot: "L4 - R5",
+          skill_moves: "★★★★☆☆",
+          height: 180,
+          weight: 75,
+          body_type: "보통",
+          birth: "",
+          team: "",
+          nation: "",
+          traits: [],
+          team_colors: [],
+          position_ovrs: { [posVal]: ovrVal },
+          stats: {},
+          prices: {},
+          bp_1: 0,
+          bp_5: 0,
+          bp_8: 0,
+          rating_score: 0,
+          rating_count: 0,
+          has_full_ability: false,
+          crawled_at: nowIso(),
+        };
+        store.cards[spid] = quickCard;
+        saveStore();
+        return quickCard;
+      }
+    }
+  } catch {
+    // fallback to crawlPlayerAbility below
+  }
+
+  return crawlPlayerAbility(spid);
 }
 
 export function computeSixFaceSummary(
@@ -1097,6 +1351,7 @@ export function evaluateCardEfficiencySync(
   teamColorBonus = 0,
   customWeights?: Record<string, number>
 ): CardEfficiencyResult {
+  const rules = getSystemRules();
   const pos = (targetPosition || card.primary_position || "ST").toUpperCase();
   const weights =
     customWeights || POSITION_WEIGHTS[pos] || POSITION_WEIGHTS["ST"];
@@ -1105,14 +1360,15 @@ export function evaluateCardEfficiencySync(
 
   const stats = card.stats || {};
   const baseOvr = Number(card.ovr || 105);
-  const enhBonus = ENHANCEMENT_BONUS_MAP[Math.max(1, Math.min(13, grade))] ?? 0;
+  const clampedGrade = Math.max(1, Math.min(rules.maxEnhanceLevel, grade));
+  const enhBonus = getEnhanceOvrBoost(clampedGrade, rules.enhanceOvrBoosts);
   const effectiveOvr = baseOvr + enhBonus + Number(teamColorBonus);
 
   let weightedSum = 0;
   const statBreakdown = [];
   for (const [statName, rawW] of Object.entries(weights)) {
     const w = rawW / totalW;
-    const val = getStatWithBonus(stats, statName, grade, teamColorBonus, baseOvr);
+    const val = getStatWithBonus(stats, statName, clampedGrade, teamColorBonus, baseOvr);
     const contrib = val * w;
     weightedSum += contrib;
     statBreakdown.push({
@@ -1126,7 +1382,7 @@ export function evaluateCardEfficiencySync(
 
   const coreScore = Number(weightedSum.toFixed(2));
   const prices = card.prices || {};
-  const gradePriceObj = prices[String(grade)] ||
+  const gradePriceObj = prices[String(clampedGrade)] ||
     prices["1"] || { bp: 0, text: "-" };
   const bpPrice = Number(gradePriceObj.bp || 0);
   const bpText = gradePriceObj.text || formatBpKorean(bpPrice);
@@ -1151,11 +1407,12 @@ export function evaluateCardEfficiencySync(
   else if (efficiencyIndex >= 46) tier = "B (하이엔드/표준)";
 
   const gradeCurve = [];
-  for (let g = 1; g <= 8; g++) {
+  for (let g = 1; g <= rules.maxEnhanceLevel; g++) {
     const gObj = prices[String(g)];
     const gBp = Number(gObj?.bp || 0);
     if (gBp <= 0) continue;
-    const gAdd = (ENHANCEMENT_BONUS_MAP[g] ?? 0) - enhBonus;
+    const gBoost = getEnhanceOvrBoost(g, rules.enhanceOvrBoosts);
+    const gAdd = gBoost - enhBonus;
     const gCore = Number((coreScore + gAdd).toFixed(2));
     const gDelta = Math.max(10, gCore - 80);
     const gLog = Math.max(3, Math.log10(Math.max(gBp, 1000)));
@@ -1164,7 +1421,7 @@ export function evaluateCardEfficiencySync(
     );
     gradeCurve.push({
       grade: g,
-      ovr: baseOvr + (ENHANCEMENT_BONUS_MAP[g] ?? 0) + Number(teamColorBonus),
+      ovr: baseOvr + gBoost + Number(teamColorBonus),
       core_score: gCore,
       bp: gBp,
       bp_text: gObj?.text || formatBpKorean(gBp),
@@ -1188,7 +1445,7 @@ export function evaluateCardEfficiencySync(
     thumb_url: card.thumb_url,
     target_position: pos,
     primary_position: card.primary_position,
-    grade,
+    grade: clampedGrade,
     team_color_bonus: teamColorBonus,
     base_ovr: baseOvr,
     effective_ovr: effectiveOvr,
@@ -1201,7 +1458,7 @@ export function evaluateCardEfficiencySync(
     efficiency_index: efficiencyIndex,
     score_per_log_bp: scorePerLogBp,
     tier,
-    six_face: computeSixFaceSummary(card, grade, teamColorBonus),
+    six_face: computeSixFaceSummary(card, clampedGrade, teamColorBonus),
     stat_breakdown: statBreakdown,
     grade_curve: gradeCurve,
     best_sweetspot_grade: bestSweetspot,
@@ -1215,6 +1472,8 @@ export function analyzePlayerProfileSync(
   grade = 1,
   teamColorBonus = 0
 ): PlayerProfileResult {
+  const rules = getSystemRules();
+  const clampedGrade = Math.max(1, Math.min(rules.maxEnhanceLevel, grade));
   const stats = card.stats || {};
   const baseOvr = Number(card.ovr || 105);
   const pos = card.primary_position || "ST";
@@ -1232,7 +1491,7 @@ export function analyzePlayerProfileSync(
     let weightedVal = 0;
     const contributors = [];
     for (const [sName, w] of Object.entries(arch.weights)) {
-      const sVal = getStatWithBonus(stats, sName, grade, teamColorBonus, baseOvr);
+      const sVal = getStatWithBonus(stats, sName, clampedGrade, teamColorBonus, baseOvr);
       weightedVal += sVal * w;
       contributors.push({ stat: sName, value: sVal, weight: w });
     }
@@ -1247,7 +1506,9 @@ export function analyzePlayerProfileSync(
     }
 
     const effOvr =
-      baseOvr + (ENHANCEMENT_BONUS_MAP[grade] ?? 0) + teamColorBonus;
+      baseOvr +
+      getEnhanceOvrBoost(clampedGrade, rules.enhanceOvrBoosts) +
+      teamColorBonus;
     const relativeRatio = (weightedVal / Math.max(80, effOvr)) * 90;
     const absBonus = Math.max(0, (weightedVal - 105) * 0.35);
     const groupBonus = arch.group === primaryGroup ? 4 : -4;
@@ -1276,7 +1537,7 @@ export function analyzePlayerProfileSync(
     .filter((k) => !k.startsWith("GK") || primaryGroup === "GK")
     .map((k) => ({
       stat: k,
-      value: getStatWithBonus(stats, k, grade, teamColorBonus, baseOvr),
+      value: getStatWithBonus(stats, k, clampedGrade, teamColorBonus, baseOvr),
     }))
     .sort((a, b) => b.value - a.value);
 
@@ -1285,7 +1546,7 @@ export function analyzePlayerProfileSync(
     name: card.name,
     season_code: card.season_code,
     primary_position: pos,
-    grade,
+    grade: clampedGrade,
     team_color_bonus: teamColorBonus,
     height: card.height || 180,
     weight: card.weight || 75,
@@ -1298,7 +1559,7 @@ export function analyzePlayerProfileSync(
     all_archetypes: archetypeScores.slice(0, 8),
     strengths: nonGkStats.slice(0, 5),
     weaknesses: nonGkStats.slice(-4).reverse(),
-    six_face: computeSixFaceSummary(card, grade, teamColorBonus),
+    six_face: computeSixFaceSummary(card, clampedGrade, teamColorBonus),
     methodology_note:
       "본 결과는 실제 인게임 플레이 행동 로그 확정 판정이 아닌, 수집된 34개 세부 능력치·신체조건·특성 가중치 행렬에 기반한 플레이 스타일 적합도 분석입니다.",
     analyzed_at: nowIso(),
@@ -1309,10 +1570,14 @@ export async function analyzeSquadAsync(
   slots: SquadSlot[],
   formation = "4-2-3-1",
   budgetBp = 50_000_000_000,
-  salaryCap = 270,
+  salaryCap?: number,
   teamColorBonus = 3
 ): Promise<SquadAnalysisResult> {
   const store = loadStore();
+  const rules = getSystemRules();
+  const effectiveSalaryCap =
+    salaryCap && salaryCap >= rules.salaryCap ? salaryCap : rules.salaryCap;
+
   const placedEvaluations = [];
   let totalSalary = 0;
   let totalBp = 0;
@@ -1333,12 +1598,18 @@ export async function analyzeSquadAsync(
   for (const slot of slots) {
     const slotPos = (slot.slot_position || "ST").toUpperCase();
     const spid = Number(slot.spid || 0);
-    const grade = Number(slot.grade || 5);
+    const grade = Math.max(
+      1,
+      Math.min(rules.maxEnhanceLevel, Number(slot.grade || 5))
+    );
     if (!spid) continue;
 
     let card: PlayerCard | null = store.cards[spid] || null;
     if (!card || !card.has_full_ability) {
       card = await crawlPlayerAbility(spid);
+    }
+    if (!card || !card.salary) {
+      card = await ensurePlayerSalaryAndMeta(spid);
     }
     if (!card) continue;
 
@@ -1417,7 +1688,7 @@ export async function analyzeSquadAsync(
   const weaknesses = [];
   const recommendations: SquadReplacementRecommendation[] = [];
   const remainingBp = Math.max(0, budgetBp - totalBp);
-  const remainingSalary = salaryCap - totalSalary;
+  const remainingSalary = effectiveSalaryCap - totalSalary;
 
   if (placedEvaluations.length > 0) {
     const sortedByCore = [...placedEvaluations].sort(
@@ -1454,7 +1725,8 @@ export async function analyzeSquadAsync(
 
       const bestAlts: SquadReplacementRecommendation[] = [];
       for (const cCard of candidates) {
-        for (const testGrade of [5, 3, 1]) {
+        for (const testGrade of [8, 5, 3, 1]) {
+          if (testGrade > rules.maxEnhanceLevel) continue;
           const cEval = evaluateCardEfficiencySync(
             cCard,
             wPos,
@@ -1497,10 +1769,10 @@ export async function analyzeSquadAsync(
   }
 
   const roleWarnings: string[] = [];
-  if (totalSalary > salaryCap) {
+  if (totalSalary > effectiveSalaryCap) {
     roleWarnings.push(
-      `현재 총 급여(${totalSalary} FP)가 설정된 급여 한도(${salaryCap} FP)를 ${
-        totalSalary - salaryCap
+      `현재 총 급여(${totalSalary} FP)가 최신 급여 상한선(${effectiveSalaryCap} FP)을 ${
+        totalSalary - effectiveSalaryCap
       } FP 초과했습니다. 풀백 또는 골키퍼 급여 조정을 권장합니다.`
     );
   }
@@ -1526,8 +1798,8 @@ export async function analyzeSquadAsync(
     formation,
     player_count: placedEvaluations.length,
     total_salary: totalSalary,
-    salary_cap: salaryCap,
-    salary_valid: totalSalary <= salaryCap,
+    salary_cap: effectiveSalaryCap,
+    salary_valid: totalSalary <= effectiveSalaryCap,
     total_bp: totalBp,
     total_bp_text: formatBpKorean(totalBp),
     budget_bp: budgetBp,
@@ -1545,6 +1817,7 @@ export async function analyzeSquadAsync(
     role_warnings: roleWarnings,
     recommendations: recommendations.slice(0, 5),
     placed_evaluations: placedEvaluations,
+    systemRules: rules,
     analyzed_at: nowIso(),
   };
 }
@@ -1572,6 +1845,7 @@ export async function ensureInitialSeed(): Promise<void> {
   }
 
   await syncNexonMetadata(false);
+  await syncGameRulesFromWeb().catch(() => null);
 
   await Promise.all(
     INITIAL_META_PLAYERS.map((name) => crawlPlayerList(name, 10))
@@ -1589,6 +1863,7 @@ export async function ensureInitialSeed(): Promise<void> {
 
   await Promise.all(topSpids.slice(0, 22).map((spid) => crawlPlayerAbility(spid)));
 
+  const currentRules = getSystemRules();
   if (store.savedSquads.length === 0) {
     const findBestSpid = (kw: string, fallbackPos: string): number => {
       const list = Object.values(store.cards)
@@ -1607,7 +1882,7 @@ export async function ensureInitialSeed(): Promise<void> {
       name: "FClab 추천 메타 스쿼드 (4-2-3-1)",
       formation: "4-2-3-1",
       budget_bp: 50_000_000_000,
-      salary_cap: 270,
+      salary_cap: currentRules.salaryCap,
       team_color_name: "단일/강화 케미 (+3)",
       team_color_bonus: 3,
       slots: [

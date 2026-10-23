@@ -9,13 +9,16 @@ import {
   AlertTriangle,
   ArrowUpRight,
   UserPlus,
-  Trash2,
 } from "lucide-react";
 import {
   PlayerCard,
   SquadSlot,
   SavedSquad,
   SquadAnalysisResult,
+  SystemRules,
+  DEFAULT_SYSTEM_RULES,
+  getEnhanceBadgeStyle,
+  getEnhanceOvrBoost,
   formatBpKorean,
   getPositionToneClass,
 } from "@/lib/fclab-types";
@@ -44,7 +47,7 @@ export const FORMATION_LAYOUTS: Record<
     { slot_id: "CAM", slot_position: "CAM", x: 50, y: 31 },
     { slot_id: "LM", slot_position: "LM", x: 20, y: 46 },
     { slot_id: "RM", slot_position: "RM", x: 80, y: 46 },
-    { slot_id: "CDM1", slot_position: "CDM", x: 50, y: 58 },
+    { slot_id: "CDM", slot_position: "CDM", x: 50, y: 57 },
     { slot_id: "LB", slot_position: "LB", x: 15, y: 74 },
     { slot_id: "CB1", slot_position: "CB", x: 38, y: 76 },
     { slot_id: "CB2", slot_position: "CB", x: 62, y: 76 },
@@ -54,8 +57,8 @@ export const FORMATION_LAYOUTS: Record<
   "4-2-2-2": [
     { slot_id: "ST", slot_position: "ST", x: 37, y: 15 },
     { slot_id: "CF", slot_position: "CF", x: 63, y: 15 },
-    { slot_id: "LW", slot_position: "CAM", x: 22, y: 34 },
-    { slot_id: "RW", slot_position: "CAM", x: 78, y: 34 },
+    { slot_id: "CAM1", slot_position: "CAM", x: 22, y: 34 },
+    { slot_id: "CAM2", slot_position: "CAM", x: 78, y: 34 },
     { slot_id: "CDM1", slot_position: "CDM", x: 36, y: 54 },
     { slot_id: "CDM2", slot_position: "CDM", x: 64, y: 54 },
     { slot_id: "LB", slot_position: "LB", x: 15, y: 74 },
@@ -65,12 +68,12 @@ export const FORMATION_LAYOUTS: Record<
     { slot_id: "GK", slot_position: "GK", x: 50, y: 90 },
   ],
   "4-3-3": [
-    { slot_id: "LW", slot_position: "LW", x: 20, y: 18 },
+    { slot_id: "LW", slot_position: "LW", x: 18, y: 20 },
     { slot_id: "ST", slot_position: "ST", x: 50, y: 14 },
-    { slot_id: "RW", slot_position: "RW", x: 80, y: 18 },
-    { slot_id: "CM1", slot_position: "CM", x: 30, y: 42 },
-    { slot_id: "CDM1", slot_position: "CDM", x: 50, y: 52 },
-    { slot_id: "CM2", slot_position: "CM", x: 70, y: 42 },
+    { slot_id: "RW", slot_position: "RW", x: 82, y: 20 },
+    { slot_id: "CM1", slot_position: "CM", x: 30, y: 44 },
+    { slot_id: "CDM", slot_position: "CDM", x: 50, y: 54 },
+    { slot_id: "CM2", slot_position: "CM", x: 70, y: 44 },
     { slot_id: "LB", slot_position: "LB", x: 15, y: 74 },
     { slot_id: "CB1", slot_position: "CB", x: 38, y: 76 },
     { slot_id: "CB2", slot_position: "CB", x: 62, y: 76 },
@@ -80,6 +83,7 @@ export const FORMATION_LAYOUTS: Record<
 };
 
 interface SquadLabViewProps {
+  rules?: SystemRules;
   savedSquads: SavedSquad[];
   externalSlots?: SquadSlot[] | null;
   onRefreshSquads: () => void;
@@ -87,6 +91,7 @@ interface SquadLabViewProps {
 }
 
 export default function SquadLabView({
+  rules = DEFAULT_SYSTEM_RULES,
   savedSquads,
   externalSlots,
   onRefreshSquads,
@@ -98,7 +103,6 @@ export default function SquadLabView({
   );
   const [formation, setFormation] = useState<string>("4-2-3-1");
   const [budgetBp, setBudgetBp] = useState<number>(50_000_000_000);
-  const [salaryCap, setSalaryCap] = useState<number>(270);
   const [teamColorBonus, setTeamColorBonus] = useState<number>(3);
   const [slots, setSlots] = useState<SquadSlot[]>([]);
 
@@ -111,6 +115,12 @@ export default function SquadLabView({
   const [pickerSearch, setPickerSearch] = useState<string>("");
   const [pickerCards, setPickerCards] = useState<PlayerCard[]>([]);
   const [pickerLoading, setPickerLoading] = useState<boolean>(false);
+  const [pickerGrade, setPickerGrade] = useState<number>(5);
+
+  const dynamicEnhanceLevels = Array.from(
+    { length: Math.max(1, rules.maxEnhanceLevel) },
+    (_, i) => i + 1
+  );
 
   // Initialize from savedSquads or externalSlots
   useEffect(() => {
@@ -126,7 +136,6 @@ export default function SquadLabView({
       setSquadName(first.name);
       setFormation(first.formation || "4-2-3-1");
       setBudgetBp(first.budget_bp || 50_000_000_000);
-      setSalaryCap(first.salary_cap || 270);
       setTeamColorBonus(first.team_color_bonus ?? 3);
       setSlots(first.slots || []);
     }
@@ -168,8 +177,21 @@ export default function SquadLabView({
   );
 
   useEffect(() => {
-    evaluateCurrentSquad(slots, formation, budgetBp, salaryCap, teamColorBonus);
-  }, [slots, formation, budgetBp, salaryCap, teamColorBonus, evaluateCurrentSquad]);
+    evaluateCurrentSquad(
+      slots,
+      formation,
+      budgetBp,
+      rules.salaryCap,
+      teamColorBonus
+    );
+  }, [
+    slots,
+    formation,
+    budgetBp,
+    rules.salaryCap,
+    teamColorBonus,
+    evaluateCurrentSquad,
+  ]);
 
   const handleChangeFormation = (newFmt: string) => {
     const layout = FORMATION_LAYOUTS[newFmt] || FORMATION_LAYOUTS["4-2-3-1"];
@@ -198,7 +220,7 @@ export default function SquadLabView({
           name: squadName,
           formation,
           budget_bp: budgetBp,
-          salary_cap: salaryCap,
+          salary_cap: rules.salaryCap,
           team_color_name: `팀컬러 +${teamColorBonus}`,
           team_color_bonus: teamColorBonus,
           slots,
@@ -270,6 +292,14 @@ export default function SquadLabView({
     FORMATION_LAYOUTS[formation] || FORMATION_LAYOUTS["4-2-3-1"];
   const evalMap = new Map(
     (analysis?.placed_evaluations || []).map((p) => [p.slot_id, p])
+  );
+
+  const activeSalaryCap = rules.salaryCap;
+  const currentTotalSalary = analysis?.total_salary || 0;
+  const isSalaryValid = currentTotalSalary <= activeSalaryCap;
+  const salaryUsagePct = Math.min(
+    100,
+    Math.round((currentTotalSalary / Math.max(1, activeSalaryCap)) * 100)
   );
 
   return (
@@ -348,7 +378,6 @@ export default function SquadLabView({
                       setSquadName(target.name);
                       setFormation(target.formation);
                       setBudgetBp(target.budget_bp);
-                      setSalaryCap(target.salary_cap);
                       setTeamColorBonus(target.team_color_bonus);
                       setSlots(target.slots);
                     }
@@ -384,18 +413,31 @@ export default function SquadLabView({
         {analysis && (
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-4 pt-4 border-t border-slate-800">
             <div className="p-3 bg-[#0B0F17] rounded-lg border border-slate-800/80">
-              <div className="text-[11px] text-slate-400">총 급여 (Salary FP)</div>
+              <div className="flex items-center justify-between text-[11px] text-slate-400">
+                <span>총 급여 (Salary FP)</span>
+                <span className="font-mono text-[10px] text-emerald-400">
+                  자동감지 한도
+                </span>
+              </div>
               <div
                 className={`text-lg font-mono font-bold tabular-nums mt-0.5 ${
-                  analysis.salary_valid ? "text-emerald-400" : "text-rose-400"
+                  isSalaryValid ? "text-emerald-400" : "text-rose-400"
                 }`}
               >
-                {analysis.total_salary} / {analysis.salary_cap} FP
+                {currentTotalSalary} / {activeSalaryCap} FP
               </div>
-              <div className="text-[11px] text-slate-500">
-                {analysis.salary_valid
-                  ? `여유 급여 ${analysis.salary_cap - analysis.total_salary} FP`
-                  : `${analysis.total_salary - analysis.salary_cap} FP 초과`}
+              <div className="mt-1.5 h-1.5 w-full rounded-full bg-slate-900 overflow-hidden">
+                <div
+                  style={{ width: `${salaryUsagePct}%` }}
+                  className={`h-full transition-all ${
+                    isSalaryValid ? "bg-emerald-500" : "bg-rose-500"
+                  }`}
+                />
+              </div>
+              <div className="text-[11px] text-slate-500 mt-1">
+                {isSalaryValid
+                  ? `여유 급여 ${activeSalaryCap - currentTotalSalary} FP`
+                  : `${currentTotalSalary - activeSalaryCap} FP 초과 (제한 ${activeSalaryCap})`}
               </div>
             </div>
 
@@ -446,7 +488,7 @@ export default function SquadLabView({
                 01. 전술 포메이션 보드 ({formation})
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                포지션 카드를 클릭해 선수를 교체하거나 강화 단계(+1~+8)를 변경하면 즉시 전력 분석이 갱신됩니다.
+                포지션 카드를 클릭해 선수를 교체하거나 강화 단계(+1~+{rules.maxEnhanceLevel}강)를 변경하면 즉시 전력 분석이 갱신됩니다.
               </p>
             </div>
             {evaluating && (
@@ -514,6 +556,7 @@ export default function SquadLabView({
               const slotObj = slots.find((s) => s.slot_id === coord.slot_id);
               const placed = evalMap.get(coord.slot_id);
               const currentGrade = slotObj?.grade || 5;
+              const badgeStyle = getEnhanceBadgeStyle(currentGrade);
 
               return (
                 <div
@@ -543,11 +586,16 @@ export default function SquadLabView({
                               Number(e.target.value)
                             )
                           }
-                          className="bg-slate-800 text-amber-300 rounded px-1 py-0.2 text-[10px] font-mono focus:outline-none"
+                          className={`rounded px-1 py-0.5 text-[10px] font-mono border focus:outline-none ${badgeStyle.className}`}
                         >
-                          {[1, 3, 5, 6, 7, 8].map((g) => (
-                            <option key={g} value={g}>
-                              +{g}강
+                          {dynamicEnhanceLevels.map((g) => (
+                            <option
+                              key={g}
+                              value={g}
+                              className="bg-[#0B0F17] text-slate-100"
+                            >
+                              +{g}강 (+
+                              {getEnhanceOvrBoost(g, rules.enhanceOvrBoosts)})
                             </option>
                           ))}
                         </select>
@@ -652,6 +700,15 @@ export default function SquadLabView({
             <h3 className="text-sm font-semibold text-slate-100">
               03. 포지션 약점 및 역할 중복 진단
             </h3>
+            {!isSalaryValid && (
+              <div className="p-3 bg-rose-950/35 border border-rose-700/60 rounded-lg text-xs text-rose-200 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <span>
+                  선발 11인 급여 합계({currentTotalSalary} FP)가 현재 인게임 급여 상한선({activeSalaryCap} FP)을{" "}
+                  <strong>{currentTotalSalary - activeSalaryCap} FP 초과</strong>했습니다.
+                </span>
+              </div>
+            )}
             {analysis?.role_warnings && analysis.role_warnings.length > 0 && (
               <div className="space-y-2">
                 {analysis.role_warnings.map((w, idx) => (
@@ -690,10 +747,10 @@ export default function SquadLabView({
           <div className="bg-[#111827] border border-slate-800 rounded-xl p-5 space-y-3">
             <div>
               <h3 className="text-sm font-semibold text-slate-100">
-                04. 예산 및 급여 맞춤형 교체 추천
+                04. 예산 및 급여({activeSalaryCap} FP) 맞춤형 교체 추천
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                단순 OVR이 아닌 해당 포지션의 핵심 능력치 상승폭과 잔여 예산을 고려한 추천 카드입니다.
+                단순 OVR이 아닌 해당 포지션의 핵심 능력치 상승폭과 잔여 예산·급여를 고려한 추천 카드입니다.
               </p>
             </div>
 
@@ -761,9 +818,31 @@ export default function SquadLabView({
         <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
           <div className="bg-[#111827] border border-slate-800 rounded-xl w-full max-w-2xl overflow-hidden shadow-2xl">
             <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-slate-100">
-                포지션({editingSlotId}) 선수 검색 및 배치
-              </h3>
+              <div className="flex items-center gap-3">
+                <h3 className="text-sm font-semibold text-slate-100">
+                  포지션({editingSlotId}) 선수 검색 및 배치
+                </h3>
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span className="text-slate-400">배치 강화:</span>
+                  <select
+                    value={pickerGrade}
+                    onChange={(e) => setPickerGrade(Number(e.target.value))}
+                    className={`rounded px-2 py-0.5 text-xs font-mono border outline-none ${
+                      getEnhanceBadgeStyle(pickerGrade).className
+                    }`}
+                  >
+                    {dynamicEnhanceLevels.map((g) => (
+                      <option
+                        key={g}
+                        value={g}
+                        className="bg-[#0B0F17] text-slate-100"
+                      >
+                        +{g}강 ({getEnhanceBadgeStyle(g).tierName})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
               <button
                 type="button"
                 onClick={() => setEditingSlotId(null)}
@@ -784,7 +863,7 @@ export default function SquadLabView({
                 />
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1"
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1 whitespace-nowrap shrink-0"
                 >
                   <Search className="w-3.5 h-3.5" />
                   검색·크롤링
@@ -831,18 +910,17 @@ export default function SquadLabView({
                       </div>
 
                       <div className="flex items-center gap-1.5">
-                        {[1, 5, 8].map((g) => (
-                          <button
-                            key={g}
-                            type="button"
-                            onClick={() =>
-                              assignCardToSlot(editingSlotId, c.spid, g)
-                            }
-                            className="px-2.5 py-1 bg-slate-800 hover:bg-emerald-600 text-slate-200 hover:text-white text-xs font-mono rounded transition-colors"
-                          >
-                            +{g}강 배치
-                          </button>
-                        ))}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            assignCardToSlot(editingSlotId, c.spid, pickerGrade)
+                          }
+                          className={`px-3 py-1 rounded border text-xs font-mono transition-colors whitespace-nowrap shrink-0 ${
+                            getEnhanceBadgeStyle(pickerGrade).className
+                          }`}
+                        >
+                          +{pickerGrade}강 배치
+                        </button>
                       </div>
                     </div>
                   ))

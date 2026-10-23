@@ -2,9 +2,12 @@ import {
   getServerNexonApiKey,
   getStoreSnapshot,
   crawlPlayerAbility,
+  ensurePlayerSalaryAndMeta,
+  getSystemRules,
+  updateSystemRules,
   syncNexonMetadata,
 } from "@/lib/server/fclab-engine";
-import { MatchAnalysisResponse } from "@/lib/fclab-types";
+import { MatchAnalysisResponse, SystemRules } from "@/lib/fclab-types";
 
 const NEXON_BASE_URL = "https://open.api.nexon.com";
 
@@ -93,7 +96,6 @@ async function nexonGet<T>(
       // ignore json parse error
     }
 
-    // Automatic backoff retry on Rate Limit (429 / OPENAPI00007) or transient 5xx
     if (
       (resp.status === 429 ||
         errCode === "OPENAPI00007" ||
@@ -133,6 +135,131 @@ async function nexonGet<T>(
   );
 }
 
+/**
+ * [요구사항 3] 실시간 매치 데이터 기반 상한선 자동 추론 (Match Heuristics)
+ * - 매치에 등장한 모든 선수의 spGrade 최댓값을 감지해 SystemRules.maxEnhanceLevel 및 enhanceOvrBoosts 자동 확장
+ * - 공식경기(matchType === 50)의 선발 11명(spPosition 0..27, 후보 28 제외) 급여 총합을 역추적하여 SystemRules.salaryCap 자동 갱신
+ */
+export async function analyzeMatchForRuleUpdates(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  matchDetails: any[],
+  fallbackMatchType = 50
+): Promise<{
+  updated: boolean;
+  rules: SystemRules;
+  detectedMaxGrade: number;
+  detectedMaxStarterSalary: number;
+  matchStarterSalaryMap: Record<string, number>;
+}> {
+  const store = getStoreSnapshot();
+  const currentRules = getSystemRules();
+  let detectedMaxGrade = currentRules.maxEnhanceLevel;
+  let detectedMaxStarterSalary = 0;
+  const matchStarterSalaryMap: Record<string, number> = {};
+
+  // 1. Collect all starter spids from official matches (matchType === 50) that are missing salary in store
+  const missingStarterSpids = new Set<number>();
+
+  for (const m of matchDetails) {
+    const mType = Number(m?.matchType ?? fallbackMatchType);
+    const minfoList = Array.isArray(m?.matchInfo) ? m.matchInfo : [];
+
+    for (const info of minfoList) {
+      const players = Array.isArray(info?.player) ? info.player : [];
+      for (const p of players) {
+        const grade = Number(p?.spGrade ?? 1);
+        if (grade > detectedMaxGrade && grade <= 20) {
+          detectedMaxGrade = grade;
+        }
+        const spid = Number(p?.spId ?? 0);
+        const spPos = Number(p?.spPosition ?? 28);
+        if (mType === 50 && spid > 0 && spPos >= 0 && spPos <= 27) {
+          if (!store.cards[spid] || !store.cards[spid].salary) {
+            missingStarterSpids.add(spid);
+          }
+        }
+      }
+    }
+  }
+
+  // On-demand crawl missing starter salaries (bounded concurrency to keep latency low)
+  const missingList = Array.from(missingStarterSpids).slice(0, 22);
+  for (let i = 0; i < missingList.length; i += 6) {
+    const batch = missingList.slice(i, i + 6);
+    await Promise.all(batch.map((spid) => ensurePlayerSalaryAndMeta(spid)));
+  }
+
+  // 2. Calculate totalStarterSalary for every Starting XI (spPosition 0..27) in official matches (matchType === 50)
+  for (const m of matchDetails) {
+    const matchId = String(m?.matchId || "");
+    const mType = Number(m?.matchType ?? fallbackMatchType);
+    const minfoList = Array.isArray(m?.matchInfo) ? m.matchInfo : [];
+
+    for (const info of minfoList) {
+      const players = Array.isArray(info?.player) ? info.player : [];
+      const starters = players.filter((p: { spId?: number; spPosition?: number }) => {
+        const spid = Number(p?.spId ?? 0);
+        const pos = Number(p?.spPosition ?? 28);
+        return spid > 0 && pos >= 0 && pos <= 27;
+      });
+
+      if (starters.length === 11) {
+        let allConfirmed = true;
+        let squadSalarySum = 0;
+        for (const st of starters) {
+          const spid = Number(st.spId);
+          const sal = Number(store.cards[spid]?.salary || 0);
+          if (sal <= 0) {
+            allConfirmed = false;
+            break;
+          }
+          squadSalarySum += sal;
+        }
+
+        if (allConfirmed && squadSalarySum > 0) {
+          if (matchId && info?.ouid) {
+            matchStarterSalaryMap[`${matchId}_${info.ouid}`] = squadSalarySum;
+          }
+          if (mType === 50 && squadSalarySum > detectedMaxStarterSalary) {
+            detectedMaxStarterSalary = squadSalarySum;
+          }
+        }
+      }
+    }
+  }
+
+  let updated = false;
+  const partialUpdate: Partial<SystemRules> = {};
+
+  if (detectedMaxGrade > currentRules.maxEnhanceLevel && detectedMaxGrade <= 20) {
+    partialUpdate.maxEnhanceLevel = detectedMaxGrade;
+    updated = true;
+  }
+
+  if (detectedMaxStarterSalary > currentRules.salaryCap && detectedMaxStarterSalary <= 450) {
+    // 5 단위 올림 보정 (예: 311~315 스쿼드 관측 시 315로 상향)
+    const roundedCap = Math.ceil(detectedMaxStarterSalary / 5) * 5;
+    partialUpdate.salaryCap = roundedCap;
+    updated = true;
+  }
+
+  let finalRules = currentRules;
+  if (updated) {
+    partialUpdate.syncSource = "match_heuristics";
+    partialUpdate.lastSyncedAt =
+      new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
+    finalRules = updateSystemRules(partialUpdate);
+  }
+
+  return {
+    updated,
+    rules: finalRules,
+    detectedMaxGrade,
+    detectedMaxStarterSalary,
+    matchStarterSalaryMap,
+  };
+}
+
 export async function analyzeUserMatchesOnServer(
   nickname: string,
   matchtype = 50,
@@ -156,7 +283,6 @@ export async function analyzeUserMatchesOnServer(
     );
   }
 
-  // Pace slightly for test_ keys (5 req/sec limit)
   if (isTestKey) {
     await sleep(220);
   }
@@ -194,7 +320,6 @@ export async function analyzeUserMatchesOnServer(
     ? matchIds.slice(0, effectiveLimit)
     : [];
 
-  // Fetch match details in rate-limit-friendly batches (3 at a time with pacing for test_ keys)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const matchDetails: any[] = [];
   const batchSize = isTestKey ? 3 : 5;
@@ -216,6 +341,12 @@ export async function analyzeUserMatchesOnServer(
       }
     }
   }
+
+  // Run Match Heuristics to detect any new maxEnhanceLevel or salaryCap updates automatically
+  const heuristicsRes = await analyzeMatchForRuleUpdates(
+    matchDetails,
+    matchtype
+  );
 
   let wins = 0;
   let draws = 0;
@@ -254,6 +385,7 @@ export async function analyzeUserMatchesOnServer(
     season_code: string;
     position: string;
     grade: number;
+    salary?: number;
     rating: number;
   }[] = [];
 
@@ -323,8 +455,13 @@ export async function analyzeUserMatchesOnServer(
     tackleTry += tTry;
     tackleSuccess += tSuc;
 
+    const matchIdStr = String(m.matchId || "");
+    const starterSalary =
+      heuristicsRes.matchStarterSalaryMap[`${matchIdStr}_${myInfo.ouid}`] ||
+      undefined;
+
     matchesList.push({
-      matchId: String(m.matchId || ""),
+      matchId: matchIdStr,
       matchDate: String(m.matchDate || ""),
       result: resStr,
       opponent: String(oppInfo?.nickname || "상대 구단주"),
@@ -336,6 +473,7 @@ export async function analyzeUserMatchesOnServer(
       effectiveShots: stEff,
       passRate: pTry > 0 ? Number(((pSuc / pTry) * 100).toFixed(1)) : 0,
       controller: String(detail.controller || "keyboard"),
+      starterTotalSalary: starterSalary,
     });
 
     const players = Array.isArray(myInfo.player) ? myInfo.player : [];
@@ -352,13 +490,14 @@ export async function analyzeUserMatchesOnServer(
       const seasonCode =
         store.seasons[seasonId]?.season_code || String(seasonId);
 
-      if (idx === 0 && spPos !== 28 && posName !== "SUB") {
+      if (idx === 0 && spPos >= 0 && spPos <= 27 && posName !== "SUB") {
         latestStartingXI.push({
           spid,
           name: store.cards[spid]?.name || `선수 #${spid % 1000000}`,
           season_code: seasonCode,
           position: posName,
           grade: spGrade,
+          salary: store.cards[spid]?.salary,
           rating: spRating,
         });
       }
@@ -386,7 +525,7 @@ export async function analyzeUserMatchesOnServer(
     }
   }
 
-  // Enrich top starting XI and top performing player names via Datacenter crawler if not in cache
+  // Enrich top starting XI and top performing player names & salaries via on-demand crawler if not in cache
   const topPerfSpids = Object.values(playerPerf)
     .sort((a, b) => b.appearances - a.appearances)
     .slice(0, 6)
@@ -395,17 +534,20 @@ export async function analyzeUserMatchesOnServer(
   const unknownSpids = Array.from(
     new Set([...latestStartingXI.map((x) => x.spid), ...topPerfSpids])
   )
-    .filter((id) => !store.cards[id])
+    .filter((id) => !store.cards[id] || !store.cards[id].salary)
     .slice(0, 8);
 
   if (unknownSpids.length > 0) {
-    await Promise.all(unknownSpids.map((id) => crawlPlayerAbility(id)));
+    await Promise.all(
+      unknownSpids.map((id) => ensurePlayerSalaryAndMeta(id))
+    );
   }
 
   for (const xi of latestStartingXI) {
     if (store.cards[xi.spid]) {
       xi.name = store.cards[xi.spid].name;
       xi.season_code = store.cards[xi.spid].season_code;
+      xi.salary = store.cards[xi.spid].salary;
     }
   }
 
@@ -422,6 +564,7 @@ export async function analyzeUserMatchesOnServer(
           `https://fco.dn.nexoncdn.co.kr/live/externalAssets/common/playersAction/p${p.spid}.png`,
         grade: p.grade,
         position: p.position,
+        salary: card?.salary,
         appearances: apps,
         goals: p.goals,
         assists: p.assists,
@@ -463,6 +606,17 @@ export async function analyzeUserMatchesOnServer(
     possible_cause: string;
     recommended_action: string;
   }[] = [];
+
+  if (heuristicsRes.updated) {
+    diagnostics.push({
+      category: "인게임 최신 룰 자동 감지·갱신 완료 (Match Heuristics)",
+      severity: "positive",
+      observed_fact: `매치 데이터 역추적을 통해 선발 11인 최고 급여 합(${heuristicsRes.detectedMaxStarterSalary} FP) 또는 최고 강화 단계(+${heuristicsRes.detectedMaxGrade}강)가 관측되었습니다.`,
+      possible_cause:
+        "인게임 패치로 인해 급여 상한선 또는 강화 단계 상한이 확장된 스쿼드가 실제 매치에서 포착되었습니다.",
+      recommended_action: `FClab 시스템 규칙이 급여 한도 ${heuristicsRes.rules.salaryCap} FP / 최대 강화 +${heuristicsRes.rules.maxEnhanceLevel}강으로 자동 동기화되었습니다.`,
+    });
+  }
 
   if (totalMatches === 0) {
     diagnostics.push({
@@ -563,9 +717,17 @@ export async function analyzeUserMatchesOnServer(
       topPlayers,
       latestStartingXI,
       diagnostics,
+      heuristicsUpdate: {
+        updated: heuristicsRes.updated,
+        detectedMaxGrade: heuristicsRes.detectedMaxGrade,
+        detectedMaxStarterSalary: heuristicsRes.detectedMaxStarterSalary,
+        appliedSalaryCap: heuristicsRes.rules.salaryCap,
+        appliedMaxEnhanceLevel: heuristicsRes.rules.maxEnhanceLevel,
+      },
       methodologyNote:
-        "관찰된 사실(공식 API 매치 기록)과 가능한 전술/스쿼드 원인, 추천 행동을 구분하여 제시합니다. 인게임 수동 조작 실수 등 API 미제공 영역은 단정하지 않습니다.",
+        "관찰된 사실(공식 API 매치 기록)과 가능한 전술/스쿼드 원인, 추천 행동을 구분하여 제시합니다. 공식경기 선발 11인의 급여 총합과 최고 강화 단계를 실시간 역추적(Match Heuristics)하여 인게임 패치 상한선을 자율 갱신합니다.",
       analyzedAt: nowStr,
     },
+    systemRules: heuristicsRes.rules,
   };
 }

@@ -8,6 +8,97 @@ export type LabTab =
   | "saved"
   | "architecture";
 
+export interface SystemRules {
+  salaryCap: number;
+  maxEnhanceLevel: number;
+  enhanceOvrBoosts: number[];
+  lastSyncedAt: string;
+  syncSource: "crawler" | "match_heuristics" | "initial";
+}
+
+export const DEFAULT_ENHANCE_OVR_BOOSTS: number[] = [
+  0, 3, 4, 5, 7, 9, 11, 15, 19, 23, 27, 31, 35,
+];
+
+export const DEFAULT_SYSTEM_RULES: SystemRules = {
+  salaryCap: 310,
+  maxEnhanceLevel: 13,
+  enhanceOvrBoosts: [...DEFAULT_ENHANCE_OVR_BOOSTS],
+  lastSyncedAt: new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC",
+  syncSource: "initial",
+};
+
+export function expandEnhanceOvrBoosts(
+  maxLevel: number,
+  baseBoosts: number[] = DEFAULT_ENHANCE_OVR_BOOSTS
+): number[] {
+  const targetLen = Math.max(1, Math.min(20, maxLevel));
+  const result = [...baseBoosts];
+  while (result.length < targetLen) {
+    const lastBoost = result[result.length - 1] ?? 35;
+    result.push(lastBoost + 4);
+  }
+  return result.slice(0, Math.max(result.length, targetLen));
+}
+
+export function getEnhanceOvrBoost(
+  grade: number,
+  boosts: number[] = DEFAULT_ENHANCE_OVR_BOOSTS
+): number {
+  const safeGrade = Math.max(1, Math.floor(grade || 1));
+  const idx = safeGrade - 1;
+  if (idx < boosts.length) {
+    return boosts[idx] ?? 0;
+  }
+  const lastKnown = boosts[boosts.length - 1] ?? 35;
+  const extraLevels = idx - (boosts.length - 1);
+  return lastKnown + extraLevels * 4;
+}
+
+export function getEnhanceBadgeStyle(grade: number): {
+  label: string;
+  tierName: string;
+  className: string;
+} {
+  if (grade >= 11) {
+    return {
+      label: `+${grade}강`,
+      tierName: "초월 고강",
+      className:
+        "bg-gradient-to-r from-fuchsia-500/25 via-cyan-400/25 to-emerald-400/25 text-cyan-200 border-cyan-400/60 font-bold shadow-sm",
+    };
+  }
+  if (grade >= 8) {
+    return {
+      label: `+${grade}강`,
+      tierName: "금카",
+      className:
+        "bg-amber-500/25 text-amber-300 border-amber-400/60 font-bold",
+    };
+  }
+  if (grade >= 5) {
+    return {
+      label: `+${grade}강`,
+      tierName: "은카",
+      className:
+        "bg-slate-300/20 text-slate-100 border-slate-300/50 font-semibold",
+    };
+  }
+  if (grade >= 2) {
+    return {
+      label: `+${grade}강`,
+      tierName: "동카",
+      className:
+        "bg-orange-700/25 text-orange-300 border-orange-600/50 font-medium",
+    };
+  }
+  return {
+    label: "+1강",
+    tierName: "기본",
+    className: "bg-slate-800/90 text-slate-400 border-slate-700",
+  };
+}
+
 export interface PositionOvrItem {
   pos: string;
   ovr: number;
@@ -238,6 +329,7 @@ export interface SquadAnalysisResult {
     bp_text: string;
     primary_archetype: string;
   }[];
+  systemRules?: SystemRules;
   analyzed_at: string;
 }
 
@@ -288,6 +380,7 @@ export interface MatchAnalysisResponse {
       effectiveShots: number;
       passRate: number;
       controller: string;
+      starterTotalSalary?: number;
     }[];
     topPlayers: {
       spid: number;
@@ -296,6 +389,7 @@ export interface MatchAnalysisResponse {
       thumb_url: string;
       grade: number;
       position: string;
+      salary?: number;
       appearances: number;
       goals: number;
       assists: number;
@@ -307,6 +401,7 @@ export interface MatchAnalysisResponse {
       season_code: string;
       position: string;
       grade: number;
+      salary?: number;
       rating: number;
     }[];
     diagnostics: {
@@ -316,26 +411,25 @@ export interface MatchAnalysisResponse {
       possible_cause: string;
       recommended_action: string;
     }[];
+    heuristicsUpdate?: {
+      updated: boolean;
+      detectedMaxGrade: number;
+      detectedMaxStarterSalary: number;
+      appliedSalaryCap: number;
+      appliedMaxEnhanceLevel: number;
+    };
     methodologyNote: string;
     analyzedAt: string;
   };
+  systemRules?: SystemRules;
 }
 
-export const ENHANCEMENT_BONUS_MAP: Record<number, number> = {
-  1: 0,
-  2: 1,
-  3: 2,
-  4: 4,
-  5: 6,
-  6: 8,
-  7: 11,
-  8: 15,
-  9: 17,
-  10: 19,
-  11: 21,
-  12: 24,
-  13: 27,
-};
+// Legacy compatibility map derived from DEFAULT_ENHANCE_OVR_BOOSTS
+export const ENHANCEMENT_BONUS_MAP: Record<number, number> =
+  DEFAULT_ENHANCE_OVR_BOOSTS.reduce((acc, boost, index) => {
+    acc[index + 1] = boost;
+    return acc;
+  }, {} as Record<number, number>);
 
 export function formatBpKorean(bp: number): string {
   if (!bp || bp <= 0) return "-";
@@ -350,6 +444,7 @@ export function formatBpKorean(bp: number): string {
 }
 
 export function getStatColorClass(val: number): string {
+  if (val >= 140) return "text-fuchsia-300 font-bold";
   if (val >= 130) return "text-amber-300 font-semibold";
   if (val >= 120) return "text-rose-400 font-semibold";
   if (val >= 110) return "text-emerald-400 font-semibold";

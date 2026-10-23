@@ -291,3 +291,67 @@ def set_setting(key: str, value: str) -> None:
             (key, value.strip(), now_iso()),
         )
     conn.close()
+
+
+DEFAULT_ENHANCE_OVR_BOOSTS: List[int] = [
+    0, 3, 4, 5, 7, 9, 11, 15, 19, 23, 27, 31, 35
+]
+
+
+def expand_enhance_ovr_boosts(max_level: int, base_boosts: Optional[List[int]] = None) -> List[int]:
+    target = max(1, min(20, int(max_level)))
+    boosts = list(base_boosts or DEFAULT_ENHANCE_OVR_BOOSTS)
+    while len(boosts) < target:
+        last_val = boosts[-1] if boosts else 35
+        boosts.append(last_val + 4)
+    return boosts
+
+
+def get_system_rules() -> Dict[str, Any]:
+    raw = get_setting("system_rules", "")
+    default_rules: Dict[str, Any] = {
+        "salaryCap": 310,
+        "maxEnhanceLevel": 13,
+        "enhanceOvrBoosts": list(DEFAULT_ENHANCE_OVR_BOOSTS),
+        "lastSyncedAt": now_iso(),
+        "syncSource": "initial",
+    }
+    if not raw:
+        return default_rules
+    try:
+        parsed = json.loads(raw)
+        salary_cap = max(310, int(parsed.get("salaryCap", 310)))
+        max_enhance = max(13, min(20, int(parsed.get("maxEnhanceLevel", 13))))
+        boosts = expand_enhance_ovr_boosts(
+            max_enhance, parsed.get("enhanceOvrBoosts") or DEFAULT_ENHANCE_OVR_BOOSTS
+        )
+        return {
+            "salaryCap": salary_cap,
+            "maxEnhanceLevel": max_enhance,
+            "enhanceOvrBoosts": boosts,
+            "lastSyncedAt": str(parsed.get("lastSyncedAt") or now_iso()),
+            "syncSource": str(parsed.get("syncSource") or "initial"),
+        }
+    except Exception:
+        return default_rules
+
+
+def update_system_rules(partial: Dict[str, Any]) -> Dict[str, Any]:
+    current = get_system_rules()
+    new_salary_cap = int(partial.get("salaryCap", current["salaryCap"]))
+    new_max_enhance = max(
+        1, min(20, int(partial.get("maxEnhanceLevel", current["maxEnhanceLevel"])))
+    )
+    base_boosts = partial.get("enhanceOvrBoosts") or current["enhanceOvrBoosts"]
+    new_boosts = expand_enhance_ovr_boosts(new_max_enhance, base_boosts)
+
+    updated = {
+        "salaryCap": new_salary_cap,
+        "maxEnhanceLevel": new_max_enhance,
+        "enhanceOvrBoosts": new_boosts,
+        "lastSyncedAt": str(partial.get("lastSyncedAt") or now_iso()),
+        "syncSource": str(partial.get("syncSource") or current["syncSource"]),
+    }
+    set_setting("system_rules", json.dumps(updated, ensure_ascii=False))
+    return updated
+

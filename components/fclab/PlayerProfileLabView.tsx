@@ -13,6 +13,10 @@ import {
   PlayerCard,
   PlayerProfileResult,
   ArchetypeFitItem,
+  SystemRules,
+  DEFAULT_SYSTEM_RULES,
+  getEnhanceOvrBoost,
+  getEnhanceBadgeStyle,
   getPositionToneClass,
   getStatColorClass,
 } from "@/lib/fclab-types";
@@ -25,6 +29,7 @@ import {
 interface PlayerProfileLabViewProps {
   initialSpid?: number | null;
   initialCompareSpid?: number | null;
+  rules?: SystemRules;
   onInspectInPlayerLab: (spid: number) => void;
   onSendToEfficiencyLab: (name: string, position: string) => void;
 }
@@ -40,9 +45,11 @@ const ARCHETYPE_GROUPS = [
 export default function PlayerProfileLabView({
   initialSpid,
   initialCompareSpid,
+  rules = DEFAULT_SYSTEM_RULES,
   onInspectInPlayerLab,
   onSendToEfficiencyLab,
 }: PlayerProfileLabViewProps) {
+  const maxEnhanceLevel = rules.maxEnhanceLevel || 13;
   const [searchQuery, setSearchQuery] = useState("손흥민");
   const [searchResults, setSearchResults] = useState<PlayerCard[]>([]);
   const [searching, setSearching] = useState(false);
@@ -189,11 +196,14 @@ export default function PlayerProfileLabView({
                 onChange={(e) => setGrade(Number(e.target.value))}
                 className="bg-transparent text-xs font-mono font-semibold text-emerald-400 outline-none"
               >
-                {[1, 3, 5, 6, 7, 8, 9, 10].map((g) => (
-                  <option key={g} value={g} className="bg-[#0B0F17]">
-                    +{g}강
-                  </option>
-                ))}
+                {Array.from({ length: maxEnhanceLevel }, (_, idx) => idx + 1).map(
+                  (g) => (
+                    <option key={g} value={g} className="bg-[#0B0F17]">
+                      +{g}강 (+
+                      {getEnhanceOvrBoost(g, rules.enhanceOvrBoosts)})
+                    </option>
+                  )
+                )}
               </select>
             </div>
 
@@ -348,8 +358,15 @@ export default function PlayerProfileLabView({
                       >
                         {card.primary_position}
                       </span>
+                      <span
+                        className={`text-xs font-mono px-2 py-0.5 rounded border ${getEnhanceBadgeStyle(
+                          profile.grade
+                        )}`}
+                      >
+                        +{profile.grade}강
+                      </span>
                       <span className="text-xs font-mono px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                        +{profile.grade}강 / 팀컬러 +{profile.team_color_bonus}
+                        팀컬러 +{profile.team_color_bonus}
                       </span>
                     </div>
                     <h3 className="text-xl font-bold text-slate-100 mt-1">

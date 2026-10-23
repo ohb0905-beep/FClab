@@ -10,6 +10,9 @@ import {
 } from "lucide-react";
 import {
   CardEfficiencyResult,
+  SystemRules,
+  DEFAULT_SYSTEM_RULES,
+  getEnhanceOvrBoost,
   getPositionToneClass,
 } from "@/lib/fclab-types";
 import {
@@ -20,6 +23,7 @@ import {
 } from "./VisualCharts";
 
 interface CardEfficiencyLabViewProps {
+  rules?: SystemRules;
   initialPlayerName?: string;
   initialPosition?: string;
   positionWeightsMap: Record<string, Record<string, number>>;
@@ -27,6 +31,7 @@ interface CardEfficiencyLabViewProps {
 }
 
 export default function CardEfficiencyLabView({
+  rules = DEFAULT_SYSTEM_RULES,
   initialPlayerName = "손흥민",
   initialPosition = "LW",
   positionWeightsMap,
@@ -48,6 +53,11 @@ export default function CardEfficiencyLabView({
   const [selectedSpid, setSelectedSpid] = useState<number | null>(null);
   const [compareSpid, setCompareSpid] = useState<number | null>(null);
   const [analyzedAt, setAnalyzedAt] = useState<string>("");
+
+  const dynamicEnhanceLevels = Array.from(
+    { length: Math.max(1, rules.maxEnhanceLevel) },
+    (_, i) => i + 1
+  );
 
   useEffect(() => {
     if (initialPlayerName) setQuery(initialPlayerName);
@@ -138,7 +148,7 @@ export default function CardEfficiencyLabView({
               Card Efficiency Lab — 포지션 핵심 스탯 가중치 기반 가성비 연구소
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              단순 OVR이 아닌 포지션별 실질 중요 능력치 가중합 점수와 이적시장 시세를 비교해 최적의 시즌·강화 카드를 도출합니다.
+              단순 OVR이 아닌 포지션별 실질 중요 능력치 가중합 점수와 이적시장 시세를 비교해 최적의 시즌·강화(1~+{rules.maxEnhanceLevel}강, OVR +{getEnhanceOvrBoost(grade, rules.enhanceOvrBoosts)}) 카드를 도출합니다.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -211,9 +221,10 @@ export default function CardEfficiencyLabView({
               onChange={(e) => setGrade(Number(e.target.value))}
               className="w-full px-3 py-2 bg-[#0B0F17] border border-slate-800 rounded-lg text-xs font-mono text-slate-200"
             >
-              {[1, 3, 5, 6, 7, 8].map((g) => (
+              {dynamicEnhanceLevels.map((g) => (
                 <option key={g} value={g}>
-                  비교 강화 단계: +{g}강
+                  비교 강화: +{g}강 (OVR +
+                  {getEnhanceOvrBoost(g, rules.enhanceOvrBoosts)})
                 </option>
               ))}
             </select>
@@ -333,7 +344,9 @@ export default function CardEfficiencyLabView({
                   <th className="py-2.5 px-3 font-medium text-right">
                     {position} 코어 점수
                   </th>
-                  <th className="py-2.5 px-3 font-medium text-right">+{grade}강 시세</th>
+                  <th className="py-2.5 px-3 font-medium text-right">
+                    +{grade}강 시세
+                  </th>
                   <th className="py-2.5 px-3 font-medium text-right">효율 지수</th>
                   <th className="py-2.5 px-3 font-medium text-right">비교</th>
                 </tr>
@@ -376,10 +389,14 @@ export default function CardEfficiencyLabView({
                               </span>
                             </div>
                             <div className="text-[11px] text-slate-400 font-mono">
-                              <span className={getPositionToneClass(r.primary_position)}>
+                              <span
+                                className={getPositionToneClass(
+                                  r.primary_position
+                                )}
+                              >
                                 {r.primary_position}
                               </span>{" "}
-                              · 급여 {r.salary} · {r.tier.split(" ")[0]}등급
+                              · 급여 {r.salary} · {r.foot}
                             </div>
                           </div>
                         </div>
@@ -387,7 +404,7 @@ export default function CardEfficiencyLabView({
                       <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-200">
                         {r.effective_ovr}
                       </td>
-                      <td className="py-2.5 px-3 text-right font-mono font-bold tabular-nums text-amber-300">
+                      <td className="py-2.5 px-3 text-right font-mono font-bold tabular-nums text-sky-400">
                         {r.core_score}
                       </td>
                       <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-300">
@@ -401,15 +418,17 @@ export default function CardEfficiencyLabView({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setCompareSpid(r.spid);
+                            setCompareSpid(
+                              isCompare ? null : r.spid
+                            );
                           }}
-                          className={`px-2 py-1 rounded text-[11px] font-medium ${
+                          className={`px-2 py-0.5 rounded text-[11px] font-medium ${
                             isCompare
                               ? "bg-sky-600 text-white"
                               : "bg-slate-800 text-slate-300 hover:bg-slate-700"
                           }`}
                         >
-                          {isCompare ? "비교중" : "비교대상"}
+                          {isCompare ? "비교중" : "비교"}
                         </button>
                       </td>
                     </tr>
@@ -420,26 +439,33 @@ export default function CardEfficiencyLabView({
           </div>
         </div>
 
-        {/* Right Detailed Breakdown (5 cols) */}
+        {/* Right Detailed Breakdown & Grade Curve (5 cols) */}
         <div className="lg:col-span-5 space-y-6">
           {primaryCard && (
             <>
               <div className="bg-[#111827] border border-slate-800 rounded-xl p-5 space-y-4">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                   <div>
-                    <div className="text-xs text-emerald-400 font-medium">
-                      최적 효율 추천 카드 분석
+                    <div className="flex items-center gap-1.5">
+                      <SeasonBadge
+                        seasonImg={primaryCard.season_img}
+                        seasonCode={primaryCard.season_code}
+                      />
+                      <h3 className="text-sm font-bold text-slate-100">
+                        {primaryCard.name} (+{primaryCard.grade}강)
+                      </h3>
                     </div>
-                    <h3 className="text-base font-bold text-slate-100 mt-0.5">
-                      {primaryCard.season_code} {primaryCard.name} (+{grade}강)
-                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5 font-mono">
+                      {primaryCard.tier} · 코어 {primaryCard.core_score}점 · 시세{" "}
+                      {primaryCard.bp_text} BP
+                    </p>
                   </div>
                   <button
                     type="button"
                     onClick={() => onInspectInPlayerLab(primaryCard.spid)}
-                    className="text-xs text-slate-300 hover:text-emerald-400 flex items-center gap-1"
+                    className="text-xs text-emerald-400 hover:underline flex items-center gap-1 whitespace-nowrap shrink-0"
                   >
-                    선수 상세 이동
+                    상세 스탯
                     <ArrowRight className="w-3.5 h-3.5" />
                   </button>
                 </div>
@@ -456,57 +482,39 @@ export default function CardEfficiencyLabView({
                   size={220}
                 />
 
-                <div className="space-y-2 pt-2 border-t border-slate-800">
-                  <div className="text-xs font-semibold text-slate-200">
-                    {position} 포지션 핵심 스탯 가중합 기여도 상세
-                  </div>
-                  {primaryCard.stat_breakdown.map((item) => {
-                    const compItem = compareCard?.stat_breakdown.find(
-                      (c) => c.stat === item.stat
-                    );
-                    const delta = compItem ? item.value - compItem.value : null;
-                    return (
-                      <div
-                        key={item.stat}
-                        className="flex items-center justify-between text-xs"
-                      >
-                        <span className="text-slate-400">
-                          {item.stat}{" "}
-                          <span className="text-slate-500 font-mono">
-                            (가중치 {item.weight}%)
-                          </span>
-                        </span>
-                        <div className="font-mono tabular-nums flex items-center gap-2">
-                          <span className="text-slate-100 font-semibold">
-                            {item.value}
-                          </span>
-                          {delta !== null && delta !== 0 && (
-                            <span
-                              className={
-                                delta > 0 ? "text-emerald-400" : "text-rose-400"
-                              }
-                            >
-                              ({delta > 0 ? `+${delta}` : delta})
-                            </span>
-                          )}
-                          <span className="text-slate-500">
-                            기여 {item.contribution}점
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
                 <div className="pt-3 border-t border-slate-800 space-y-2">
                   <div className="text-xs font-semibold text-slate-200">
-                    강화 단계별 가성비 변곡점 (1강 ~ 8강)
+                    강화 단계별 가격 대비 효율 곡선 (1~+{rules.maxEnhanceLevel}강)
                   </div>
                   <GradeEfficiencyBarChart
                     curve={primaryCard.grade_curve}
                     activeGrade={grade}
                     onSelectGrade={(g) => setGrade(g)}
                   />
+                </div>
+              </div>
+
+              <div className="bg-[#111827] border border-slate-800 rounded-xl p-5 space-y-3">
+                <h4 className="text-sm font-semibold text-slate-100">
+                  {position} 포지션 코어 점수 산출 근거
+                </h4>
+                <div className="space-y-1.5">
+                  {primaryCard.stat_breakdown.map((sb) => (
+                    <div
+                      key={sb.stat}
+                      className="flex items-center justify-between text-xs bg-[#0B0F17] px-3 py-2 rounded border border-slate-800/80"
+                    >
+                      <span className="text-slate-300">
+                        {sb.stat}{" "}
+                        <span className="text-slate-500 font-mono">
+                          (가중치 {sb.weight}%)
+                        </span>
+                      </span>
+                      <span className="font-mono tabular-nums text-emerald-400 font-semibold">
+                        스탯 {sb.value} → +{sb.contribution}점
+                      </span>
+                    </div>
+                  ))}
                 </div>
               </div>
             </>

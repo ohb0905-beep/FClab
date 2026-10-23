@@ -15,7 +15,10 @@ import {
   CardEfficiencyResult,
   PlayerProfileResult,
   PriceHistoryData,
-  ENHANCEMENT_BONUS_MAP,
+  SystemRules,
+  DEFAULT_SYSTEM_RULES,
+  getEnhanceOvrBoost,
+  getEnhanceBadgeStyle,
   getStatColorClass,
   getPositionToneClass,
 } from "@/lib/fclab-types";
@@ -28,6 +31,7 @@ import {
 } from "./VisualCharts";
 
 interface PlayerLabViewProps {
+  rules?: SystemRules;
   initialSpid?: number | null;
   initialQuery?: string;
   bookmarkedSpids: number[];
@@ -44,21 +48,43 @@ const STAT_CATEGORIES: { title: string; keys: string[] }[] = [
   },
   {
     title: "슈팅 및 결정력",
-    keys: ["골 결정력", "슛 파워", "중거리 슛", "위치 선정", "발리슛", "페널티 킥", "헤더"],
+    keys: [
+      "골 결정력",
+      "슛 파워",
+      "중거리 슛",
+      "위치 선정",
+      "발리 슛",
+      "페널티 킥",
+      "약발/커브",
+      "커브",
+      "프리킥",
+    ],
   },
   {
     title: "패스 및 시야",
-    keys: ["짧은 패스", "시야", "크로스", "긴 패스", "프리킥", "커브"],
+    keys: ["짧은 패스", "긴 패스", "시야", "크로스"],
   },
   {
     title: "수비 및 피지컬",
-    keys: ["대인 수비", "태클", "가로채기", "슬라이딩 태클", "몸싸움", "스태미너", "적극성", "점프", "침착성"],
+    keys: [
+      "대인 수비",
+      "태클",
+      "슬라이딩 태클",
+      "가로채기",
+      "몸싸움",
+      "스태미너",
+      "적극성",
+      "점프",
+      "헤더",
+      "침착성",
+    ],
   },
 ];
 
 export default function PlayerLabView({
+  rules = DEFAULT_SYSTEM_RULES,
   initialSpid,
-  initialQuery = "",
+  initialQuery = "손흥민",
   bookmarkedSpids,
   onToggleBookmark,
   onSendToEfficiencyLab,
@@ -72,12 +98,12 @@ export default function PlayerLabView({
   const [searching, setSearching] = useState(false);
 
   const [selectedSpid, setSelectedSpid] = useState<number | null>(
-    initialSpid || null
+    initialSpid || 280200104
   );
+  const [compareSpid, setCompareSpid] = useState<number | null>(null);
   const [grade, setGrade] = useState<number>(5);
   const [teamColorBonus, setTeamColorBonus] = useState<number>(3);
-  const [compareBeforeAfter, setCompareBeforeAfter] = useState<boolean>(false);
-  const [compareSpid, setCompareSpid] = useState<number | null>(null);
+  const [compareBeforeAfter, setCompareBeforeAfter] = useState<boolean>(true);
 
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailData, setDetailData] = useState<{
@@ -94,6 +120,11 @@ export default function PlayerLabView({
     card: PlayerCard;
     efficiency: CardEfficiencyResult;
   } | null>(null);
+
+  const dynamicEnhanceLevels = Array.from(
+    { length: Math.max(1, rules.maxEnhanceLevel) },
+    (_, i) => i + 1
+  );
 
   const runSearch = useCallback(
     async (qStr: string, pos: string, sort: string, forceCrawl = false) => {
@@ -193,8 +224,9 @@ export default function PlayerLabView({
   const activeCard = detailData?.card;
   const activeEff = detailData?.efficiency;
   const activeProf = detailData?.profile;
-  const enhAdd = ENHANCEMENT_BONUS_MAP[grade] ?? 0;
+  const enhAdd = getEnhanceOvrBoost(grade, rules.enhanceOvrBoosts);
   const totalAdd = enhAdd + teamColorBonus;
+  const currentBadge = getEnhanceBadgeStyle(grade);
 
   return (
     <div className="space-y-6">
@@ -325,7 +357,11 @@ export default function PlayerLabView({
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5 text-xs text-slate-400 mt-0.5 font-mono tabular-nums">
-                          <span className={`font-semibold ${getPositionToneClass(c.primary_position)}`}>
+                          <span
+                            className={`font-semibold ${getPositionToneClass(
+                              c.primary_position
+                            )}`}
+                          >
                             {c.primary_position}
                           </span>
                           <span>·</span>
@@ -405,18 +441,24 @@ export default function PlayerLabView({
                         <h2 className="text-xl font-bold text-slate-100 font-display">
                           {activeCard.name}
                         </h2>
-                        <span className="text-xs font-mono text-slate-500">
-                          #{activeCard.spid}
+                        <span
+                          className={`text-xs font-mono px-2 py-0.5 rounded border ${currentBadge.className}`}
+                        >
+                          {currentBadge.label} ({currentBadge.tierName})
                         </span>
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300 font-mono tabular-nums">
-                        <span className={`font-bold ${getPositionToneClass(activeCard.primary_position)}`}>
+                        <span
+                          className={`font-bold ${getPositionToneClass(
+                            activeCard.primary_position
+                          )}`}
+                        >
                           {activeCard.primary_position}
                         </span>
                         <span className="text-slate-600">·</span>
                         <span className="text-emerald-400 font-bold">
-                          적용 OVR {activeEff.effective_ovr}
+                          적용 OVR {activeCard.ovr + totalAdd}
                         </span>
                         <span className="text-slate-500">
                           (기본 {activeCard.ovr} + 강화 {enhAdd} + 팀컬러 {teamColorBonus})
@@ -479,33 +521,49 @@ export default function PlayerLabView({
                   </div>
                 </div>
 
-                {/* Interactive Enhancement & Team Color Simulation Controls */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-1.5">
-                      강화 단계 설정 (+{grade}강 / 능력치 +{enhAdd})
-                    </label>
+                {/* Interactive Enhancement (Dynamic 1..rules.maxEnhanceLevel) & Team Color Simulation Controls */}
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-1">
+                  <div className="md:col-span-6 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-400">
+                        강화 단계 시뮬레이션 (최대 +{rules.maxEnhanceLevel}강 동적 감지)
+                      </span>
+                      <span className="font-mono text-emerald-400 font-semibold">
+                        +{grade}강 (OVR +{enhAdd})
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={1}
+                      max={rules.maxEnhanceLevel}
+                      value={grade}
+                      onChange={(e) => setGrade(Number(e.target.value))}
+                      className="w-full accent-emerald-500"
+                    />
                     <div className="flex flex-wrap gap-1">
-                      {[1, 3, 5, 6, 7, 8, 9, 10].map((g) => (
-                        <button
-                          key={g}
-                          type="button"
-                          onClick={() => setGrade(g)}
-                          className={`px-2.5 py-1 text-xs font-mono rounded border transition-colors ${
-                            grade === g
-                              ? "bg-emerald-600 border-emerald-500 text-white font-semibold"
-                              : "bg-[#0B0F17] border-slate-800 text-slate-300 hover:border-slate-700"
-                          }`}
-                        >
-                          +{g}
-                        </button>
-                      ))}
+                      {dynamicEnhanceLevels.map((g) => {
+                        const bStyle = getEnhanceBadgeStyle(g);
+                        return (
+                          <button
+                            key={g}
+                            type="button"
+                            onClick={() => setGrade(g)}
+                            className={`px-2 py-0.5 text-[11px] font-mono rounded border transition-colors ${
+                              grade === g
+                                ? bStyle.className
+                                : "bg-[#0B0F17] border-slate-800 text-slate-400 hover:border-slate-700"
+                            }`}
+                          >
+                            +{g}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 
-                  <div>
+                  <div className="md:col-span-4">
                     <label className="block text-xs text-slate-400 mb-1.5">
-                      팀컬러 & 적응도 보너스 (+{teamColorBonus})
+                      팀컬러 &amp; 적응도 보너스 (+{teamColorBonus})
                     </label>
                     <div className="flex flex-wrap gap-1">
                       {[0, 1, 2, 3, 4, 5, 7, 9].map((tc) => (
@@ -525,24 +583,22 @@ export default function PlayerLabView({
                     </div>
                   </div>
 
-                  <div className="flex flex-col justify-between">
+                  <div className="md:col-span-2 flex flex-col justify-between">
                     <label className="block text-xs text-slate-400 mb-1.5">
-                      팀컬러/강화 적용 전후 & 타 카드 비교
+                      상승폭 표시
                     </label>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setCompareBeforeAfter((v) => !v)}
-                        className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-                          compareBeforeAfter
-                            ? "bg-slate-800 border-emerald-500/80 text-emerald-300"
-                            : "bg-[#0B0F17] border-slate-800 text-slate-300"
-                        }`}
-                      >
-                        <SlidersHorizontal className="w-3.5 h-3.5" />
-                        1강 순정 대비 상승폭 표시
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setCompareBeforeAfter((v) => !v)}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap shrink-0 flex items-center justify-center gap-1.5 ${
+                        compareBeforeAfter
+                          ? "bg-slate-800 border-emerald-500/80 text-emerald-300"
+                          : "bg-[#0B0F17] border-slate-800 text-slate-300"
+                      }`}
+                    >
+                      <SlidersHorizontal className="w-3.5 h-3.5" />
+                      1강 대비
+                    </button>
                   </div>
                 </div>
 
@@ -556,7 +612,10 @@ export default function PlayerLabView({
                       {activeEff.core_score}점
                     </div>
                     <div className="text-[11px] font-mono text-slate-500">
-                      OVR 대비 {activeEff.ovr_to_core_gap >= 0 ? `+${activeEff.ovr_to_core_gap}` : activeEff.ovr_to_core_gap}
+                      OVR 대비{" "}
+                      {activeEff.ovr_to_core_gap >= 0
+                        ? `+${activeEff.ovr_to_core_gap}`
+                        : activeEff.ovr_to_core_gap}
                     </div>
                   </div>
 
@@ -577,7 +636,8 @@ export default function PlayerLabView({
                       최적 플레이 스타일
                     </div>
                     <div className="text-sm font-semibold text-slate-100 truncate mt-1">
-                      {activeProf.primary_archetype?.name.split("(")[0] || "올라운더"}
+                      {activeProf.primary_archetype?.name.split("(")[0] ||
+                        "올라운더"}
                     </div>
                     <div className="text-[11px] font-mono text-sky-400">
                       적합도 {activeProf.primary_archetype?.fit_percent || 85}%
@@ -637,7 +697,9 @@ export default function PlayerLabView({
                       조회: {detailData?.fetchedAt.slice(0, 16)}
                     </span>
                   </div>
-                  <PriceTrendChart points={detailData?.priceHistory?.points || []} />
+                  <PriceTrendChart
+                    points={detailData?.priceHistory?.points || []}
+                  />
                   <div className="mt-4 pt-3 border-t border-slate-800/80">
                     <div className="text-xs text-slate-400 mb-2">
                       강화 단계별 가격 대비 코어 효율 비교 (클릭 시 강화 단계 전환)
@@ -668,7 +730,9 @@ export default function PlayerLabView({
                       {activeCard.traits.map((t, idx) => (
                         <React.Fragment key={t.name}>
                           {idx > 0 && <span className="text-slate-600">·</span>}
-                          <span className="text-amber-300 font-medium">{t.name}</span>
+                          <span className="text-amber-300 font-medium">
+                            {t.name}
+                          </span>
                         </React.Fragment>
                       ))}
                     </div>
@@ -687,7 +751,8 @@ export default function PlayerLabView({
                       <div className="space-y-1.5">
                         {cat.keys.map((sKey) => {
                           const baseVal =
-                            activeCard.stats?.[sKey] ?? Math.max(70, activeCard.ovr - 5);
+                            activeCard.stats?.[sKey] ??
+                            Math.max(70, activeCard.ovr - 5);
                           const finalVal = baseVal + totalAdd;
                           const compBase = compareDetail?.card.stats?.[sKey];
                           const compFinal =
@@ -718,7 +783,11 @@ export default function PlayerLabView({
                                         : "text-rose-400"
                                     }`}
                                   >
-                                    ({diffFromComp > 0 ? `+${diffFromComp}` : diffFromComp})
+                                    (
+                                    {diffFromComp > 0
+                                      ? `+${diffFromComp}`
+                                      : diffFromComp}
+                                    )
                                   </span>
                                 )}
                               </div>
@@ -786,7 +855,8 @@ export default function PlayerLabView({
                               seasonCode={os.season_code}
                             />
                             <span className="font-medium text-slate-200">
-                              {os.primary_position} · OVR {os.ovr} · 급여 {os.salary}
+                              {os.primary_position} · OVR {os.ovr} · 급여{" "}
+                              {os.salary}
                             </span>
                           </div>
                           <div className="flex items-center gap-2 font-mono tabular-nums">

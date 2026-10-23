@@ -4,6 +4,8 @@ import {
   getStoreSnapshot,
   getServerNexonApiKey,
   getServerNexonApiKeyPreview,
+  getSystemRules,
+  syncGameRulesFromWeb,
   syncNexonMetadata,
   crawlPlayerList,
   crawlPlayerAbility,
@@ -35,6 +37,16 @@ export async function GET(
     const subPath = pathSegments.join("/");
     const sp = req.nextUrl.searchParams;
     const store = getStoreSnapshot();
+
+    // 0. GET /api/fclab/rules or /api/fclab/v1/rules
+    if (subPath === "rules" || subPath === "v1/rules") {
+      const rules = getSystemRules();
+      return NextResponse.json({
+        ok: true,
+        rules,
+        systemRules: rules,
+      });
+    }
 
     // 1. GET /api/fclab/v1/dashboard
     if (subPath === "v1/dashboard") {
@@ -69,6 +81,7 @@ export async function GET(
 
       const hasNexonKey = Boolean(getServerNexonApiKey());
       const keyPreview = getServerNexonApiKeyPreview();
+      const systemRules = getSystemRules();
 
       return NextResponse.json({
         ok: true,
@@ -81,6 +94,8 @@ export async function GET(
         nexon_key_configured: hasNexonKey,
         nexon_key_preview: keyPreview,
         position_weights: POSITION_WEIGHTS,
+        systemRules,
+        rules: systemRules,
         stats: {
           totalCards: allCards.length,
           detailedCards: fullCards.length,
@@ -162,14 +177,19 @@ export async function GET(
         items: cards,
         count: cards.length,
         query: q,
+        systemRules: getSystemRules(),
         fetchedAt: nowUtc(),
       });
     }
 
     // 3. GET /api/fclab/v1/players/detail
     if (subPath === "v1/players/detail") {
+      const rules = getSystemRules();
       const spid = Number(sp.get("spid") || 0);
-      const grade = Number(sp.get("grade") || 1);
+      const grade = Math.max(
+        1,
+        Math.min(rules.maxEnhanceLevel, Number(sp.get("grade") || 1))
+      );
       const teamColor = Number(sp.get("team_color") || 0);
       const targetPos = (sp.get("pos") || "").trim().toUpperCase();
       const refresh = sp.get("refresh") === "1";
@@ -199,7 +219,7 @@ export async function GET(
       const profile = analyzePlayerProfileSync(card, grade, teamColor);
       const priceHistory = await crawlPriceHistory(
         spid,
-        Math.min(Math.max(1, grade), 8)
+        Math.min(Math.max(1, grade), rules.maxEnhanceLevel)
       );
 
       const allCards = Object.values(store.cards);
@@ -230,15 +250,20 @@ export async function GET(
         priceHistory,
         otherSeasons,
         competitors,
+        systemRules: getSystemRules(),
         fetchedAt: nowUtc(),
       });
     }
 
     // 4. GET /api/fclab/v1/profile/analyze
     if (subPath === "v1/profile/analyze") {
+      const rules = getSystemRules();
       const spid = Number(sp.get("spid") || 0);
       const compareSpid = Number(sp.get("compare_spid") || 0);
-      const grade = Number(sp.get("grade") || 5);
+      const grade = Math.max(
+        1,
+        Math.min(rules.maxEnhanceLevel, Number(sp.get("grade") || 5))
+      );
       const teamColor = Number(sp.get("team_color") ?? 3);
 
       const card = await crawlPlayerAbility(spid);
@@ -271,13 +296,18 @@ export async function GET(
         compareCard,
         compareProfile,
         compare_profile: compareProfile,
+        systemRules: getSystemRules(),
         analyzedAt: nowUtc(),
       });
     }
 
     // 5. GET /api/fclab/v1/squads
     if (subPath === "v1/squads") {
-      return NextResponse.json({ ok: true, squads: store.savedSquads });
+      return NextResponse.json({
+        ok: true,
+        squads: store.savedSquads,
+        systemRules: getSystemRules(),
+      });
     }
 
     // 6. GET /api/fclab/v1/match/analyze
@@ -302,6 +332,7 @@ export async function GET(
         ok: true,
         user: result.user,
         analysis: result.analysis,
+        systemRules: result.systemRules || getSystemRules(),
       });
     }
 
@@ -313,6 +344,7 @@ export async function GET(
         ok: true,
         hasApiKey,
         keyPreview: getServerNexonApiKeyPreview(),
+        systemRules: getSystemRules(),
         connectionStatus: {
           nexonStaticMetadata: Object.keys(store.seasons).length > 0,
           fcDatacenterCrawler: allCards.length > 0,
@@ -340,6 +372,7 @@ export async function GET(
           errorCode: err.errorCode,
           requires_api_key: err.requiresApiKey,
           requiresApiKey: err.requiresApiKey,
+          systemRules: getSystemRules(),
         },
         { status: err.statusCode }
       );
@@ -367,11 +400,26 @@ export async function POST(
     const body = await req.json().catch(() => ({}));
     const store = getStoreSnapshot();
 
+    // 0. POST /api/fclab/rules/sync or /api/fclab/v1/rules/sync
+    if (subPath === "rules/sync" || subPath === "v1/rules/sync") {
+      const rules = await syncGameRulesFromWeb();
+      return NextResponse.json({
+        ok: true,
+        rules,
+        systemRules: rules,
+        syncedAt: rules.lastSyncedAt,
+      });
+    }
+
     // 1. POST /api/fclab/v1/efficiency/analyze
     if (subPath === "v1/efficiency/analyze") {
+      const rules = getSystemRules();
       const playerQuery = String(body.query || "").trim();
       const targetPos = String(body.position || "ST").trim().toUpperCase();
-      const grade = Number(body.grade || 5);
+      const grade = Math.max(
+        1,
+        Math.min(rules.maxEnhanceLevel, Number(body.grade || 5))
+      );
       const teamColor = Number(body.team_color ?? 3);
       const maxBp = Number(body.max_bp || 0);
       const customWeights = body.custom_weights as
@@ -441,15 +489,20 @@ export async function POST(
           POSITION_WEIGHTS["ST"],
         results: evaluations,
         recommendedTop: evaluations[0] || null,
+        systemRules: getSystemRules(),
         analyzedAt: nowUtc(),
       });
     }
 
     // 2. POST /api/fclab/v1/profile/analyze
     if (subPath === "v1/profile/analyze") {
+      const rules = getSystemRules();
       const spid = Number(body.spid || 0);
       const compareSpid = Number(body.compare_spid || 0);
-      const grade = Number(body.grade || 5);
+      const grade = Math.max(
+        1,
+        Math.min(rules.maxEnhanceLevel, Number(body.grade || 5))
+      );
       const teamColor = Number(body.team_color ?? 3);
 
       const card = await crawlPlayerAbility(spid);
@@ -482,16 +535,18 @@ export async function POST(
         compareCard,
         compareProfile,
         compare_profile: compareProfile,
+        systemRules: getSystemRules(),
         analyzedAt: nowUtc(),
       });
     }
 
     // 3. POST /api/fclab/v1/squads/evaluate
     if (subPath === "v1/squads/evaluate") {
+      const rules = getSystemRules();
       const slots = Array.isArray(body.slots) ? body.slots : [];
       const formation = String(body.formation || "4-2-3-1");
       const budgetBp = Number(body.budget_bp || 50_000_000_000);
-      const salaryCap = Number(body.salary_cap || 270);
+      const salaryCap = Number(body.salary_cap || rules.salaryCap);
       const teamColorBonus = Number(body.team_color_bonus ?? 3);
 
       const analysis = await analyzeSquadAsync(
@@ -501,18 +556,23 @@ export async function POST(
         salaryCap,
         teamColorBonus
       );
-      return NextResponse.json({ ok: true, ...analysis });
+      return NextResponse.json({
+        ok: true,
+        ...analysis,
+        systemRules: getSystemRules(),
+      });
     }
 
     // 4. POST /api/fclab/v1/squads/save
     if (subPath === "v1/squads/save") {
+      const rules = getSystemRules();
       const ts = nowUtc();
       const saved = saveSquadToStore({
         id: String(body.id || `squad-${Date.now()}`),
         name: String(body.name || "나의 커스텀 스쿼드").trim(),
         formation: String(body.formation || "4-2-3-1"),
         budget_bp: Number(body.budget_bp || 50_000_000_000),
-        salary_cap: Number(body.salary_cap || 270),
+        salary_cap: Number(body.salary_cap || rules.salaryCap),
         team_color_name: String(body.team_color_name || "커스텀 팀컬러"),
         team_color_bonus: Number(body.team_color_bonus ?? 3),
         slots: Array.isArray(body.slots) ? body.slots : [],
@@ -523,6 +583,7 @@ export async function POST(
         ok: true,
         status: "saved",
         id: saved.id,
+        systemRules: rules,
         updatedAt: ts,
       });
     }
@@ -556,12 +617,14 @@ export async function POST(
           ok: true,
           status: "crawled",
           crawledCount,
+          systemRules: getSystemRules(),
           message: `${names.length}명의 선수 카드 및 세부 스탯·시세 실시간 수집이 완료되었습니다.`,
         });
       }
       if (action === "sync_meta") {
         const res = await syncNexonMetadata(true);
-        return NextResponse.json({ ok: true, ...res });
+        const rules = await syncGameRulesFromWeb();
+        return NextResponse.json({ ok: true, ...res, systemRules: rules });
       }
     }
 

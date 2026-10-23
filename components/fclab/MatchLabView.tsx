@@ -16,6 +16,9 @@ import {
 import {
   MatchAnalysisResponse,
   SquadSlot,
+  SystemRules,
+  DEFAULT_SYSTEM_RULES,
+  getEnhanceBadgeStyle,
   getPositionToneClass,
 } from "@/lib/fclab-types";
 import { PlayerAvatar, SeasonBadge } from "./VisualCharts";
@@ -23,6 +26,8 @@ import { PlayerAvatar, SeasonBadge } from "./VisualCharts";
 interface MatchLabViewProps {
   nexonKeyConfigured: boolean;
   nexonKeyPreview: string;
+  rules?: SystemRules;
+  onRulesUpdated?: (rules: SystemRules) => void;
   onImportStartingXIToSquadLab: (slots: SquadSlot[]) => void;
   onInspectPlayerInLab: (spid: number) => void;
 }
@@ -37,6 +42,8 @@ const MATCH_TYPES = [
 export default function MatchLabView({
   nexonKeyConfigured,
   nexonKeyPreview,
+  rules = DEFAULT_SYSTEM_RULES,
+  onRulesUpdated,
   onImportStartingXIToSquadLab,
   onInspectPlayerInLab,
 }: MatchLabViewProps) {
@@ -86,7 +93,11 @@ export default function MatchLabView({
         setResult({
           user: json.user,
           analysis: json.analysis,
+          systemRules: json.systemRules,
         });
+        if (json.systemRules && onRulesUpdated) {
+          onRulesUpdated(json.systemRules);
+        }
       }
     } catch (err) {
       setErrorInfo({
@@ -301,6 +312,46 @@ export default function MatchLabView({
               )}
             </div>
 
+            {/* Real-Time Match Heuristics Rule Verification Strip */}
+            {result.analysis.heuristicsUpdate && (
+              <div
+                className={`mt-4 p-3.5 rounded-lg border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs ${
+                  result.analysis.heuristicsUpdate.updated
+                    ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-200"
+                    : "bg-[#0B0F17] border-slate-800/90 text-slate-300"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>
+                    <strong>실시간 매치 휴리스틱스(Match Heuristics) 검증:</strong>{" "}
+                    공식경기 선발 11명(spPosition 0~27) 최대 급여합{" "}
+                    <span className="font-mono font-bold text-emerald-300">
+                      {result.analysis.heuristicsUpdate.detectedMaxStarterSalary} FP
+                    </span>{" "}
+                    (적용 상한{" "}
+                    <span className="font-mono font-bold">
+                      {result.analysis.heuristicsUpdate.appliedSalaryCap} FP
+                    </span>
+                    ) · 최고 강화 단계{" "}
+                    <span className="font-mono font-bold text-amber-300">
+                      +{result.analysis.heuristicsUpdate.detectedMaxGrade}강
+                    </span>{" "}
+                    (시스템 최대{" "}
+                    <span className="font-mono font-bold">
+                      +{result.analysis.heuristicsUpdate.appliedMaxEnhanceLevel}강
+                    </span>
+                    )
+                  </span>
+                </div>
+                {result.analysis.heuristicsUpdate.updated && (
+                  <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-emerald-500 text-slate-950 font-bold whitespace-nowrap shrink-0">
+                    신규 인게임 상한 자동 갱신됨
+                  </span>
+                )}
+              </div>
+            )}
+
             {/* 6 Core Telemetry Metrics */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-4">
               <div className="bg-[#0B0F17] border border-slate-800/80 rounded-lg p-3">
@@ -507,7 +558,11 @@ export default function MatchLabView({
                           <span className="text-xs font-semibold text-slate-100">
                             {tp.name}
                           </span>
-                          <span className="text-[11px] font-mono text-emerald-400">
+                          <span
+                            className={`text-[11px] font-mono px-1.5 py-0.5 rounded border ${getEnhanceBadgeStyle(
+                              tp.grade
+                            )}`}
+                          >
                             +{tp.grade}강
                           </span>
                         </div>

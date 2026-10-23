@@ -8,24 +8,15 @@ from database import (
     now_iso,
     upsert_player_card,
     row_to_card_dict,
+    get_system_rules,
+    update_system_rules,
+    DEFAULT_ENHANCE_OVR_BOOSTS,
 )
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
 ENHANCEMENT_BONUS = {
-    1: 0,
-    2: 1,
-    3: 2,
-    4: 4,
-    5: 6,
-    6: 8,
-    7: 11,
-    8: 15,
-    9: 17,
-    10: 19,
-    11: 21,
-    12: 24,
-    13: 27,
+    idx + 1: boost for idx, boost in enumerate(DEFAULT_ENHANCE_OVR_BOOSTS)
 }
 
 
@@ -602,3 +593,122 @@ def crawl_price_history(spid: int, grade: int = 1) -> Dict[str, Any]:
         )
     conn2.close()
     return result
+
+
+def sync_game_rules_from_web() -> Dict[str, Any]:
+    """
+    Crawls FC Online Official SquadMaker & Datacenter pages to detect current salaryCap and maxEnhanceLevel.
+    """
+    current_rules = get_system_rules()
+    detected_salary_cap = current_rules["salaryCap"]
+    detected_max_enhance = current_rules["maxEnhanceLevel"]
+
+    try:
+        req = urllib.request.Request(
+            "https://fconline.nexon.com/datacenter/squadmaker",
+            headers={"User-Agent": USER_AGENT},
+        )
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+
+        # Parse salary cap from squadmaker (e.g. / 310, maxPay, pay_limit, etc.)
+        salary_candidates: List[int] = []
+        for pattern in [
+            r'/\s*(2[789][05]|3[0-9][05])\b',
+            r'max[_-]?pay["\'\s:=]+(2[789][05]|3[0-9][05])\b',
+            r'급여[^0-9]{0,20}(2[789][05]|3[0-9][05])\b',
+            r'<span[^>]*class="[^"]*pay[^"]*"[^>]*>\s*(2[789][05]|3[0-9][05])\s*</span>',
+        ]:
+            for m in re.finditer(pattern, html, re.I):
+                val = int(m.group(1))
+                if 270 <= val <= 400 and val % 5 == 0:
+                    salary_candidates.append(val)
+
+        if salary_candidates:
+            detected_salary_cap = max(detected_salary_cap, max(salary_candidates))
+
+        # Parse max enhancement level from <option> or span_bp tags
+        enhance_candidates: List[int] = []
+        for m in re.finditer(r'<option[^>]*value=["\']?(\d{1,2})["\']?[^>]*>\s*\+?\1(?:강)?\s*</option>', html):
+            lvl = int(m.group(1))
+            if 10 <= lvl <= 20:
+                enhance_candidates.append(lvl)
+        for m in re.finditer(r'span_bp(\d{1,2})', html):
+            lvl = int(m.group(1))
+            if 10 <= lvl <= 20:
+                enhance_candidates.append(lvl)
+
+        if enhance_candidates:
+            detected_max_enhance = max(detected_max_enhance, max(enhance_candidates))
+    except Exception:
+        pass
+
+    return update_system_rules(
+        {
+            "salaryCap": detected_salary_cap,
+            "maxEnhanceLevel": detected_max_enhance,
+            "lastSyncedAt": now_iso(),
+            "syncSource": "crawler",
+        }
+    )
+
+
+def ensure_player_salary_and_meta(spid: int) -> Optional[Dict[str, Any]]:
+    """
+    On-demand crawler that ensures a player's salary, OVR, and position are cached in DB.
+    Checks local DB first, then fetches DataCenter/PlayerInfo?spid={spid}&n1Strong=1 or PlayerAbility.
+    """
+    conn = get_connection()
+    existing = conn.execute(
+        "SELECT * FROM player_cards WHERE spid = ?", (spid,)
+    ).fetchone()
+    conn.close()
+
+    if existing and int(existing["salary"] or 0) > 0:
+        return row_to_card_dict(existing)
+
+    # Try PlayerInfo?spid={spid}&n1Strong=1 first, then fallback to crawl_player_ability
+    try:
+        url = f"https://fconline.nexon.com/DataCenter/PlayerInfo?spid={spid}&n1Strong=1"
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+
+        m_pay = re.search(r'<div class="pay_side">\s*(\d+)\s*</div>|<span class="pay">\s*(\d+)\s*</span>', html)
+        m_name = re.search(r'<div class="name">\s*([^<]+)\s*</div>', html)
+        m_pos = re.search(r'<span class="txt">\s*([A-Z]{2,3})\s*</span>\s*<span class="[^"]*value">\s*(\d+)\s*</span>', html)
+
+        if m_pay:
+            salary_val = int(m_pay.group(1) or m_pay.group(2))
+            name_val = m_name.group(1).strip() if m_name else f"선수 #{spid % 1000000}"
+            pos_val = m_pos.group(1).strip() if m_pos else "ST"
+            ovr_val = int(m_pos.group(2)) if m_pos else 105
+            season_id = spid // 1000000
+            pid = spid % 1000000
+            seasons_map = get_season_lookup()
+            s_meta = seasons_map.get(season_id, {})
+
+            card_data = {
+                "spid": spid,
+                "pid": pid,
+                "name": name_val,
+                "season_id": season_id,
+                "season_code": s_meta.get("season_code", str(season_id)),
+                "season_name": s_meta.get("class_name", str(season_id)),
+                "season_img": s_meta.get("season_img", ""),
+                "thumb_url": f"https://fco.dn.nexoncdn.co.kr/live/externalAssets/common/playersAction/p{spid}.png",
+                "primary_position": pos_val,
+                "positions": [{"pos": pos_val, "ovr": ovr_val}],
+                "ovr": ovr_val,
+                "salary": salary_val,
+                "foot": "L4 - R5",
+                "has_full_ability": False,
+                "crawled_at": now_iso(),
+            }
+            upsert_player_card(card_data)
+            return card_data
+    except Exception:
+        pass
+
+    return crawl_player_ability(spid)
+
