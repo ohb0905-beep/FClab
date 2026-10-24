@@ -204,11 +204,49 @@ export interface CardEfficiencyResult {
 export interface ArchetypeFitItem {
   id: string;
   group: string;
+  position_group?: string;
+  applicable_positions?: string[];
   name: string;
   desc: string;
   raw_score: number;
   fit_percent: number;
+  role_score: number;
+  specialization_score: number;
+  is_complete_type?: boolean;
+  judgment_reason?: string;
+  modifier_notes?: string[];
   key_stats: { stat: string; value: number; weight: number }[];
+}
+
+export interface CompleteEvaluationCriterion {
+  id: string;
+  label: string;
+  passed: boolean;
+  score_text: string;
+  detail: string;
+}
+
+export interface CompleteEvaluationResult {
+  is_complete: boolean;
+  overall_complete_score: number;
+  summary_reason: string;
+  passed_count: number;
+  total_criteria: number;
+  pillars: { name: string; score: number; threshold: number; passed: boolean }[];
+  criteria: CompleteEvaluationCriterion[];
+}
+
+export interface ProfilePhysicalFootAnalysis {
+  data_available: boolean;
+  height_cm: number;
+  weight_kg: number;
+  body_type: string;
+  foot_raw: string;
+  weak_foot: number;
+  strong_foot: number;
+  is_two_footed: boolean;
+  applied_factors: string[];
+  excluded_factors: string[];
 }
 
 export interface PlayerProfileResult {
@@ -216,8 +254,12 @@ export interface PlayerProfileResult {
   name: string;
   season_code: string;
   primary_position: string;
+  analyzed_position: string;
+  position_group_label: string;
+  available_positions: string[];
   grade: number;
   team_color_bonus: number;
+  effective_ovr: number;
   height: number;
   weight: number;
   body_type: string;
@@ -226,7 +268,13 @@ export interface PlayerProfileResult {
   traits: TraitItem[];
   primary_archetype: ArchetypeFitItem | null;
   secondary_archetype: ArchetypeFitItem | null;
+  secondary_Null_reason?: string;
+  position_archetypes: ArchetypeFitItem[];
   all_archetypes: ArchetypeFitItem[];
+  complete_evaluation: CompleteEvaluationResult;
+  physical_foot_analysis: ProfilePhysicalFootAnalysis;
+  judgment_summary: string;
+  role_nuance_note: string;
   strengths: { stat: string; value: number }[];
   weaknesses: { stat: string; value: number }[];
   six_face: Record<string, number>;
@@ -250,6 +298,8 @@ export interface SquadSlot {
   slot_position: string;
   spid: number;
   grade: number;
+  x?: number;
+  y?: number;
 }
 
 export interface SavedSquad {

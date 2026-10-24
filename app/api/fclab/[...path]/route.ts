@@ -161,6 +161,15 @@ export async function GET(
         });
       } else if (sortBy === "salary_asc") {
         filtered.sort((a, b) => a.salary - b.salary || b.ovr - a.ovr);
+      } else if (sortBy === "salary_desc") {
+        filtered.sort((a, b) => b.salary - a.salary || b.ovr - a.ovr);
+      } else if (sortBy === "ovr_asc") {
+        filtered.sort((a, b) => a.ovr - b.ovr || a.bp_1 - b.bp_1);
+      } else if (sortBy === "season_desc") {
+        filtered.sort(
+          (a, b) =>
+            b.season_code.localeCompare(a.season_code) || b.ovr - a.ovr
+        );
       } else if (sortBy === "rating_desc") {
         filtered.sort(
           (a, b) =>
@@ -216,7 +225,7 @@ export async function GET(
         grade,
         teamColor
       );
-      const profile = analyzePlayerProfileSync(card, grade, teamColor);
+      const profile = analyzePlayerProfileSync(card, grade, teamColor, posToUse);
       const priceHistory = await crawlPriceHistory(
         spid,
         Math.min(Math.max(1, grade), rules.maxEnhanceLevel)
@@ -274,7 +283,13 @@ export async function GET(
         );
       }
 
-      const primaryProfile = analyzePlayerProfileSync(card, grade, teamColor);
+      const targetPos = (sp.get("pos") || sp.get("position") || "").trim().toUpperCase();
+      const primaryProfile = analyzePlayerProfileSync(
+        card,
+        grade,
+        teamColor,
+        targetPos || undefined
+      );
       let compareCard = null;
       let compareProfile = null;
 
@@ -284,7 +299,8 @@ export async function GET(
           compareProfile = analyzePlayerProfileSync(
             compareCard,
             grade,
-            teamColor
+            teamColor,
+            targetPos || undefined
           );
         }
       }
@@ -513,7 +529,15 @@ export async function POST(
         );
       }
 
-      const primaryProfile = analyzePlayerProfileSync(card, grade, teamColor);
+      const targetPos = String(body.pos || body.position || "")
+        .trim()
+        .toUpperCase();
+      const primaryProfile = analyzePlayerProfileSync(
+        card,
+        grade,
+        teamColor,
+        targetPos || undefined
+      );
       let compareCard = null;
       let compareProfile = null;
 
@@ -523,7 +547,8 @@ export async function POST(
           compareProfile = analyzePlayerProfileSync(
             compareCard,
             grade,
-            teamColor
+            teamColor,
+            targetPos || undefined
           );
         }
       }
