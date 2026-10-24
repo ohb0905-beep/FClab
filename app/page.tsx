@@ -36,6 +36,8 @@ import SquadLabView from "@/components/fclab/SquadLabView";
 import CardEfficiencyLabView from "@/components/fclab/CardEfficiencyLabView";
 import PlayerProfileLabView from "@/components/fclab/PlayerProfileLabView";
 import MatchLabView from "@/components/fclab/MatchLabView";
+import MarketLabView from "@/components/fclab/MarketLabView";
+import { BarChart3 } from "lucide-react";
 
 interface DashboardState {
   metaCount: number;
@@ -68,6 +70,12 @@ const NAV_ITEMS: {
     label: "선수 유형 분석",
     sub: "Profile Lab",
     icon: Compass,
+  },
+  {
+    id: "market",
+    label: "이적시장·특성 연구소",
+    sub: "Market & Trait Lab",
+    icon: BarChart3,
   },
   { id: "match", label: "전적 분석실", sub: "Match Lab", icon: Activity },
   { id: "saved", label: "저장 보관함", sub: "Saved Items", icon: Bookmark },
@@ -494,6 +502,14 @@ export default function FClabAppPage() {
                       </button>
                       <button
                         type="button"
+                        onClick={() => setActiveTab("market")}
+                        className="px-4 py-2.5 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-300 font-bold text-sm flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                      >
+                        <BarChart3 className="w-4 h-4" />
+                        이적시장 분석·예측·특성 연구소
+                      </button>
+                      <button
+                        type="button"
                         onClick={handleSyncRulesFromWeb}
                         disabled={syncingRules}
                         className="px-3.5 py-2.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 font-semibold text-xs flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
@@ -588,8 +604,8 @@ export default function FClabAppPage() {
                 </div>
               </div>
 
-              {/* 5 Core Labs Shortcut Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+              {/* 6 Core Labs Shortcut Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
                 {[
                   {
                     id: "player" as LabTab,
@@ -620,8 +636,15 @@ export default function FClabAppPage() {
                     metric: "17종 전술 롤 모델",
                   },
                   {
+                    id: "market" as LabTab,
+                    title: "5. Market & Trait Lab",
+                    sub: "이적시장·특성 연구소",
+                    desc: "30일 시계열·섹터 지수, 과열·공포 지수, 4단계 백테스트 예측 및 신규 특성 프리미엄 분석",
+                    metric: "계량 시장·특성 엔진",
+                  },
+                  {
                     id: "match" as LabTab,
-                    title: "5. Match Lab",
+                    title: "6. Match Lab",
                     sub: "전적 분석실",
                     desc: "넥슨 Open API 실경기 텔레메트리 수집 및 매치 휴리스틱스 룰 자동 역추적",
                     metric: dashboard.nexonKeyConfigured
@@ -860,6 +883,13 @@ export default function FClabAppPage() {
               rules={rules}
               onInspectInPlayerLab={openPlayerInPlayerLab}
               onSendToEfficiencyLab={openPlayerInEfficiencyLab}
+            />
+          )}
+
+          {activeTab === "market" && (
+            <MarketLabView
+              initialCards={dashboard.popularCards}
+              onInspectPlayer={(spid) => openPlayerInPlayerLab(spid)}
             />
           )}
 

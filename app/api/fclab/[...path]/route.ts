@@ -22,6 +22,11 @@ import {
   analyzeUserMatchesOnServer,
   NexonServiceError,
 } from "@/lib/server/nexon-match-service";
+import {
+  buildMarketLabDashboard,
+  registerMarketEvent,
+  runIncrementalMarketCollectionBatch,
+} from "@/lib/server/fclab-market-engine";
 
 function nowUtc(): string {
   return new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
@@ -374,6 +379,55 @@ export async function GET(
       });
     }
 
+    // 8. GET /api/fclab/v1/market/overview
+    if (subPath === "v1/market/overview") {
+      const payload = buildMarketLabDashboard();
+      return NextResponse.json({
+        ok: true,
+        ...payload,
+        systemRules: getSystemRules(),
+      });
+    }
+
+    // 9. GET /api/fclab/v1/market/player
+    if (subPath === "v1/market/player") {
+      const rules = getSystemRules();
+      const spid = Number(sp.get("spid") || 0);
+      const grade = Math.max(
+        1,
+        Math.min(rules.maxEnhanceLevel, Number(sp.get("grade") || 1))
+      );
+      if (spid <= 0) {
+        return NextResponse.json(
+          { ok: false, error: "유효한 선수 spid가 필요합니다." },
+          { status: 400 }
+        );
+      }
+      await crawlPlayerAbility(spid);
+      await crawlPriceHistory(spid, grade);
+      const payload = buildMarketLabDashboard();
+      const targetSeries =
+        payload.normalized_series_preview.find(
+          (s) => s.spid === spid && s.grade === grade
+        ) ||
+        payload.normalized_series_preview.find((s) => s.spid === spid) ||
+        null;
+      const targetForecast =
+        payload.player_forecasts.find(
+          (f) => f.spid === spid && f.grade === grade
+        ) ||
+        payload.player_forecasts.find((f) => f.spid === spid) ||
+        null;
+
+      return NextResponse.json({
+        ok: true,
+        series: targetSeries,
+        forecast: targetForecast,
+        dashboard: payload,
+        systemRules: rules,
+      });
+    }
+
     return NextResponse.json(
       { ok: false, error: `지원하지 않는 GET 엔드포인트: ${subPath}` },
       { status: 404 }
@@ -651,6 +705,34 @@ export async function POST(
         const rules = await syncGameRulesFromWeb();
         return NextResponse.json({ ok: true, ...res, systemRules: rules });
       }
+    }
+
+    // 7. POST /api/fclab/v1/market/collect
+    if (subPath === "v1/market/collect") {
+      const batchResult = await runIncrementalMarketCollectionBatch({
+        limit: Number(body.limit || 6),
+        grade: Number(body.grade || 1),
+        targetSeason: String(body.season || ""),
+      });
+      const dashboard = buildMarketLabDashboard();
+      return NextResponse.json({
+        ok: true,
+        batchResult,
+        dashboard,
+        systemRules: getSystemRules(),
+      });
+    }
+
+    // 8. POST /api/fclab/v1/market/events
+    if (subPath === "v1/market/events") {
+      const created = registerMarketEvent(body);
+      const dashboard = buildMarketLabDashboard();
+      return NextResponse.json({
+        ok: true,
+        event: created,
+        dashboard,
+        systemRules: getSystemRules(),
+      });
     }
 
     return NextResponse.json(
