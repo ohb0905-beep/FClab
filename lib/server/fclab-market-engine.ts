@@ -28,87 +28,39 @@ import {
   crawlPlayerAbility,
   crawlPriceHistory,
   getStoreSnapshot,
+  getSystemRules,
+  persistStore,
 } from "@/lib/server/fclab-engine";
+import {
+  OFFICIAL_NEW_TRAITS_CATALOG,
+  OFFICIAL_NEW_TRAIT_NAMES,
+  EXCLUDED_LEGACY_TRAITS_LIST,
+  extractCardNewAndLegacyTraits,
+  classifyGradeTierZone,
+  classifySeasonSectorDynamic,
+  buildDynamicFlagshipCandidates,
+  buildGradeTierComparisons,
+  buildCodeAuditFindings,
+  syncOfficialEventsAndNotices,
+  syncRankerUsageAndRecords,
+  syncCoreGradesPriceHistory,
+} from "@/lib/server/fclab-market-sources";
+
+export {
+  syncOfficialEventsAndNotices,
+  syncRankerUsageAndRecords,
+  syncCoreGradesPriceHistory,
+};
 
 // ============================================================================
-// 1. Season & Capital Tier Classification Rules
+// 1. Dynamic Season & Capital Tier Classification Rules (Zero Hardcoded Sets)
 // ============================================================================
-
-const LIMITED_SEASONS = new Set([
-  "ICONTM",
-  "ICON",
-  "ICONTMKB",
-  "BDO",
-  "TOTM",
-]);
-
-const NEW_META_FLAGSHIP_SEASONS = new Set([
-  "26TOTY",
-  "26TOTN",
-  "26TOTS",
-  "WS",
-  "UC",
-  "25TOTS",
-  "25TOTY",
-  "25TOTN",
-]);
-
-const EXISTING_FLAGSHIP_SEASONS = new Set([
-  "25UCL",
-  "24TOTY",
-  "24TOTN",
-  "24TOTS",
-  "24UCL",
-  "24EP",
-  "23TOTY",
-  "23TOTS",
-  "23UCL",
-  "CU",
-  "DC",
-  "CC",
-  "JNM",
-  "TM",
-  "UT",
-  "FC",
-  "23EP",
-]);
 
 export function classifySeasonSector(seasonCode: string): {
   sector: SeasonSectorType;
   label: string;
 } {
-  const code = (seasonCode || "").toUpperCase().trim();
-  if (LIMITED_SEASONS.has(code)) {
-    return {
-      sector: "LIMITED_DISCONTINUED",
-      label: "공급 제한·단종 레전드 (ICONTM·ICON·BDO)",
-    };
-  }
-  if (NEW_META_FLAGSHIP_SEASONS.has(code)) {
-    return {
-      sector: "NEW_META_FLAGSHIP",
-      label: "신규·최상위 메타 대장 (26TOTY·WS·UC·25TOTS)",
-    };
-  }
-  if (EXISTING_FLAGSHIP_SEASONS.has(code)) {
-    return {
-      sector: "EXISTING_FLAGSHIP",
-      label: "기존 주류 대장 (24TOTY·24TOTS·UCL·CU·DC)",
-    };
-  }
-  if (
-    code.includes("LIVE") ||
-    /^(17|18|19|20|21|22|23|24|25|26)$/.test(code)
-  ) {
-    return {
-      sector: "LIVE_DYNAMIC",
-      label: "라이브·실제 성적 연동 시즌 (LIVE)",
-    };
-  }
-  return {
-    sector: "THEME_TEAMCOLOR",
-    label: "테마·팀컬러 실사용 (25PLA·WB·FAC·KB·HG 등)",
-  };
+  return classifySeasonSectorDynamic(seasonCode);
 }
 
 export function classifyCapitalTier(bp: number): {
@@ -156,147 +108,139 @@ function getPositionGroup(pos: string): "FW" | "MF" | "DF" | "GK" {
 }
 
 // ============================================================================
-// 2. Verified Market Events & Trait Patch History Registry
+// 2. Official Crawled Events & Official New Trait (level: 8) Patch History
 // ============================================================================
 
-const INITIAL_MARKET_EVENTS: MarketEventRecord[] = [
+const OFFICIAL_NEW_TRAIT_PATCH_HISTORY: TraitPatchHistoryItem[] = [
   {
-    id: "evt-26toty-ws-pack-wave",
-    title: "최상위 메타 시즌(26TOTY·WS·UC) 포함 스페셜 패키지 & 픽업 공급 주간",
-    event_type: "PACK_RELEASE",
-    event_type_label: "선수팩·패키지 공급",
-    start_date: "10.01",
-    end_date: "10.10",
-    target_seasons: ["26TOTY", "WS", "UC", "25TOTS", "24TOTY", "CU", "DC"],
-    target_capital_tiers: ["HIGH_CAPITAL_FLAGSHIP", "MID_TIER"],
-    target_grades: [1, 5],
-    bp_injection_scale: "중규모",
-    pack_supply_scale: "대규모",
-    fee_coupon_discount_pct: 30,
-    source: "FC 온라인 공식 프로모션·이적시장 시계열 관측 (10.01~10.10 구간)",
-    verified: true,
-    description:
-      "상위 시즌 픽업 및 스페셜 선수팩 공급 확대로 인해 기존 대장급(24TOTY·CU·DC 등) 및 중간 가격대 카드에 일시적 매물 출회 압력이 발생하고, 단종 시즌(ICONTM)과 상대적 차별화가 나타난 구간입니다.",
-  },
-  {
-    id: "evt-autumn-bp-burning-coupon",
-    title: "추계 버닝 & 이적시장 수수료 30~40% 할인 쿠폰 배포 이벤트",
-    event_type: "FEE_DISCOUNT_COUPON",
-    event_type_label: "수수료 쿠폰·BP 버닝",
-    start_date: "10.09",
-    end_date: "10.16",
-    target_seasons: ["ICONTM", "26TOTY", "WS", "UC", "25TOTY", "25TOTS"],
-    target_capital_tiers: ["ULTRA_HIGH", "HIGH_CAPITAL_FLAGSHIP"],
-    target_grades: [1, 5, 8],
-    bp_injection_scale: "대규모",
-    pack_supply_scale: "중규모",
-    fee_coupon_discount_pct: 40,
-    source: "FC 온라인 공식 이벤트 공지 및 10.09~10.16 시계열 반응 데이터",
-    verified: true,
-    description:
-      "버닝 보상으로 인한 대규모 BP 유입(구매력 상승)과 수수료 40% 할인 쿠폰 지급(차익 실현 매물 출회 및 갈아타기 수요)이 동시에 작용하여 고자본·초고가 섹터 변동성이 확대된 핵심 이벤트 구간입니다.",
-  },
-  {
-    id: "evt-new-trait-meta-shift",
-    title: "신규·상위 특성(크로스 포쳐·아크로바틱 피니셔·패스 마스터) 인게임 선호도 확산",
-    event_type: "TRAIT_ENGINE_PATCH",
-    event_type_label: "특성 메타·체감 변화",
-    start_date: "10.05",
-    end_date: "10.22",
-    target_seasons: ["WS", "26TOTY", "UC", "25TOTS", "25TOTY", "BDO"],
-    target_capital_tiers: ["ULTRA_HIGH", "HIGH_CAPITAL_FLAGSHIP", "MID_TIER"],
-    target_grades: [1, 5],
-    bp_injection_scale: "해당없음",
-    pack_supply_scale: "해당없음",
-    fee_coupon_discount_pct: 0,
-    source: "FC 온라인 데이터센터 특성 보유 현황 및 30일 시계열 상대강도 분석",
-    verified: true,
-    description:
-      "박스 안 마무리와 세컨볼 경합에서 강점을 보이는 신규·상위 특성(크로스 포쳐, 아크로바틱 피니셔) 및 중원 배급 특성(패스 마스터, 커맨더) 보유 카드의 상대 강도가 단순 침투형 대비 견조하게 유지되는지 검증하는 메타 구간입니다.",
-  },
-];
-
-const TRAIT_PATCH_HISTORY: TraitPatchHistoryItem[] = [
-  {
-    id: "patch-trait-01",
-    patch_date: "신규 마스터·상위 특성 도입 패치",
-    title: "크로스 포쳐 · 아크로바틱 피니셔 · 패스 마스터 · 커맨더 등 신규 특성 체계 도입",
+    id: "patch-new-trait-level8-system",
+    patch_date: "공식 신규특성(level: 8, trait_icon_50~68) 시스템 도입 및 +8강 이상 메타 정착",
+    title:
+      "공식 코치헬퍼·데이터센터 기준 level: 8 신규특성 17종 도입 (기존 level: 5 고유특성과 분리)",
     target_traits: [
       "크로스 포쳐",
       "아크로바틱 피니셔",
-      "패스 마스터",
-      "커맨더",
+      "레이저 슈터",
+      "라인 브레이커",
       "스피드스터",
+      "커맨더",
+      "타이탄",
+      "파이터",
     ],
     change_type: "신규 추가",
     summary:
-      "기존 일반 특성(파워 헤더, 긴 패스 선호, 스피드 드리블러 등)보다 발동 상황과 보정 효과가 명확한 상위·특화 특성군이 신규 시즌(WS, 26TOTY, UC, BDO, 25TOTS 등)을 중심으로 부여되었습니다.",
+      "넥슨 공식 데이터(coachHelper 번들 및 PlayerAbility)에서 level: 8(trait_icon_50~68)로 분류되는 공식 신규특성 체계입니다. 예리한 감아차기·중거리 슛 선호·파워 헤더·패스 마스터 등 기존 일반 고유특성(level: 5)은 시세 분석 변수에서 분리·제외하고 오직 공식 신규특성만 시세 프리미엄 및 예측 변수로 반영합니다.",
     observed_market_reaction:
-      "동일 OVR·동일 포지션 내에서도 신규 특화 특성을 복수 보유한 시즌 카드가 구시즌(특성 미보유) 대비 높은 기준가를 형성하며, 특히 공격수 포지션에서 박스 타격 특성 보유 여부가 가격 방어력에 영향을 미침.",
-    verified_source: "FC 온라인 공식 데이터센터 특성(Trait) DB 및 카드별 보유 현황",
+      "+8~+11강 금카 주류 시장에서 동일 포지션·동일 OVR 대비 공식 신규특성(크로스 포쳐, 아크로바틱 피니셔, 커맨더, 타이탄 등) 보유 여부가 시세 프리미엄과 하방 경직성에 유의미한 차이를 형성함.",
+    verified_source:
+      "ssl.nexon.com/s1/fc/online/obt/coachHelper/app.js (level: 8 공식 정의) 및 PlayerAbility DB",
   },
   {
-    id: "patch-trait-02",
-    patch_date: "슈팅 & 침투 밸런스 메타 정착",
-    title: "예리한 감아차기 + 중거리 슛 선호 양대 슈팅 특성의 필수화 및 침투 수비 AI 대응 변화",
-    target_traits: ["예리한 감아차기", "중거리 슛 선호", "라인 브레이커"],
+    id: "patch-new-trait-attack-competition",
+    patch_date: "박스 안 다이렉트 득점 vs 수비 라인 침투 신규특성 메타 분화",
+    title:
+      "공격수 신규특성 경쟁: [크로스 포쳐 · 아크로바틱 피니셔 · 레이저 슈터] vs [라인 브레이커]",
+    target_traits: [
+      "크로스 포쳐",
+      "아크로바틱 피니셔",
+      "레이저 슈터",
+      "라인 브레이커",
+    ],
     change_type: "체감 메타 변화",
     summary:
-      "수비 라인 컨트롤과 박스 밀집 수비가 보편화되면서 단순 직선 뒷공간 침투(라인 브레이커 단독) 의존도보다 박스 앞 ZD/중거리 타격(예리한 감아차기·중거리 슛 선호) 및 크로스·발리 마무리(크로스 포쳐·아크로바틱 피니셔)의 전술적 가치가 부각됨.",
+      "상위 랭커 경기에서 수비 라인 컨트롤이 정교해지면서 단순 배후 침투(라인 브레이커 단독)보다 크로스 낙구 선점(크로스 포쳐), 고유 발리 모션(아크로바틱 피니셔), 논스톱 저탄도 슈팅(레이저 슈터)을 보유한 공격수의 선호도가 상승함.",
     observed_market_reaction:
-      "2선(CAM/LW/RW) 및 중앙 공격수(ST/CF)에서 '예리한 감아차기'와 '중거리 슛 선호' 동시 보유 카드가 비보유 카드 대비 통제 프리미엄을 꾸준히 유지함.",
-    verified_source: "FClab 데이터센터 175종 상세 능력치·특성 표본 및 30일 시세 비교",
+      "+8~+11강 공격수(ST/CF) 시세에서 크로스 포쳐·아크로바틱 피니셔 보유 카드가 라인 브레이커 단독 보유 또는 신규특성 미보유 동급 카드 대비 초과 수익률과 양(+)의 통제 프리미엄을 기록.",
+    verified_source:
+      "fconline.nexon.com/datacenter/dailysquad & PlayerPriceGraph (+8~+11강 시계열 검증)",
   },
   {
-    id: "patch-trait-03",
-    patch_date: "피지컬·수비 경합 특성 재평가",
-    title: "강철몸 · 슬라이딩 태클 선호 · 파워 헤더의 공중볼·몸싸움 경합 기여도 안정화",
-    target_traits: ["강철몸", "파워 헤더", "슬라이딩 태클 선호"],
+    id: "patch-new-trait-defense-midfield",
+    patch_date: "중원·수비 공식 신규특성(커맨더 · 타이탄 · 파이터 · 와일드 태클러) 가치 부각",
+    title:
+      "백스핀 로빙 스루(커맨더) 및 공중볼·대인 경합 제어(타이탄 · 파이터 · 와일드 태클러 · 체이서) 선호도 확대",
+    target_traits: [
+      "커맨더",
+      "2개의 심장",
+      "타이탄",
+      "파이터",
+      "와일드 태클러",
+      "체이서",
+    ],
     change_type: "발동 조건 완화·상향",
     summary:
-      "센터백(CB) 및 수비형 미드필더(CDM), 타깃형 스트라이커(ST)에서 헤더 경합과 부상 방지·밸런스 유지에 관여하는 피지컬 특성군의 실사용 선호도가 유지됨.",
+      "중원(CM/CAM/CDM)에서 낮고 빠른 백스핀 로빙 스루 패스를 구사하는 '커맨더'와, 센터백·풀백에서 상대 질주 속도·킥 정확도를 낮추는 '파이터' 및 공중볼 우위를 점하는 '타이탄'의 실전 기여도가 확인됨.",
     observed_market_reaction:
-      "장신(188cm 이상) + 파워 헤더/강철몸 보유 센터백 및 타깃맨 카드의 시세 하방 경직성이 단신 수비수 대비 높게 관측됨.",
-    verified_source: "FClab 데이터센터 포지션별 특성 분포 및 시계열 변동성 분석",
+      "TOP 10,000 랭커 사용률 상위 수비수·미드필더 중 타이탄·파이터·커맨더 보유 카드의 +8~+11강 가격 방어력이 비보유 카드 대비 우수하게 관측됨.",
+    verified_source:
+      "fconline.nexon.com/Datacenter/BestUsePositionPlayer & /datacenter/dailyrecord",
   },
 ];
 
-let customEventsMemory: MarketEventRecord[] = [...INITIAL_MARKET_EVENTS];
+export function getActiveMarketEvents(): MarketEventRecord[] {
+  const store = getStoreSnapshot();
+  if (Array.isArray(store.marketEvents) && store.marketEvents.length > 0) {
+    return store.marketEvents;
+  }
+  return [];
+}
 
 export function registerMarketEvent(
   partial: Partial<MarketEventRecord>
 ): MarketEventRecord {
+  const store = getStoreSnapshot();
+  const currentList = Array.isArray(store.marketEvents) ? store.marketEvents : [];
+  const syncedAt = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
+
   const newEvt: MarketEventRecord = {
     id: partial.id || `evt-custom-${Date.now()}`,
     title: (partial.title || "신규 등록 시장 이벤트").trim(),
     event_type: partial.event_type || "PACK_RELEASE",
     event_type_label: partial.event_type_label || "시장 이벤트",
+    published_at: partial.published_at || syncedAt.slice(0, 10),
     start_date: partial.start_date || "10.15",
-    end_date: partial.end_date || "10.22",
+    end_date: partial.end_date || "10.23",
+    status: partial.status || "신규",
     target_seasons: Array.isArray(partial.target_seasons)
       ? partial.target_seasons
-      : ["26TOTY", "WS"],
+      : ["25UCL", "WS", "26TOTS"],
     target_capital_tiers: Array.isArray(partial.target_capital_tiers)
       ? partial.target_capital_tiers
       : ["HIGH_CAPITAL_FLAGSHIP"],
     target_grades: Array.isArray(partial.target_grades)
       ? partial.target_grades
-      : [1, 5],
+      : [8, 9, 10, 11],
     bp_injection_scale: partial.bp_injection_scale || "중규모",
     pack_supply_scale: partial.pack_supply_scale || "중규모",
     fee_coupon_discount_pct: Number(partial.fee_coupon_discount_pct || 0),
-    source: partial.source || "운영자 수동 등록 이벤트",
+    official_url: partial.official_url || "https://fconline.nexon.com/news/events/list",
+    last_collected_at: syncedAt,
+    basis: "official_public",
+    source: partial.source || "운영자/공식 공지 기반 등록 이벤트",
     verified: Boolean(partial.verified ?? true),
     description:
       partial.description ||
-      "사용자/운영자가 등록한 이적시장 이벤트 및 패치 기록입니다.",
+      "공식 공지 또는 운영자가 등록한 이적시장 이벤트 및 패치 기록입니다.",
   };
-  customEventsMemory = [
+
+  store.marketEvents = [
     newEvt,
-    ...customEventsMemory.filter((e) => e.id !== newEvt.id),
+    ...currentList.filter((e) => e.id !== newEvt.id),
   ];
+  if (!Array.isArray(store.marketEventChangeLogs)) {
+    store.marketEventChangeLogs = [];
+  }
+  store.marketEventChangeLogs.unshift({
+    detected_at: syncedAt,
+    change_type: "신규 발견",
+    event_id: newEvt.id,
+    title: newEvt.title,
+    detail: `이벤트 레지스트리에 신규 등록됨 (${newEvt.start_date}~${newEvt.end_date})`,
+  });
+  persistStore();
   return newEvt;
 }
+
 
 // ============================================================================
 // 3. Statistical Helper Functions
@@ -470,6 +414,30 @@ export function buildNormalizedMarketSeries(): {
       });
     }
 
+    const { newTraits, legacyTraits } = extractCardNewAndLegacyTraits(card);
+    const { zone: gradeTierZone, label: gradeTierLabel } =
+      classifyGradeTierZone(grade);
+    const posGroup = getPositionGroup(card.primary_position);
+    const tcStringList = (card.team_colors || [])
+      .map((tc: unknown) =>
+        typeof tc === "string"
+          ? tc
+          : tc && typeof tc === "object" && "name" in tc
+            ? String((tc as { name: unknown }).name || "")
+            : ""
+      )
+      .filter(Boolean);
+    const multiSectorTags: string[] = [
+      `시즌분류:${seasonClass.sector}`,
+      `포지션군:${posGroup}(${card.primary_position})`,
+      `가격대:${capClass.tier}`,
+      `강화구간:${gradeTierZone}(+${grade}강)`,
+      newTraits.length > 0
+        ? `공식신규특성(Lv8):${newTraits.join("·")}`
+        : "공식신규특성(Lv8):미보유",
+      ...tcStringList.slice(0, 3).map((tc) => `팀컬러:${tc}`),
+    ];
+
     seriesList.push({
       key,
       spid: card.spid,
@@ -483,6 +451,7 @@ export function buildNormalizedMarketSeries(): {
       ovr: card.ovr,
       salary: card.salary,
       grade,
+      grade_tier_zone: gradeTierZone,
       season_sector: seasonClass.sector,
       season_sector_label: seasonClass.label,
       capital_tier: capClass.tier,
@@ -496,25 +465,42 @@ export function buildNormalizedMarketSeries(): {
       volatility_30d_pct: round2(vol30d),
       max_drawdown_30d_pct: round2(maxDd),
       z_score_30d: round2(zScore),
-      relative_strength_7d: 0, // populated after market benchmark computation
+      relative_strength_7d: 0,
       unit_scale_factor: round2(scaleFactor),
       quality_status: qualityStatus,
       confidence,
       observed_at: normalizedPoints[n - 1].date,
       collected_at: ph.crawled_at || card.crawled_at,
       source: "fconline.nexon.com/datacenter/PlayerPriceGraph",
-      raw_data_reference: `store.priceHistory["${key}"] (${n}일 관측치)`,
+      raw_data_reference: `store.priceHistory["${key}"] (${n}일 관측치, ${gradeTierLabel})`,
       traits: (card.traits || []).map((t) => t.name).filter(Boolean),
+      new_traits: newTraits,
+      legacy_traits: legacyTraits,
+      team_colors: tcStringList,
+      multi_sector_tags: multiSectorTags,
       points: normalizedPoints,
     });
   }
 
-  const marketRet7d = mean(seriesList.map((s) => s.return_7d_pct));
+  // Exclude +12~+13강 ultra-low-liquidity series from distorting the market benchmark return
+  const coreBenchPool = seriesList.filter((s) => s.grade >= 8 && s.grade <= 11);
+  const benchPool =
+    coreBenchPool.length >= 5
+      ? coreBenchPool
+      : seriesList.filter((s) => s.grade <= 11);
+  const marketRet7d = mean(benchPool.map((s) => s.return_7d_pct));
   for (const s of seriesList) {
     s.relative_strength_7d = round2(s.return_7d_pct - marketRet7d);
   }
 
-  seriesList.sort((a, b) => b.current_bp - a.current_bp);
+  // Sort prioritizing Core Grades (+8~+11강) first, then by BP
+  seriesList.sort((a, b) => {
+    const aCore = a.grade >= 8 && a.grade <= 11 ? 1 : 0;
+    const bCore = b.grade >= 8 && b.grade <= 11 ? 1 : 0;
+    if (aCore !== bCore) return bCore - aCore;
+    return b.current_bp - a.current_bp;
+  });
+
   return {
     seriesList,
     unitConversionRecords: unitConversionRecords.slice(0, 24),
@@ -522,7 +508,7 @@ export function buildNormalizedMarketSeries(): {
 }
 
 // ============================================================================
-// 5. Multi-Axis Sector Analysis Engine
+// 5. Multi-Axis Dynamic Sector Analysis Engine (Multi-Membership Supported)
 // ============================================================================
 
 function computeFearGreedBand(score: number): {
@@ -573,8 +559,12 @@ export function buildMultiAxisSectors(
   seasonSectors: MarketSectorSummary[];
   capitalTierSectors: MarketSectorSummary[];
   gradeSectors: MarketSectorSummary[];
+  multiAxisSectors: MarketSectorSummary[];
 } {
-  // 1) Season Sectors
+  // Exclude +12~+13강 from distorting general season/capital/position sectors
+  const nonUltraSeries = seriesList.filter((s) => s.grade <= 11);
+
+  // 1) Dynamic Season & Supply Structure Sectors (Zero hardcoded season lists)
   const seasonDefs: {
     code: SeasonSectorType;
     name: string;
@@ -584,41 +574,41 @@ export function buildMultiAxisSectors(
   }[] = [
     {
       code: "LIMITED_DISCONTINUED",
-      name: "공급 제한·단종 시즌 (ICONTM·ICON·BDO)",
+      name: "공급 제한·레전드 클래스 (공식 클래스 메타·희소 공급)",
       description:
-        "재출시나 일반 패키지 대량 공급이 제한되어 희소성과 하방 경직성이 높은 최상위 레전드 섹터",
+        "공식 클래스 메타데이터상 레전드·모먼트 등급으로 일반 패키지 대량 공급이 제한되어 하방 경직성이 높은 섹터",
       supplyExposure: "낮음 (공급 제한)",
       replacementRisk: "낮음",
     },
     {
       code: "NEW_META_FLAGSHIP",
-      name: "신규·최상위 메타 대장 (26TOTY·WS·UC·25TOTS)",
+      name: "데이터 판별 최상위 메타 시즌 (랭커 점유율·신규특성 밀도 상위)",
       description:
-        "최신 OVR 스펙과 신규 마스터 특성(크로스 포쳐·아크로바틱 피니셔 등)을 탑재해 현 메타 수요를 주도하는 섹터",
+        "TOP 10,000 랭커 시즌 점유율 상위권 및 공식 신규특성(level: 8) 보유 밀도가 높은 현 메타 주도 섹터",
       supplyExposure: "보통",
       replacementRisk: "낮음",
     },
     {
       code: "EXISTING_FLAGSHIP",
-      name: "기존 주류 대장 (24TOTY·24TOTS·UCL·CU·DC)",
+      name: "데이터 판별 주류 경쟁 시즌 (중상위 랭커 사용률·주전급 스펙)",
       description:
-        "여전히 높은 실사용 성능을 보유하나 신규 상위 시즌 출시 및 패키지 공급 이벤트 시 가격 조정을 받기 쉬운 섹터",
+        "여전히 준수한 랭커 사용률과 주전급 스펙을 보유하나 신규 상위 시즌 출시 및 패키지 공급 시 가격 조정을 받는 섹터",
       supplyExposure: "높음 (패키지·이벤트 노출)",
       replacementRisk: "높음 (상위 시즌 대체 위험)",
     },
     {
       code: "THEME_TEAMCOLOR",
-      name: "테마·팀컬러 실사용 (25PLA·WB·FAC·KB·HG 등)",
+      name: "테마·팀컬러·급여 최적화 실사용 시즌",
       description:
-        "특정 클럽·국가 팀컬러 및 급여 최적화 목적으로 꾸준한 실사용 수요가 유지되는 중저자본 핵심 섹터",
+        "클럽·국가 단일 팀컬러 및 급여(Salary Cap) 최적화 목적으로 +8~+11강 금카 수요가 유지되는 실사용 섹터",
       supplyExposure: "높음 (패키지·이벤트 노출)",
       replacementRisk: "보통",
     },
     {
       code: "LIVE_DYNAMIC",
-      name: "라이브·실제 성적 연동 시즌 (LIVE)",
+      name: "라이브·실제 성적 연동 시즌 (실제 경기 퍼포먼스 연동)",
       description:
-        "실제 축구 활약도에 따른 라이브 부스트와 강화 재료 수요에 의해 움직이는 섹터",
+        "실제 축구 리그 활약도에 따른 라이브 부스트와 강화 재료 수요에 의해 움직이는 섹터",
       supplyExposure: "높음 (패키지·이벤트 노출)",
       replacementRisk: "낮음",
     },
@@ -628,7 +618,7 @@ export function buildMultiAxisSectors(
     const catalogMembers = allCards.filter(
       (c) => classifySeasonSector(c.season_code).sector === def.code && c.bp_1 > 0
     );
-    const tsMembers = seriesList.filter((s) => s.season_sector === def.code);
+    const tsMembers = nonUltraSeries.filter((s) => s.season_sector === def.code);
     return summarizeSectorGroup({
       sectorId: `season-${def.code}`,
       axis: "season",
@@ -643,7 +633,7 @@ export function buildMultiAxisSectors(
     });
   });
 
-  // 2) Capital Tier Sectors
+  // 2) Capital Tier Sectors (Evaluated on +8강 Core Gold standard BP when available)
   const capDefs: {
     code: CapitalTierType;
     name: string;
@@ -655,7 +645,7 @@ export function buildMultiAxisSectors(
       code: "ULTRA_HIGH",
       name: "초고가 하이엔드 (1조 BP 이상)",
       description:
-        "최상위 구단주 수요와 희소 매물 중심의 초고가 영역으로, 수수료 할인 쿠폰과 대형 BP 버닝에 민감한 섹터",
+        "최상위 구단주 수요와 희소 매물 중심의 초고가 영역으로, 수수료 할인 쿠폰과 대형 BP 이벤트에 민감한 섹터",
       supplyExposure: "낮음 (공급 제한)",
       replacementRisk: "낮음",
     },
@@ -663,7 +653,7 @@ export function buildMultiAxisSectors(
       code: "HIGH_CAPITAL_FLAGSHIP",
       name: "고자본 대장급 (1,000억 ~ 1조 BP)",
       description:
-        "공식경기 상위 티어 주전급 카드로, 메타 특성 선호도와 신규 시즌 대체 효과의 영향을 직접 받는 핵심 섹터",
+        "공식경기 상위 티어 +8~+11강 주전급 카드로, 공식 신규특성(level: 8) 선호도와 신규 시즌 대체 효과를 직접 받는 핵심 섹터",
       supplyExposure: "보통",
       replacementRisk: "보통",
     },
@@ -679,7 +669,7 @@ export function buildMultiAxisSectors(
       code: "LOW_BUDGET_PRACTICAL",
       name: "저자본 실사용 (10억 ~ 100억 BP)",
       description:
-        "급여 조절용 및 복귀·무과금 유저의 가성비 스쿼드에 편입되어 변동성이 비교적 완만한 실사용 섹터",
+        "급여 조절용 및 가성비 스쿼드에 편입되어 변동성이 비교적 완만한 실사용 섹터",
       supplyExposure: "높음 (패키지·이벤트 노출)",
       replacementRisk: "보통",
     },
@@ -687,17 +677,18 @@ export function buildMultiAxisSectors(
       code: "ENHANCEMENT_FODDER",
       name: "강화 재료·엔트리 (10억 BP 미만)",
       description:
-        "강화 데이 이벤트 및 동일 OVR 재료 수요에 따라 하한가·상한가 사이를 오가는 엔트리 섹터",
+        "강화 이벤트 및 동일 OVR 재료 수요에 따라 움직이는 엔트리 섹터",
       supplyExposure: "높음 (패키지·이벤트 노출)",
       replacementRisk: "낮음",
     },
   ];
 
   const capitalTierSectors: MarketSectorSummary[] = capDefs.map((def) => {
-    const catalogMembers = allCards.filter(
-      (c) => c.bp_1 > 0 && classifyCapitalTier(c.bp_1).tier === def.code
-    );
-    const tsMembers = seriesList.filter((s) => s.capital_tier === def.code);
+    const catalogMembers = allCards.filter((c) => {
+      const refBp = c.prices?.["8"]?.bp || c.bp_8 || c.bp_1;
+      return refBp > 0 && classifyCapitalTier(refBp).tier === def.code;
+    });
+    const tsMembers = nonUltraSeries.filter((s) => s.capital_tier === def.code);
     return summarizeSectorGroup({
       sectorId: `cap-${def.code}`,
       axis: "capital_tier",
@@ -712,60 +703,93 @@ export function buildMultiAxisSectors(
     });
   });
 
-  // 3) Enhancement Grade Sectors (using multi-grade price distribution across all cards + grade series)
+  // 3) Enhancement Grade Sectors (+8, +9, +10, +11강 Core Gold Standard vs +12~+13강 Separated vs +1/+5강 Sub)
   const gradeDefs = [
     {
-      code: "GRADE_1",
-      gradeNum: 1,
-      name: "+1강 (기본·명함 시장)",
+      code: "GRADE_CORE_8",
+      grades: [8],
+      primaryGradeKey: "8",
+      name: "+8강 (금카 진입·신규특성 & 팀컬러 핵심 기준 시장)",
       description:
-        "선수팩 개봉 직후 직접 공급되는 기준 시장으로, 패키지 공급 이벤트와 기초 희소성을 가장 먼저 반영",
-      supplyExposure: "높음 (패키지·이벤트 노출)" as const,
-      replacementRisk: "보통" as const,
-    },
-    {
-      code: "GRADE_5",
-      gradeNum: 5,
-      name: "+5강 (은카 주류 실사용 시장)",
-      description:
-        "단일·케미스트리 효과를 본격적으로 받는 실사용 표준 단계로, 강화 재료비와 실사용 수요가 결합된 시장",
+        "공식 신규특성(level: 8)과 금카 팀컬러 효과가 결합되는 이적시장 표준 기준 단계 (+8강 시계열 관측 기반)",
       supplyExposure: "보통" as const,
-      replacementRisk: "보통" as const,
+      replacementRisk: "낮음" as const,
     },
     {
-      code: "GRADE_8",
-      gradeNum: 8,
-      name: "+8강 이상 (금카·초월 고강 시장)",
+      code: "GRADE_CORE_9",
+      grades: [9],
+      primaryGradeKey: "9",
+      name: "+9강 (고성능 주전 금카 핵심 시장)",
       description:
-        "강화 성공 확률 제약으로 인해 공급이 극도로 제한되며, 호가 공백과 변동성이 큰 고위험·고희소 시장",
+        "상위 랭커 스쿼드에서 주전 비중이 높은 고성능 금카 단계 (+8강 대비 강화 배율 및 희소성 상승 구간)",
       supplyExposure: "낮음 (공급 제한)" as const,
       replacementRisk: "낮음" as const,
+    },
+    {
+      code: "GRADE_CORE_10_11",
+      grades: [10, 11],
+      primaryGradeKey: "10",
+      name: "+10~+11강 (최상위 랭커 실사용 엔드급 금카 시장)",
+      description:
+        "TOP 10,000 랭커 포지션별 최다 사용 리스트에서 높은 비중을 차지하는 최상위 실사용 핵심 구간",
+      supplyExposure: "낮음 (공급 제한)" as const,
+      replacementRisk: "낮음" as const,
+    },
+    {
+      code: "GRADE_SEPARATED_12_13",
+      grades: [12, 13],
+      primaryGradeKey: "12",
+      name: "+12~+13강 [고가·저유동성 분리 구간] (전체 시세 평균 왜곡 방지)",
+      description:
+        "극소수 매물과 초고가 호가 공백으로 인해 단 1건의 거래로도 시세가 급변하므로 일반 시장 지수에서 분리 집계하는 특수 구간",
+      supplyExposure: "낮음 (공급 제한)" as const,
+      replacementRisk: "낮음" as const,
+    },
+    {
+      code: "GRADE_SUB_1_5",
+      grades: [1, 5],
+      primaryGradeKey: "5",
+      name: "+1~+5강 (명함·은카 하위 참조·강화 재료 시장)",
+      description:
+        "선수팩 초기 공급 및 강화 재료 시세를 확인하기 위한 하위 보조 참조 구간 (주류 +8~+11강 분석과 분리)",
+      supplyExposure: "높음 (패키지·이벤트 노출)" as const,
+      replacementRisk: "보통" as const,
     },
   ];
 
   const gradeSectors: MarketSectorSummary[] = gradeDefs.map((def) => {
-    const gKey = String(def.gradeNum);
+    const gKey = def.primaryGradeKey;
     const cardsWithGradePrice = allCards.filter(
       (c) => (c.prices?.[gKey]?.bp || 0) > 0
     );
-    const tsMembers = seriesList.filter((s) =>
-      def.gradeNum === 8 ? s.grade >= 8 : s.grade === def.gradeNum
-    );
-    // If time-series sample for +5/+8 is small, we explicitly report low coverage/confidence
+    const tsMembers = seriesList.filter((s) => def.grades.includes(s.grade));
     const bps = cardsWithGradePrice.map((c) => c.prices[gKey].bp);
-    const avgBp = mean(bps);
-    const medBp = median(bps);
-    const ret1d = tsMembers.length > 0 ? mean(tsMembers.map((s) => s.return_1d_pct)) : 0;
-    const ret7d = tsMembers.length > 0 ? mean(tsMembers.map((s) => s.return_7d_pct)) : 0;
-    const ret14d = tsMembers.length > 0 ? mean(tsMembers.map((s) => s.return_14d_pct)) : 0;
-    const ret30d = tsMembers.length > 0 ? mean(tsMembers.map((s) => s.return_30d_pct)) : 0;
-    const vol = tsMembers.length > 0 ? mean(tsMembers.map((s) => s.volatility_30d_pct)) : 0;
+    const avgBp =
+      bps.length > 0 ? mean(bps) : mean(tsMembers.map((s) => s.current_bp));
+    const medBp =
+      bps.length > 0 ? median(bps) : median(tsMembers.map((s) => s.current_bp));
+    const ret1d =
+      tsMembers.length > 0 ? mean(tsMembers.map((s) => s.return_1d_pct)) : 0;
+    const ret7d =
+      tsMembers.length > 0 ? mean(tsMembers.map((s) => s.return_7d_pct)) : 0;
+    const ret14d =
+      tsMembers.length > 0 ? mean(tsMembers.map((s) => s.return_14d_pct)) : 0;
+    const ret30d =
+      tsMembers.length > 0 ? mean(tsMembers.map((s) => s.return_30d_pct)) : 0;
+    const vol =
+      tsMembers.length > 0
+        ? mean(tsMembers.map((s) => s.volatility_30d_pct))
+        : 0;
     const advCount = tsMembers.filter((s) => s.return_7d_pct > 0.5).length;
     const decCount = tsMembers.filter((s) => s.return_7d_pct < -0.5).length;
     const totalTs = Math.max(1, tsMembers.length);
     const fgScore =
       tsMembers.length > 0
-        ? clamp(Math.round(50 + ret7d * 2.5 + ((advCount - decCount) / totalTs) * 20), 5, 95)
+        ? clamp(
+            Math.round(50 + ret7d * 2.5 + ((advCount - decCount) / totalTs) * 20),
+            5,
+            95
+          )
         : 50;
 
     return {
@@ -781,7 +805,13 @@ export function buildMultiAxisSectors(
           ? round2((tsMembers.length / cardsWithGradePrice.length) * 100)
           : 0,
       confidence_level:
-        tsMembers.length >= 20 ? "high" : tsMembers.length >= 5 ? "medium" : "low",
+        tsMembers.length >= 12
+          ? "high"
+          : tsMembers.length >= 4
+            ? "medium"
+            : "low",
+      basis:
+        tsMembers.length >= 2 ? "observed" : "on_hold_insufficient_data",
       avg_bp: Math.round(avgBp),
       avg_bp_text: formatBpKorean(Math.round(avgBp)),
       median_bp: Math.round(medBp),
@@ -836,12 +866,129 @@ export function buildMultiAxisSectors(
     };
   });
 
-  return { seasonSectors, capitalTierSectors, gradeSectors };
+  // 4) Dynamic Multi-Membership Sectors (Position/Role, Team Color, Official New Trait Possession, Ranker Meta)
+  const multiAxisSectors: MarketSectorSummary[] = [
+    summarizeSectorGroup({
+      sectorId: "pos-FW-STRIKER",
+      axis: "position_role",
+      code: "POS_FW",
+      name: "[포지션·역할] 전방 공격수·윙어 (ST·CF·LW·RW)",
+      description:
+        "득점력과 공식 신규특성(크로스 포쳐·아크로바틱 피니셔·스피드스터) 유무에 따라 가장 높은 프리미엄이 형성되는 포지션 섹터",
+      catalogCards: allCards.filter((c) => getPositionGroup(c.primary_position) === "FW"),
+      tsMembers: nonUltraSeries.filter(
+        (s) => getPositionGroup(s.primary_position) === "FW"
+      ),
+      marketRet7d,
+      supplyExposure: "보통",
+      replacementRisk: "보통",
+    }),
+    summarizeSectorGroup({
+      sectorId: "pos-MF-CONTROL",
+      axis: "position_role",
+      code: "POS_MF",
+      name: "[포지션·역할] 중원·2선 플레이메이커 (CAM·CM·CDM)",
+      description:
+        "양발·중거리 및 공식 신규특성(커맨더·레이저 슈터·2개의 심장) 보유 여부가 시세를 좌우하는 중원 섹터",
+      catalogCards: allCards.filter((c) => getPositionGroup(c.primary_position) === "MF"),
+      tsMembers: nonUltraSeries.filter(
+        (s) => getPositionGroup(s.primary_position) === "MF"
+      ),
+      marketRet7d,
+      supplyExposure: "보통",
+      replacementRisk: "보통",
+    }),
+    summarizeSectorGroup({
+      sectorId: "pos-DF-SHIELD",
+      axis: "position_role",
+      code: "POS_DF",
+      name: "[포지션·역할] 수비 라인·골키퍼 (CB·LB·RB·GK)",
+      description:
+        "급여 효율과 피지컬·수비 신규특성(타이탄·파이터·와일드 태클러·체이서)이 가격 방어력을 결정하는 수비 섹터",
+      catalogCards: allCards.filter((c) =>
+        ["DF", "GK"].includes(getPositionGroup(c.primary_position))
+      ),
+      tsMembers: nonUltraSeries.filter((s) =>
+        ["DF", "GK"].includes(getPositionGroup(s.primary_position))
+      ),
+      marketRet7d,
+      supplyExposure: "보통",
+      replacementRisk: "낮음",
+    }),
+    summarizeSectorGroup({
+      sectorId: "trait-NEW-LV8-HOLDERS",
+      axis: "new_trait",
+      code: "NEW_TRAIT_LV8_YES",
+      name: "[신규특성 유무] 공식 신규특성(level: 8) 보유 카드군",
+      description:
+        "공식 코치헬퍼 기준 level: 8 신규특성(trait_icon_50~68)을 1개 이상 보유한 카드 섹터 (기존 level: 5 일반 특성 제외)",
+      catalogCards: allCards.filter(
+        (c) =>
+          c.has_full_ability &&
+          extractCardNewAndLegacyTraits(c).newTraits.length > 0
+      ),
+      tsMembers: nonUltraSeries.filter((s) => (s.new_traits || []).length > 0),
+      marketRet7d,
+      supplyExposure: "낮음 (공급 제한)",
+      replacementRisk: "낮음",
+    }),
+    summarizeSectorGroup({
+      sectorId: "trait-NEW-LV8-NONE",
+      axis: "new_trait",
+      code: "NEW_TRAIT_LV8_NO",
+      name: "[신규특성 유무] 공식 신규특성(level: 8) 미보유 카드군",
+      description:
+        "기존 일반 고유특성(level: 5)만 보유하거나 신규특성이 부여되지 않은 카드 섹터로, 상위 시즌 출시 시 대체 압력 비교 대조군",
+      catalogCards: allCards.filter(
+        (c) =>
+          c.has_full_ability &&
+          extractCardNewAndLegacyTraits(c).newTraits.length === 0
+      ),
+      tsMembers: nonUltraSeries.filter((s) => (s.new_traits || []).length === 0),
+      marketRet7d,
+      supplyExposure: "높음 (패키지·이벤트 노출)",
+      replacementRisk: "높음 (상위 시즌 대체 위험)",
+    }),
+    summarizeSectorGroup({
+      sectorId: "tc-TOP-CLUB-NATION",
+      axis: "team_color",
+      code: "TC_POPULAR",
+      name: "[인기 팀컬러] TOP 랭커 주류 클럽·국가 팀컬러 소속군",
+      description:
+        "바르셀로나·레알 마드리드·바이에른 뮌헨·첼시·AC밀란·대한민국·프랑스·잉글랜드 등 랭커 점유율 상위 팀컬러에 소속된 카드군",
+      catalogCards: allCards.filter((c) =>
+        (c.team_colors || []).some((tc: unknown) => {
+          const tcStr =
+            typeof tc === "string"
+              ? tc
+              : tc && typeof tc === "object" && "name" in tc
+                ? String((tc as { name: unknown }).name || "")
+                : "";
+          return /(바르셀로나|레알 마드리드|뮌헨|첼시|밀란|맨체스터|리버풀|유벤투스|아스널|인테르|대한민국|프랑스|잉글랜드|네덜란드|브라질|독일)/.test(
+            tcStr
+          );
+        })
+      ),
+      tsMembers: nonUltraSeries.filter((s) =>
+        (s.team_colors || []).some((tc) =>
+          /(바르셀로나|레알 마드리드|뮌헨|첼시|밀란|맨체스터|리버풀|유벤투스|아스널|인테르|대한민국|프랑스|잉글랜드|네덜란드|브라질|독일)/.test(
+            tc
+          )
+        )
+      ),
+      marketRet7d,
+      supplyExposure: "보통",
+      replacementRisk: "낮음",
+    }),
+  ];
+
+  return { seasonSectors, capitalTierSectors, gradeSectors, multiAxisSectors };
 }
+
 
 function summarizeSectorGroup(params: {
   sectorId: string;
-  axis: "season" | "capital_tier";
+  axis: MarketSectorSummary["axis"];
   code: string;
   name: string;
   description: string;
@@ -864,15 +1011,21 @@ function summarizeSectorGroup(params: {
     replacementRisk,
   } = params;
 
-  const catalogBps = catalogCards.map((c) => c.bp_1).filter((v) => v > 0);
+  const catalogBps = catalogCards
+    .map((c) => c.prices?.["8"]?.bp || c.bp_8 || c.bp_1)
+    .filter((v) => v > 0);
   const avgBp =
-    catalogBps.length > 0
-      ? mean(catalogBps)
-      : mean(tsMembers.map((s) => s.current_bp));
+    tsMembers.length > 0
+      ? mean(tsMembers.map((s) => s.current_bp))
+      : catalogBps.length > 0
+        ? mean(catalogBps)
+        : 0;
   const medBp =
-    catalogBps.length > 0
-      ? median(catalogBps)
-      : median(tsMembers.map((s) => s.current_bp));
+    tsMembers.length > 0
+      ? median(tsMembers.map((s) => s.current_bp))
+      : catalogBps.length > 0
+        ? median(catalogBps)
+        : 0;
 
   const nTs = tsMembers.length;
   const ret1d = nTs > 0 ? mean(tsMembers.map((s) => s.return_1d_pct)) : 0;
@@ -908,7 +1061,8 @@ function summarizeSectorGroup(params: {
     timeseries_sample_count: nTs,
     coverage_ratio:
       catalogCards.length > 0 ? round2((nTs / catalogCards.length) * 100) : 0,
-    confidence_level: nTs >= 15 ? "high" : nTs >= 5 ? "medium" : "low",
+    confidence_level:
+      nTs >= 12 ? "high" : nTs >= 5 ? "medium" : nTs >= 2 ? "low" : "on_hold_insufficient_data",
     avg_bp: Math.round(avgBp),
     avg_bp_text: formatBpKorean(Math.round(avgBp)),
     median_bp: Math.round(medBp),
@@ -980,20 +1134,15 @@ export function buildMarketFearGreedIndex(
   );
   const sectorDiffusionPct = (positiveSectors / activeSectorCount) * 100;
 
-  // Component 1: Market Breadth (Advance vs Decline) - Weight 25%
   const c1Score = Math.round(clamp(50 + (advPct - decPct) * 0.55, 0, 100));
-  // Component 2: Short/Mid-term Momentum (1d/7d/14d return) - Weight 25%
   const c2Score = Math.round(
     clamp(50 + avgRet7d * 3.0 + avgRet14d * 1.2 + avgRet1d * 2.5, 0, 100)
   );
-  // Component 3: Surge vs Plunge Tail Asymmetry - Weight 20%
   const c3Score = Math.round(clamp(50 + (surgePct - plungePct) * 0.9, 0, 100));
-  // Component 4: Realized Volatility & Drawdown Regime - Weight 15%
-  const avgMaxDd = mean(seriesList.map((s) => s.max_drawdown_30d_pct)); // negative value
+  const avgMaxDd = mean(seriesList.map((s) => s.max_drawdown_30d_pct));
   const c4Score = Math.round(
     clamp(75 - avgVol30d * 5.5 + avgMaxDd * 0.9, 0, 100)
   );
-  // Component 5: Multi-Sector Diffusion (대장·단종·실사용 동조화) - Weight 15%
   const c5Score = Math.round(
     clamp(20 + sectorDiffusionPct * 0.65 + avgRet7d * 1.5, 0, 100)
   );
@@ -1066,7 +1215,6 @@ export function buildMarketFearGreedIndex(
     },
   ];
 
-  // Build 30-day historical Fear & Greed curve from actual daily time-series points
   const fullSeries = seriesList.filter((s) => s.points.length >= 28);
   const len =
     fullSeries.length > 0
@@ -1124,11 +1272,11 @@ export function buildMarketFearGreedIndex(
 
   let summaryComment = "";
   if (overallScore < 40) {
-    summaryComment = `현재 FC 온라인 이적시장 심리지수는 ${overallScore}점(${band})으로, 단기 하락 종목 비중(${round2(decPct)}%)이 상승 종목(${round2(advPct)}%)을 상회하며 매수 심리가 위축된 조정 국면입니다. 단종(ICONTM) 및 핵심 메타 특성 보유 대장주를 중심으로 분할 매수 타점을 탐색하기에 유리한 구간입니다.`;
+    summaryComment = `현재 FC 온라인 이적시장 심리지수는 ${overallScore}점(${band}, +8~+11강 주류 기준)으로, 단기 하락 종목 비중(${round2(decPct)}%)이 상승 종목(${round2(advPct)}%)을 상회하며 매수 심리가 위축된 조정 국면입니다. 공식 신규특성(크로스 포쳐·아크로바틱 피니셔·커맨더·타이탄 등 level: 8) 보유 대장주를 중심으로 분할 매수 타점을 탐색하기에 유리한 구간입니다.`;
   } else if (overallScore >= 60) {
-    summaryComment = `현재 FC 온라인 이적시장 심리지수는 ${overallScore}점(${band})으로, 상승 확산도(${round2(advPct)}%)와 단기 모멘텀이 강하게 유입되는 과열 국면입니다. 추격 매수 시 패키지 공급이나 수수료 쿠폰 종료 직후의 단기 되돌림 리스크에 유의해야 합니다.`;
+    summaryComment = `현재 FC 온라인 이적시장 심리지수는 ${overallScore}점(${band}, +8~+11강 주류 기준)으로, 상승 확산도(${round2(advPct)}%)와 단기 모멘텀이 강하게 유입되는 과열 국면입니다. 추격 매수 시 패키지 공급이나 수수료 쿠폰 종료 직후의 단기 되돌림 리스크에 유의해야 합니다.`;
   } else {
-    summaryComment = `현재 FC 온라인 이적시장 심리지수는 ${overallScore}점(${band})으로, 전체 시장의 급격한 쏠림 없이 시즌·자본대별 차별화 장세가 전개되고 있습니다. 공급 제한 시즌과 신규 메타 특성(크로스 포쳐·아크로바틱 피니셔·패스 마스터) 보유 카드의 상대 강도가 시장을 지지하고 있습니다.`;
+    summaryComment = `현재 FC 온라인 이적시장 심리지수는 ${overallScore}점(${band}, +8~+11강 주류 기준)으로, 전체 시장의 급격한 쏠림 없이 시즌·자본대·신규특성 보유 여부별 차별화 장세가 전개되고 있습니다. 공식 신규특성(크로스 포쳐·아크로바틱 피니셔·커맨더·타이탄) 보유 카드의 상대 강도가 시장을 지지하고 있습니다.`;
   }
 
   return {
@@ -1144,7 +1292,7 @@ export function buildMarketFearGreedIndex(
         ? round2((seriesList.length / allCards.length) * 100)
         : 0,
     unobservable_Exclusion_note:
-      "넥슨 공식 Open API 및 데이터센터는 전체 유저의 실시간 호가창 잔량(Order Book Depth)과 전체 체결 거래량(Transaction Volume)을 공개하지 않으므로, 본 지수는 가짜 거래량을 생성하지 않고 실제 관측된 시계열 등락 확산도(Breadth), 수익률 모멘텀, 꼬리 비대칭, 실현 변동성 데이터만으로 엄밀하게 산출됩니다.",
+      "넥슨 공식 Open API 및 데이터센터는 전체 유저의 실시간 호가창 잔량(Order Book Depth)과 전체 체결 거래량(Transaction Volume)을 공개하지 않으므로, 본 지수는 가짜 거래량을 생성하지 않고 +8~+11강 주류 시장의 실제 관측된 시계열 등락 확산도(Breadth), 수익률 모멘텀, 꼬리 비대칭, 실현 변동성 데이터만으로 산출됩니다 (+12~+13강 초저유동성 구간 분리).",
     components,
     history_30d: history30d,
     by_season_sector: seasonSectors
@@ -1177,7 +1325,6 @@ export function buildMarketFearGreedIndex(
 function findDateIndex(points: MarketNormalizedPoint[], targetDate: string): number {
   const exact = points.findIndex((p) => p.date === targetDate);
   if (exact !== -1) return exact;
-  // Parse M.DD
   const toVal = (d: string) => {
     const [m, day] = d.split(".").map(Number);
     return (m || 10) * 100 + (day || 1);
@@ -1201,8 +1348,9 @@ export function analyzeMarketEvents(
   events: MarketEventRecord[];
   impacts: MarketEventImpactReport[];
 } {
+  const activeEvents = getActiveMarketEvents();
   const fullSeries = seriesList.filter((s) => s.points.length >= 25);
-  const impacts: MarketEventImpactReport[] = customEventsMemory.map((event) => {
+  const impacts: MarketEventImpactReport[] = activeEvents.map((event) => {
     const affected = fullSeries.filter(
       (s) =>
         event.target_seasons.includes(s.season_code) ||
@@ -1278,7 +1426,6 @@ export function analyzeMarketEvents(
     const didNetEffect = round2(duringAvg - ctrlDuringAvg);
     const volChange = round2(mean(volChanges));
 
-    // Scenario modeling for BP vs Pack Supply
     const bpScaleBase =
       event.bp_injection_scale === "대규모"
         ? 4.2
@@ -1325,15 +1472,14 @@ export function analyzeMarketEvents(
     ];
 
     const couponPct = event.fee_coupon_discount_pct || 0;
-    // FC Online base market tax is 40%. TOP Class (20%) + PC Room (30%) = 50% base discount + coupon
     const baseTax = 40;
-    const topPcDiscount = 50; // 20% + 30%
+    const topPcDiscount = 50;
     const totalDiscount = clamp(topPcDiscount + couponPct, 0, 95);
     const effectiveFeeRate = round2(baseTax * (1 - totalDiscount / 100));
 
     return {
       event,
-      affected_sector_name: `대상 시즌(${event.target_seasons.slice(0, 4).join("·")}) 및 자본대`,
+      affected_sector_name: `대상 시즌(${event.target_seasons.slice(0, 4).join("·")}) 및 +8~+11강 주류`,
       control_sector_name: "비대상 대조군 섹터 (Control Group)",
       affected_sample_count: affGroup.length,
       control_sample_count: ctrlGroup.length,
@@ -1348,7 +1494,7 @@ export function analyzeMarketEvents(
         didNetEffect < -1.0
           ? `이벤트 기간 중 대상 섹터 수익률(${duringAvg}%)이 대조군(${ctrlDuringAvg}%) 대비 ${didNetEffect}%p 낮게 관측되어 패키지 매물 공급 희석 효과가 BP 유입 효과를 우세하게 압도했습니다.`
           : didNetEffect > 1.0
-            ? `이벤트 기간 중 대상 섹터가 대조군 대비 +${didNetEffect}%p 초과 수익률을 기록하여, BP 유입·수수료 쿠폰을 활용한 상위 카드 갈아타기 매수세가 매물 부담을 흡수했습니다.`
+            ? `이벤트 기간 중 대상 섹터가 대조군 대비 +${didNetEffect}%p 초과 수익률을 기록하여, BP 유입·수수료 쿠폰을 활용한 상위 카드(+8~+11강) 갈아타기 매수세가 매물 부담을 흡수했습니다.`
             : `이벤트 기간 중 대상 섹터(${duringAvg}%)와 대조군(${ctrlDuringAvg}%) 간 격차(${didNetEffect}%p)가 제한적이어서 BP 유입과 매물 출회가 균형을 이룬 것으로 분석됩니다.`,
       supply_scenarios: supplyScenarios,
       fee_coupon_simulation: {
@@ -1367,24 +1513,25 @@ export function analyzeMarketEvents(
     };
   });
 
-  return { events: customEventsMemory, impacts };
+  return { events: activeEvents, impacts };
 }
 
 // ============================================================================
 // 8. 4-Stage Stepwise Price Prediction & Point-in-Time Backtesting Engine
+//    (Strictly uses ONLY Official New Traits level: 8 in M4_EVENT_TRAIT)
 // ============================================================================
 
-const CORE_OP_TRAITS = new Set([
-  "예리한 감아차기",
-  "중거리 슛 선호",
-  "파워 헤더",
+const HIGH_DEMAND_NEW_TRAITS = new Set([
   "크로스 포쳐",
   "아크로바틱 피니셔",
-  "패스 마스터",
+  "레이저 슈터",
+  "스피드스터",
   "커맨더",
-  "강철몸",
-  "스피드 드리블러",
-  "아웃사이드 슈팅/크로스",
+  "2개의 심장",
+  "타이탄",
+  "파이터",
+  "와일드 태클러",
+  "체이서",
 ]);
 
 function predictStepwiseAtIndex(params: {
@@ -1393,7 +1540,7 @@ function predictStepwiseAtIndex(params: {
   seasonSector: SeasonSectorType;
   capitalTier: CapitalTierType;
   sectorDriftDailyPct: number;
-  traits: string[];
+  newTraits: string[];
 }): {
   m1Bp: number;
   m2Bp: number;
@@ -1409,7 +1556,7 @@ function predictStepwiseAtIndex(params: {
     horizonDays,
     seasonSector,
     sectorDriftDailyPct,
-    traits,
+    newTraits,
   } = params;
   const n = pointsUpToT.length;
   const currentBp = pointsUpToT[n - 1].normalized_bp;
@@ -1446,7 +1593,7 @@ function predictStepwiseAtIndex(params: {
   );
   const m2Bp = Math.round(currentBp * (1 + m2RetPct / 100));
 
-  // Model 3: Sector-Adjusted Model (Season Scarcity & Relative Sector Anchor)
+  // Model 3: Sector-Adjusted Model (Season Scarcity & Relative Sector Anchor — WITHOUT trait input)
   const clampedSectorDrift = clamp(sectorDriftDailyPct, -2.5, 2.5);
   const scarcityDailyAdj =
     seasonSector === "LIMITED_DISCONTINUED"
@@ -1464,17 +1611,15 @@ function predictStepwiseAtIndex(params: {
   );
   const m3Bp = Math.round(currentBp * (1 + m3RetPct / 100));
 
-  // Model 4: Event + Supply/Demand + Trait Meta Model
-  const opTraitCount = traits.filter((t) => CORE_OP_TRAITS.has(t)).length;
-  const hasNewMetaTrait = traits.some((t) =>
-    ["크로스 포쳐", "아크로바틱 피니셔", "패스 마스터", "커맨더"].includes(t)
-  );
+  // Model 4: Event + Supply/Demand + Official New Trait (level: 8 ONLY) Meta Model
+  const officialNewCount = newTraits.filter((t) => OFFICIAL_NEW_TRAIT_NAMES.has(t)).length;
+  const hasTopNewTrait = newTraits.some((t) => HIGH_DEMAND_NEW_TRAITS.has(t));
   const traitDailyAdj =
-    (opTraitCount >= 3 ? 0.03 : opTraitCount === 0 ? -0.01 : 0.01) +
-    (hasNewMetaTrait ? 0.03 : 0);
+    (officialNewCount >= 2 ? 0.035 : officialNewCount === 1 ? 0.02 : -0.01) +
+    (hasTopNewTrait ? 0.025 : 0);
 
   const eventShockCushion =
-    medGapPct > 1.0 && (hasNewMetaTrait || seasonSector === "LIMITED_DISCONTINUED")
+    medGapPct > 1.0 && (hasTopNewTrait || seasonSector === "LIMITED_DISCONTINUED")
       ? 0.06 * effectiveSteps
       : 0;
 
@@ -1518,6 +1663,12 @@ export function buildForecastsAndBacktest(
   sectorForecasts: MarketEntityForecast[];
   backtestReport: MarketBacktestReport;
 } {
+  // Prioritize +8~+11강 core market series for forecasting and backtesting
+  const coreSeries = seriesList.filter(
+    (s) => s.grade_tier_zone === "CORE_GOLD_8_11"
+  );
+  const evalPool = coreSeries.length >= 10 ? coreSeries : seriesList;
+
   const sectorDriftMap = new Map<SeasonSectorType, number>();
   for (const sec of seasonSectors) {
     sectorDriftMap.set(
@@ -1527,8 +1678,8 @@ export function buildForecastsAndBacktest(
   }
 
   // 1) Generate Player Forecasts
-  const playerForecasts: MarketEntityForecast[] = seriesList
-    .slice(0, 40)
+  const playerForecasts: MarketEntityForecast[] = evalPool
+    .slice(0, 45)
     .map((s) => {
       const sectorDrift = sectorDriftMap.get(s.season_sector) || 0;
       const horizons: MarketHorizonForecast[] = ([1, 7, 30] as const).map(
@@ -1539,7 +1690,7 @@ export function buildForecastsAndBacktest(
             seasonSector: s.season_sector,
             capitalTier: s.capital_tier,
             sectorDriftDailyPct: sectorDrift,
-            traits: s.traits,
+            newTraits: s.new_traits || s.traits,
           });
 
           const expRet =
@@ -1561,7 +1712,6 @@ export function buildForecastsAndBacktest(
           const upProb = Math.round((rawUp / (rawUp + rawDown)) * rem);
           const downProb = Math.max(0, 100 - flatProb - upProb);
 
-          // 30-day horizon requires longer observation history for high confidence; mark low_confidence explicitly
           const status: "available" | "low_confidence" | "insufficient_data" =
             s.points.length < 14
               ? "insufficient_data"
@@ -1622,7 +1772,7 @@ export function buildForecastsAndBacktest(
               },
               {
                 model_id: "M3_SECTOR",
-                model_name: "3단계: 섹터 상대강도·희소성 모델",
+                model_name: "3단계: 섹터 상대강도·희소성 모델 (신규특성 미포함)",
                 predicted_bp: pred.m3Bp,
                 predicted_return_pct: round2(
                   ((pred.m3Bp - s.current_bp) / s.current_bp) * 100
@@ -1631,7 +1781,7 @@ export function buildForecastsAndBacktest(
               },
               {
                 model_id: "M4_EVENT_TRAIT",
-                model_name: "4단계: 이벤트·공급·특성 메타 통합 모델",
+                model_name: "4단계: 이벤트·공급·공식 신규특성(level: 8) 통합 모델",
                 predicted_bp: pred.m4Bp,
                 predicted_return_pct: round2(
                   ((pred.m4Bp - s.current_bp) / s.current_bp) * 100
@@ -1647,18 +1797,15 @@ export function buildForecastsAndBacktest(
       const downwardFactors: string[] = [];
       const riskFactors: string[] = [];
 
+      const cardNewTraits = s.new_traits || s.traits;
       if (s.season_sector === "LIMITED_DISCONTINUED") {
         upwardFactors.push(
-          "단종·공급 제한 시즌(ICONTM·BDO 등) 특성상 신규 패키지 물량 희석이 없어 하방 경직성 확보"
+          "공급 제한·단종 특성상 신규 패키지 물량 희석이 낮아 하방 경직성 확보"
         );
       }
-      if (
-        s.traits.some((t) =>
-          ["크로스 포쳐", "아크로바틱 피니셔", "패스 마스터", "커맨더"].includes(t)
-        )
-      ) {
+      if (cardNewTraits.length > 0) {
         upwardFactors.push(
-          `신규·상위 메타 특성(${s.traits.filter((t) => ["크로스 포쳐", "아크로바틱 피니셔", "패스 마스터", "커맨더"].includes(t)).join(", ")}) 보유로 실사용 수요 지지`
+          `공식 신규특성(level: 8 — ${cardNewTraits.join(", ")}) 보유로 +8~+11강 금카 실사용 수요 지지`
         );
       }
       if (s.z_score_30d < -0.8) {
@@ -1668,13 +1815,13 @@ export function buildForecastsAndBacktest(
       }
       if (upwardFactors.length === 0) {
         upwardFactors.push(
-          `포지션(${s.primary_position}) 주전급 스펙(OVR ${s.ovr}) 및 기본 팀컬러 실사용 수요`
+          `포지션(${s.primary_position}) 주전급 스펙(OVR ${s.ovr}) 및 인기 팀컬러 실사용 수요`
         );
       }
 
       if (s.season_sector === "EXISTING_FLAGSHIP") {
         downwardFactors.push(
-          "상위 신규 시즌(26TOTY·WS·UC)으로의 구단주 세대교체 수요 이동 및 패키지 공급 노출"
+          "최신 메타 시즌으로의 구단주 세대교체 수요 이동 및 패키지 공급 노출"
         );
       }
       if (s.z_score_30d > 1.0) {
@@ -1682,9 +1829,9 @@ export function buildForecastsAndBacktest(
           `30일 밴드 상단(Z-Score +${s.z_score_30d}) 도달에 따른 단기 차익 실현 매물 출회 가능성`
         );
       }
-      if (s.traits.length === 0) {
+      if (cardNewTraits.length === 0) {
         downwardFactors.push(
-          "인게임 고유 특성(Trait) 미확인 또는 부재로 인한 동일 OVR 대비 특성 프리미엄 열위"
+          "공식 신규특성(level: 8, trait_icon_50~68) 미보유로 인한 동일 OVR 대비 특성 프리미엄 열위"
         );
       }
       if (downwardFactors.length === 0) {
@@ -1694,11 +1841,11 @@ export function buildForecastsAndBacktest(
       }
 
       riskFactors.push(
-        `30일 일평균 변동성 ${s.volatility_30d_pct}% / 최대 낙폭(MDD) ${s.max_drawdown_30d_pct}%`
+        `+${s.grade}강 시계열(관측 ${s.timeseries_observation_count}회) 30일 일평균 변동성 ${s.volatility_30d_pct}% / 최대 낙폭(MDD) ${s.max_drawdown_30d_pct}%`
       );
-      if (s.capital_tier === "ULTRA_HIGH") {
+      if (s.grade_tier_zone === "SEPARATED_ULTRA_12_13" || s.capital_tier === "ULTRA_HIGH") {
         riskFactors.push(
-          "1조 BP 이상 초고가 카드로 호가 공백이 크며 단일 매물 출회에도 실거래 기준가가 크게 흔들릴 수 있음"
+          "고가·저유동성 분리 구간 카드로 단일 거래에도 기준가가 크게 변동할 수 있음"
         );
       }
 
@@ -1754,11 +1901,11 @@ export function buildForecastsAndBacktest(
             seasonSector: sec.code as SeasonSectorType,
             capitalTier: "HIGH_CAPITAL_FLAGSHIP",
             sectorDriftDailyPct: sec.return_7d_pct / 7,
-            traits:
+            newTraits:
               sec.code === "NEW_META_FLAGSHIP"
-                ? ["크로스 포쳐", "예리한 감아차기", "중거리 슛 선호"]
+                ? ["크로스 포쳐", "아크로바틱 피니셔", "커맨더"]
                 : sec.code === "LIMITED_DISCONTINUED"
-                  ? ["예리한 감아차기", "파워 헤더"]
+                  ? ["크로스 포쳐", "타이탄"]
                   : [],
           });
           const expRet =
@@ -1807,8 +1954,8 @@ export function buildForecastsAndBacktest(
       };
     });
 
-  // 3) Strict Time-Ordered Point-in-Time Backtesting across all 30-day series
-  const validSeries = seriesList.filter((s) => s.points.length >= 28);
+  // 3) Strict Time-Ordered Point-in-Time Backtesting across 30-day series
+  const validSeries = evalPool.filter((s) => s.points.length >= 28);
   type EvalRow = {
     series: MarketNormalizedSeries;
     date: string;
@@ -1829,10 +1976,9 @@ export function buildForecastsAndBacktest(
 
   for (const s of validSeries) {
     const pts = s.points;
-    // 1-day rolling walk-forward from index t=12 to n-2
+    const cardNewTraits = s.new_traits || s.traits;
     for (let t = 12; t <= pts.length - 2; t++) {
       const slice = pts.slice(0, t + 1);
-      // Point-in-time sector drift up to t
       const p7Ago = slice[Math.max(0, slice.length - 8)].normalized_bp;
       const pCur = slice[slice.length - 1].normalized_bp;
       const pitDrift = p7Ago > 0 ? ((pCur - p7Ago) / p7Ago / 7) * 100 : 0;
@@ -1843,7 +1989,7 @@ export function buildForecastsAndBacktest(
         seasonSector: s.season_sector,
         capitalTier: s.capital_tier,
         sectorDriftDailyPct: pitDrift,
-        traits: s.traits,
+        newTraits: cardNewTraits,
       });
 
       const targetPt = pts[t + 1];
@@ -1865,7 +2011,6 @@ export function buildForecastsAndBacktest(
       });
     }
 
-    // 7-day rolling walk-forward from index t=10 to pts.length - 8
     for (let t = 10; t <= pts.length - 8; t++) {
       const slice = pts.slice(0, t + 1);
       const p7Ago = slice[Math.max(0, slice.length - 8)].normalized_bp;
@@ -1878,7 +2023,7 @@ export function buildForecastsAndBacktest(
         seasonSector: s.season_sector,
         capitalTier: s.capital_tier,
         sectorDriftDailyPct: pitDrift,
-        traits: s.traits,
+        newTraits: cardNewTraits,
       });
 
       const targetPt = pts[t + 7];
@@ -1920,19 +2065,19 @@ export function buildForecastsAndBacktest(
       {
         id: "M2_STATISTICAL",
         name: "2단계: 추세·평균회귀·변동성 통계 모델",
-        desc: "과거 시계열의 단기 모멘텀과 10일 이동평균 회귀 성향(Mean Reversion)만 반영한 모델",
+        desc: "과거 시계열의 단기 모멘텀과 5일 중앙값 회귀 성향(Mean Reversion)만 반영한 모델",
         pick: (r) => r.m2Bp,
       },
       {
         id: "M3_SECTOR",
-        name: "3단계: 섹터 상대강도·공급제한 반영 모델",
-        desc: "시즌 섹터 드리프트와 단종(ICONTM 등) 공급 희소성 프리미엄을 추가 반영한 모델",
+        name: "3단계: 섹터 상대강도·공급제한 반영 모델 (신규특성 미포함)",
+        desc: "시즌 섹터 드리프트와 공급 희소성만 반영하고 공식 신규특성 변수는 제외한 모델",
         pick: (r) => r.m3Bp,
       },
       {
         id: "M4_EVENT_TRAIT",
-        name: "4단계: 이벤트·공급·특성 메타 통합 모델",
-        desc: "패키지·쿠폰 이벤트 충격 완충 및 핵심·신규 특성(크로스 포쳐 등) 수요 지지력을 결합한 최종 모델",
+        name: "4단계: 이벤트·공급·공식 신규특성(level: 8) 통합 모델",
+        desc: "패키지·쿠폰 이벤트 완충 및 공식 신규특성(크로스 포쳐·아크로바틱 피니셔·커맨더·타이탄 등 level: 8) 수요 지지력을 결합한 최종 모델",
         pick: (r) => r.m4Bp,
       },
     ];
@@ -2033,7 +2178,7 @@ export function buildForecastsAndBacktest(
       const minVal = Math.min(m1, m2, m3, m4);
       const bestName =
         minVal === m4
-          ? "4단계 (이벤트·특성 통합)"
+          ? "4단계 (이벤트·공식 신규특성 통합)"
           : minVal === m3
             ? "3단계 (섹터·희소성)"
             : minVal === m2
@@ -2088,7 +2233,6 @@ export function buildForecastsAndBacktest(
     }
   );
 
-  // Event vs Normal Period comparison
   const evtRows = rows7d.filter((r) => r.isEventWindow);
   const normRows = rows7d.filter((r) => !r.isEventWindow);
   const summarizePeriod = (
@@ -2117,8 +2261,18 @@ export function buildForecastsAndBacktest(
     };
   };
 
-  // Sample traces for top 6 cards
-  const sampleTraces = validSeries.slice(0, 6).map((s) => {
+  // Sample traces for top 6 distinct players
+  const seenTraceSpids = new Set<number>();
+  const uniqueTraceSeries: MarketNormalizedSeries[] = [];
+  for (const s of validSeries) {
+    if (!seenTraceSpids.has(s.spid)) {
+      seenTraceSpids.add(s.spid);
+      uniqueTraceSeries.push(s);
+    }
+    if (uniqueTraceSeries.length >= 6) break;
+  }
+
+  const sampleTraces = uniqueTraceSeries.map((s) => {
     const tracePts = [];
     for (let t = 10; t < s.points.length; t++) {
       const slice = s.points.slice(0, t);
@@ -2131,7 +2285,7 @@ export function buildForecastsAndBacktest(
         seasonSector: s.season_sector,
         capitalTier: s.capital_tier,
         sectorDriftDailyPct: pitDrift,
-        traits: s.traits,
+        newTraits: s.new_traits || s.traits,
       });
       tracePts.push({
         date: s.points[t].date,
@@ -2153,15 +2307,32 @@ export function buildForecastsAndBacktest(
     };
   });
 
+  const m3Metric7d = models7d.find((m) => m.model_id === "M3_SECTOR");
+  const m4Metric7d = models7d.find((m) => m.model_id === "M4_EVENT_TRAIT");
+  const m3Mape7d = m3Metric7d?.mape_pct ?? 0;
+  const m4Mape7d = m4Metric7d?.mape_pct ?? 0;
+  const m3Dir7d = m3Metric7d?.directional_accuracy_pct ?? 0;
+  const m4Dir7d = m4Metric7d?.directional_accuracy_pct ?? 0;
+
   const backtestReport: MarketBacktestReport = {
     methodology_summary:
-      "시간 순서를 엄격히 보존한 롤링 워크포워드(Rolling Walk-Forward) 백테스트입니다. 각 예측 시점 t에서 t+1일 및 t+7일 뒤의 실제 가격을 검증할 때 오직 [0..t] 구간의 과거 관측치만 사용하며 미래 데이터 누수(Data Leakage)를 원천 차단했습니다.",
+      "시간 순서를 엄격히 보존한 롤링 워크포워드(Rolling Walk-Forward) 백테스트입니다. +8~+11강 주류 시계열을 중심으로 각 예측 시점 t에서 t+1일 및 t+7일 뒤의 실제 가격을 검증할 때 오직 [0..t] 구간의 과거 관측치만 사용하며 미래 데이터 누수(Data Leakage)를 원천 차단했습니다.",
     leakage_prevention_note:
-      "단순 기준선 모델(M1: 최근 가격 그대로 유지)과 통계(M2)·섹터(M3)·이벤트+특성 통합 모델(M4)의 평균절대백분율오차(MAPE), 방향 적중률, 80% 예측구간 포함률을 동일한 표본 위에서 투명하게 비교합니다.",
+      "단순 기준선 모델(M1: 최근 가격 그대로 유지)과 통계(M2)·섹터(M3: 신규특성 미포함)·공식 신규특성(level: 8) 통합 모델(M4)의 평균절대백분율오차(MAPE), 방향 적중률, 80% 예측구간 포함률을 동일한 표본 위에서 비교합니다.",
     total_series_evaluated: validSeries.length,
     total_rolling_windows: rows1d.length + rows7d.length,
     models_1d: models1d,
     models_7d: models7d,
+    new_trait_contribution: {
+      without_new_trait_mape_7d_pct: m3Mape7d,
+      with_new_trait_mape_7d_pct: m4Mape7d,
+      net_mape_reduction_pct: round2(m3Mape7d - m4Mape7d),
+      directional_gain_pct: round2(m4Dir7d - m3Dir7d),
+      legacy_trait_excluded_note:
+        m4Mape7d <= m3Mape7d
+          ? `공식 신규특성(level: 8, trait_icon_50~68) 변수를 추가한 M4 모델이 신규특성 미포함 M3 모델 대비 7일 예측 오차(MAPE)를 ${round2(m3Mape7d - m4Mape7d)}%p 낮추고 방향 적중률을 ${m4Dir7d - m3Dir7d >= 0 ? "+" : ""}${round2(m4Dir7d - m3Dir7d)}%p 개선했습니다 (기존 일반 특성 level: 5 완전 배제).`
+          : `현재 롤링 윈도우 표본에서는 M3(${m3Mape7d}%)와 M4(${m4Mape7d}%)가 유사한 오차 범위를 기록했습니다 (기존 일반 특성 level: 5 완전 배제).`,
+    },
     by_season_sector_7d: bySeasonSector7d,
     by_capital_tier_7d: byCapitalTier7d,
     event_vs_normal_period: [
@@ -2175,209 +2346,14 @@ export function buildForecastsAndBacktest(
 }
 
 // ============================================================================
-// 9. Player Trait Meta, Controlled Premium, Substitution & Season Discount Engine
+// 9. Official New Trait (level: 8 ONLY) Meta, Controlled Premium, Substitution & Season Discount Engine
 // ============================================================================
 
-const TRAIT_META_DEFINITIONS: Omit<
-  TraitMetaCatalogItem,
-  | "card_holder_count"
-  | "timeseries_holder_count"
-  | "overall_meta_score"
-  | "meta_tier"
->[] = [
-  {
-    trait_name: "예리한 감아차기",
-    category: "슈팅·득점",
-    is_new_or_reworked_meta: false,
-    release_or_patch_note: "전통적 1티어 필수 슈팅 특성 (ZD 감아차기 궤적·회전력 보정)",
-    applicable_positions: ["ST", "CF", "LW", "RW", "CAM", "LM", "RM"],
-    activation_condition: "페널티 박스 안팎에서 인사이드 감아차기(ZD) 슛 시도 시 발동",
-    in_game_effect: "감아차기 슛의 커브 궤적과 골문 구석 안착 확률 상승",
-    synergy_stats: ["골 결정력", "커브", "슛 파워", "중거리 슛"],
-    competing_traits: ["아웃사이드 슈팅/크로스"],
-    base_performance_score: 95,
-    current_meta_fit_score: 96,
-    relative_competitiveness_score: 95,
-    patch_impact_score: 90,
-    position_suitability: { ST: 96, CF: 98, LW: 97, RW: 97, CAM: 95, CM: 78 },
-  },
-  {
-    trait_name: "중거리 슛 선호",
-    category: "슈팅·득점",
-    is_new_or_reworked_meta: false,
-    release_or_patch_note: "밀집 수비 파훼를 위한 2선·공격수 핵심 타격 특성",
-    applicable_positions: ["CAM", "CM", "CDM", "ST", "CF", "LW", "RW"],
-    activation_condition: "페널티 박스 외곽에서 중거리 슛(D/ZD) 시도 시 탄도·보정 적용",
-    in_game_effect: "중거리 슈팅 임팩트와 골키퍼 선방 우회 궤적 향상",
-    synergy_stats: ["중거리 슛", "슛 파워", "볼 컨트롤", "밸런스"],
-    competing_traits: [],
-    base_performance_score: 92,
-    current_meta_fit_score: 95,
-    relative_competitiveness_score: 93,
-    patch_impact_score: 88,
-    position_suitability: { CAM: 98, CM: 96, CDM: 90, ST: 91, CF: 94, LW: 90, RW: 90 },
-  },
-  {
-    trait_name: "크로스 포쳐",
-    category: "슈팅·득점",
-    is_new_or_reworked_meta: true,
-    release_or_patch_note: "신규 상위 메타 특성 — 크로스 상황에서 박스 안 위치선정 및 다이렉트 마무리 특화",
-    applicable_positions: ["ST", "CF"],
-    activation_condition: "측면 크로스 올라올 때 박스 내부 침투 및 헤더·논스톱 슈팅 시 발동",
-    in_game_effect: "수비수 마크를 벗어나는 순간 움직임과 크로스 연계 슈팅 정확도·경합 우위",
-    synergy_stats: ["헤더", "점프", "공격 위치 선정", "골 결정력", "반응 속도"],
-    competing_traits: ["라인 브레이커", "파워 헤더"],
-    base_performance_score: 94,
-    current_meta_fit_score: 95,
-    relative_competitiveness_score: 94,
-    patch_impact_score: 96,
-    position_suitability: { ST: 98, CF: 92, LW: 72, RW: 72 },
-  },
-  {
-    trait_name: "아크로바틱 피니셔",
-    category: "슈팅·득점",
-    is_new_or_reworked_meta: true,
-    release_or_patch_note: "신규 상위 메타 특성 — 발리슛·바이시클·불규칙 바운드 볼 논스톱 득점력 극대화",
-    applicable_positions: ["ST", "CF", "LW", "RW"],
-    activation_condition: "공중볼·크로스·세컨볼 상황에서 고난도 발리 및 아크로바틱 슈팅 시도 시",
-    in_game_effect: "어려운 자세에서도 슈팅 임팩트 손실을 줄이고 다이렉트 골 결정력 향상",
-    synergy_stats: ["발리 슛", "민첩성", "밸런스", "골 결정력", "반응 속도"],
-    competing_traits: ["라인 브레이커", "크로스 포쳐"],
-    base_performance_score: 92,
-    current_meta_fit_score: 93,
-    relative_competitiveness_score: 92,
-    patch_impact_score: 95,
-    position_suitability: { ST: 96, CF: 94, LW: 84, RW: 84, CAM: 80 },
-  },
-  {
-    trait_name: "라인 브레이커",
-    category: "침투·오프더볼",
-    is_new_or_reworked_meta: true,
-    release_or_patch_note: "오프사이드 트랩 파괴 및 수비 뒷공간 직선 침투 특화 특성",
-    applicable_positions: ["ST", "CF", "LW", "RW"],
-    activation_condition: "동료가 볼을 잡았을 때 최종 수비선 어깨선 부근에서 뒷공간 침투 시도",
-    in_game_effect: "침투 반응 속도와 오프더볼 러닝 타이밍 향상 (단, 밀집 수비 시 크로스 포쳐 대비 공간 제약 존재)",
-    synergy_stats: ["속력", "가속력", "공격 위치 선정", "민첩성"],
-    competing_traits: ["크로스 포쳐", "아크로바틱 피니셔"],
-    base_performance_score: 90,
-    current_meta_fit_score: 88,
-    relative_competitiveness_score: 87,
-    patch_impact_score: 85,
-    position_suitability: { ST: 93, CF: 91, LW: 90, RW: 90, CAM: 75 },
-  },
-  {
-    trait_name: "파워 헤더",
-    category: "슈팅·득점",
-    is_new_or_reworked_meta: false,
-    release_or_patch_note: "타깃맨 ST 및 세트피스 센터백(CB) 핵심 공중볼 타격 특성",
-    applicable_positions: ["ST", "CF", "CB", "CDM"],
-    activation_condition: "크로스 및 코너킥 상황에서 헤더 슈팅 시도 시 발동",
-    in_game_effect: "헤더 타구 속도와 바운드 위력 증가",
-    synergy_stats: ["헤더", "점프", "몸싸움"],
-    competing_traits: ["크로스 포쳐"],
-    base_performance_score: 90,
-    current_meta_fit_score: 91,
-    relative_competitiveness_score: 89,
-    patch_impact_score: 86,
-    position_suitability: { ST: 95, CB: 94, CF: 86, CDM: 84 },
-  },
-  {
-    trait_name: "패스 마스터",
-    category: "패스·찬스메이킹",
-    is_new_or_reworked_meta: true,
-    release_or_patch_note: "신규 상위 메타 특성 — 중원 빌드업 및 전진 스루패스·방향 전환 정확도 보정",
-    applicable_positions: ["CM", "CAM", "CDM"],
-    activation_condition: "중원에서 장단거리 패스 및 결정적 스루패스 배급 시 발동",
-    in_game_effect: "패스 궤적 보정 및 압박 상황에서의 패스 미스 감소",
-    synergy_stats: ["짧은 패스", "긴 패스", "시야", "볼 컨트롤"],
-    competing_traits: ["플레이 메이커", "긴 패스 선호"],
-    base_performance_score: 93,
-    current_meta_fit_score: 94,
-    relative_competitiveness_score: 93,
-    patch_impact_score: 94,
-    position_suitability: { CM: 98, CAM: 96, CDM: 94, LM: 85, RM: 85 },
-  },
-  {
-    trait_name: "커맨더",
-    category: "패스·찬스메이킹",
-    is_new_or_reworked_meta: true,
-    release_or_patch_note: "신규 상위 특성 — 3선·수비진의 후방 빌드업 안정감 및 전술 지휘력 강화",
-    applicable_positions: ["CDM", "CM", "CB"],
-    activation_condition: "후방 빌드업 및 수비 라인 조율 시 발동",
-    in_game_effect: "3선·수비 라인 안정화 및 전방 연결 패스 정확도 기여",
-    synergy_stats: ["시야", "침착성", "짧은 패스", "대인 수비"],
-    competing_traits: ["플레이 메이커"],
-    base_performance_score: 89,
-    current_meta_fit_score: 90,
-    relative_competitiveness_score: 89,
-    patch_impact_score: 91,
-    position_suitability: { CDM: 95, CM: 92, CB: 90 },
-  },
-  {
-    trait_name: "스피드 드리블러",
-    category: "드리블·탈압박",
-    is_new_or_reworked_meta: false,
-    release_or_patch_note: "윙어(LW/RW) 및 침투형 공격수의 치달·볼 간수 핵심 특성",
-    applicable_positions: ["LW", "RW", "LM", "RM", "ST", "CF", "CAM"],
-    activation_condition: "전력 질주 드리블 시 볼 터치 간격 및 속도 유지",
-    in_game_effect: "고속 드리블 중 감속 최소화 및 측면 돌파 효율 상승",
-    synergy_stats: ["속력", "가속력", "드리블", "민첩성"],
-    competing_traits: ["테크니컬 드리블러", "스피드스터"],
-    base_performance_score: 91,
-    current_meta_fit_score: 92,
-    relative_competitiveness_score: 90,
-    patch_impact_score: 86,
-    position_suitability: { LW: 97, RW: 97, LM: 95, RM: 95, ST: 90, CF: 91 },
-  },
-  {
-    trait_name: "테크니컬 드리블러",
-    category: "드리블·탈압박",
-    is_new_or_reworked_meta: false,
-    release_or_patch_note: "좁은 공간 방향 전환 및 심리전 탈압박 보편 특성",
-    applicable_positions: ["CAM", "LW", "RW", "CF", "CM", "ST"],
-    activation_condition: "저속·중속 세밀한 방향 전환 드리블 시 발동",
-    in_game_effect: "퍼스트 터치와 방향 전환 반응성 향상",
-    synergy_stats: ["드리블", "볼 컨트롤", "민첩성", "밸런스"],
-    competing_traits: ["스피드 드리블러"],
-    base_performance_score: 86,
-    current_meta_fit_score: 87,
-    relative_competitiveness_score: 84,
-    patch_impact_score: 82,
-    position_suitability: { CAM: 93, CF: 92, LW: 92, RW: 92, CM: 89, ST: 84 },
-  },
-  {
-    trait_name: "아웃사이드 슈팅/크로스",
-    category: "슈팅·득점",
-    is_new_or_reworked_meta: false,
-    release_or_patch_note: "역발 각도에서 주발 아웃프런트 슈팅·크로스 보정",
-    applicable_positions: ["ST", "CF", "LW", "RW", "CAM", "CM"],
-    activation_condition: "약발 각도에서 주발 바깥쪽(아웃프런트)으로 슛/크로스 시도",
-    in_game_effect: "약발 리스크 완화 및 변칙적인 아웃프런트 궤적 생성",
-    synergy_stats: ["커브", "골 결정력", "크로스"],
-    competing_traits: ["예리한 감아차기"],
-    base_performance_score: 88,
-    current_meta_fit_score: 89,
-    relative_competitiveness_score: 87,
-    patch_impact_score: 85,
-    position_suitability: { LW: 92, RW: 92, ST: 90, CF: 91, CAM: 89 },
-  },
-  {
-    trait_name: "강철몸",
-    category: "피지컬·수비·특수",
-    is_new_or_reworked_meta: false,
-    release_or_patch_note: "부상 방지 및 강한 물리 충돌 시 밸런스 유지 선호 특성",
-    applicable_positions: ["CB", "CDM", "ST", "CM"],
-    activation_condition: "상대 선수와 강한 몸싸움 및 태클 피격 시",
-    in_game_effect: "부상 빈도 대폭 감소 및 경합 내구성 확보",
-    synergy_stats: ["몸싸움", "밸런스", "스태미너"],
-    competing_traits: [],
-    base_performance_score: 88,
-    current_meta_fit_score: 90,
-    relative_competitiveness_score: 88,
-    patch_impact_score: 86,
-    position_suitability: { CB: 95, CDM: 93, ST: 91, CM: 88 },
-  },
-];
+function getCardGoldOrBaseBp(c: PlayerCard): number {
+  const bp8 = Number(c.prices?.["8"]?.bp || c.bp_8 || 0);
+  if (bp8 > 0) return bp8;
+  return Number(c.bp_1 || 0);
+}
 
 export function analyzeTraitMetaAndPremiums(
   allCards: PlayerCard[],
@@ -2389,22 +2365,24 @@ export function analyzeTraitMetaAndPremiums(
   traitSeasonDiscounts: TraitSeasonDiscountItem[];
   traitPatches: TraitPatchHistoryItem[];
 } {
-  const fullCards = allCards.filter((c) => c.has_full_ability && c.bp_1 > 0);
-  const seriesBySpid = new Map<number, MarketNormalizedSeries>();
-  for (const s of seriesList) {
-    if (s.grade === 1 || !seriesBySpid.has(s.spid)) {
-      seriesBySpid.set(s.spid, s);
-    }
-  }
+  const fullCards = allCards.filter(
+    (c) => c.has_full_ability && getCardGoldOrBaseBp(c) > 0
+  );
+  // Use +8~+11강 core market series for trait return analysis
+  const coreSeries = seriesList.filter(
+    (s) => s.grade_tier_zone === "CORE_GOLD_8_11"
+  );
+  const evalSeries = coreSeries.length >= 10 ? coreSeries : seriesList;
 
-  // 1) Build Trait Catalog with real counts
-  const traitCatalog: TraitMetaCatalogItem[] = TRAIT_META_DEFINITIONS.map(
+  // 1) Build Official New Trait (level: 8, trait_icon_50..68) Catalog with real counts
+  const traitCatalog: TraitMetaCatalogItem[] = OFFICIAL_NEW_TRAITS_CATALOG.map(
     (def) => {
-      const holders = fullCards.filter((c) =>
-        (c.traits || []).some((t) => t.name === def.trait_name)
-      );
-      const tsHolders = seriesList.filter((s) =>
-        s.traits.includes(def.trait_name)
+      const holders = fullCards.filter((c) => {
+        const { newTraits } = extractCardNewAndLegacyTraits(c);
+        return newTraits.includes(def.trait_name);
+      });
+      const tsHolders = evalSeries.filter((s) =>
+        (s.new_traits || s.traits).includes(def.trait_name)
       );
       const overall = Math.round(
         def.base_performance_score * 0.25 +
@@ -2430,11 +2408,7 @@ export function analyzeTraitMetaAndPremiums(
     }
   );
 
-  // 2) Controlled Trait Premium Estimation (Propensity / Coarsened Exact Matching)
-  // For each trait, match each holder card against non-holder cards in:
-  //   - same position group (FW / MF / DF)
-  //   - same season sector tier (e.g. NEW_META_FLAGSHIP vs NEW_META_FLAGSHIP)
-  //   - OVR difference <= 2
+  // 2) Controlled Official New Trait Premium Estimation (+8강 Gold Baseline, Propensity / Coarsened Exact Matching)
   const traitPremiums: TraitControlledPremiumItem[] = traitCatalog.map(
     (tItem) => {
       const targetPosSet = new Set(tItem.applicable_positions);
@@ -2444,15 +2418,17 @@ export function analyzeTraitMetaAndPremiums(
           (c.positions || []).some((p) => targetPosSet.has(p.pos))
       );
 
-      const withTrait = eligiblePool.filter((c) =>
-        (c.traits || []).some((t) => t.name === tItem.trait_name)
-      );
-      const withoutTrait = eligiblePool.filter(
-        (c) => !(c.traits || []).some((t) => t.name === tItem.trait_name)
-      );
+      const withTrait = eligiblePool.filter((c) => {
+        const { newTraits } = extractCardNewAndLegacyTraits(c);
+        return newTraits.includes(tItem.trait_name);
+      });
+      const withoutTrait = eligiblePool.filter((c) => {
+        const { newTraits } = extractCardNewAndLegacyTraits(c);
+        return !newTraits.includes(tItem.trait_name);
+      });
 
-      const unadjWith = mean(withTrait.map((c) => c.bp_1));
-      const unadjWithout = mean(withoutTrait.map((c) => c.bp_1));
+      const unadjWith = mean(withTrait.map((c) => getCardGoldOrBaseBp(c)));
+      const unadjWithout = mean(withoutTrait.map((c) => getCardGoldOrBaseBp(c)));
       const unadjDiffPct =
         unadjWithout > 0
           ? round2(((unadjWith - unadjWithout) / unadjWithout) * 100)
@@ -2464,25 +2440,25 @@ export function analyzeTraitMetaAndPremiums(
       for (const wCard of withTrait) {
         const wSector = classifySeasonSector(wCard.season_code).sector;
         const wPosGroup = getPositionGroup(wCard.primary_position);
+        const wBp = getCardGoldOrBaseBp(wCard);
 
-        // Find peer cards without the trait, same position group, same season sector, OVR within ±2
         const peers = withoutTrait.filter((wo) => {
           const woSector = classifySeasonSector(wo.season_code).sector;
           const woPosGroup = getPositionGroup(wo.primary_position);
+          const woBp = getCardGoldOrBaseBp(wo);
           return (
             woSector === wSector &&
             woPosGroup === wPosGroup &&
             Math.abs(wo.ovr - wCard.ovr) <= 2 &&
-            wo.bp_1 > 0
+            woBp > 0
           );
         });
 
         if (peers.length === 0) continue;
-        // Pick closest OVR peer median BP
-        const peerMedianBp = median(peers.map((p) => p.bp_1));
+        const peerMedianBp = median(peers.map((p) => getCardGoldOrBaseBp(p)));
         if (peerMedianBp <= 0) continue;
 
-        const premPct = ((wCard.bp_1 - peerMedianBp) / peerMedianBp) * 100;
+        const premPct = ((wBp - peerMedianBp) / peerMedianBp) * 100;
         pairPremiums.push(clamp(premPct, -75, 180));
 
         if (matchedExamples.length < 3) {
@@ -2490,6 +2466,7 @@ export function analyzeTraitMetaAndPremiums(
             (a, b) =>
               Math.abs(a.ovr - wCard.ovr) - Math.abs(b.ovr - wCard.ovr)
           )[0];
+          const bestPeerBp = getCardGoldOrBaseBp(bestPeer);
           matchedExamples.push({
             with_card: {
               spid: wCard.spid,
@@ -2497,9 +2474,9 @@ export function analyzeTraitMetaAndPremiums(
               season_code: wCard.season_code,
               position: wCard.primary_position,
               ovr: wCard.ovr,
-              bp_1: wCard.bp_1,
-              bp_1_text: formatBpKorean(wCard.bp_1),
-              traits: (wCard.traits || []).map((t) => t.name),
+              bp_1: wBp,
+              bp_1_text: formatBpKorean(wBp),
+              traits: extractCardNewAndLegacyTraits(wCard).newTraits,
             },
             without_card: {
               spid: bestPeer.spid,
@@ -2507,14 +2484,12 @@ export function analyzeTraitMetaAndPremiums(
               season_code: bestPeer.season_code,
               position: bestPeer.primary_position,
               ovr: bestPeer.ovr,
-              bp_1: bestPeer.bp_1,
-              bp_1_text: formatBpKorean(bestPeer.bp_1),
-              traits: (bestPeer.traits || []).map((t) => t.name),
+              bp_1: bestPeerBp,
+              bp_1_text: formatBpKorean(bestPeerBp),
+              traits: extractCardNewAndLegacyTraits(bestPeer).newTraits,
             },
             ovr_gap: wCard.ovr - bestPeer.ovr,
-            premium_pct: round2(
-              ((wCard.bp_1 - bestPeer.bp_1) / bestPeer.bp_1) * 100
-            ),
+            premium_pct: round2(((wBp - bestPeerBp) / bestPeerBp) * 100),
           });
         }
       }
@@ -2523,16 +2498,15 @@ export function analyzeTraitMetaAndPremiums(
       const ctrlQ25 = round2(quantile(pairPremiums, 0.25));
       const ctrlQ75 = round2(quantile(pairPremiums, 0.75));
 
-      const tsWith = seriesList.filter(
+      const tsWith = evalSeries.filter(
         (s) =>
-          s.traits.includes(tItem.trait_name) &&
+          (s.new_traits || s.traits).includes(tItem.trait_name) &&
           targetPosSet.has(s.primary_position)
       );
-      const tsWithout = seriesList.filter(
+      const tsWithout = evalSeries.filter(
         (s) =>
-          !s.traits.includes(tItem.trait_name) &&
-          targetPosSet.has(s.primary_position) &&
-          s.traits.length > 0
+          !(s.new_traits || s.traits).includes(tItem.trait_name) &&
+          targetPosSet.has(s.primary_position)
       );
 
       const retWith =
@@ -2544,9 +2518,9 @@ export function analyzeTraitMetaAndPremiums(
       const excessRet7d = round2(retWith - retWithout);
 
       const confLevel: TraitControlledPremiumItem["confidence_level"] =
-        pairPremiums.length >= 15
+        pairPremiums.length >= 10
           ? "높음"
-          : pairPremiums.length >= 5
+          : pairPremiums.length >= 4
             ? "보통"
             : "표본 부족 주의";
 
@@ -2566,67 +2540,70 @@ export function analyzeTraitMetaAndPremiums(
         return_7d_without_trait_pct: retWithout,
         excess_return_7d_pct: excessRet7d,
         confounder_control_summary:
-          "동일 포지션군 · 동일 시즌 섹터 등급 · OVR ±2 이내 · 동일 강화(+1강) 조건 매칭 통제",
+          "동일 포지션군 · 동일 시즌 공급군 · OVR ±2 이내 · +8강 금카 기준가 매칭 통제 (기존 일반 특성 level: 5 완전 배제)",
+        legacy_traits_excluded_from_model: true,
         confidence_level: confLevel,
         interpretation:
-          ctrlMed > 5
-            ? `단순 평균 차이(${unadjDiffPct}%)에서 시즌·OVR 교란변수를 제거한 후에도 중앙값 +${ctrlMed}%의 양(+)의 특성 프리미엄이 확인됩니다.`
-            : ctrlMed < -5
-              ? `시즌·OVR 통제 시 중앙값 ${ctrlMed}%로 단독 프리미엄보다는 양발·체형·핵심 스탯 등 다른 변수의 영향력이 더 크게 작용합니다.`
-              : `시즌·OVR 통제 후 중앙값 ${ctrlMed}%로 중립 범위이며, 단독 특성 효과보다 복합 특성 조합 시 시너지가 발생합니다.`,
+          pairPremiums.length === 0
+            ? `현재 카탈로그 내 [${tItem.trait_name}] 보유 표본(${withTrait.length}종)에 대한 동일 시즌·OVR 매칭 대조군이 부족하여 프리미엄 판별을 보류합니다.`
+            : ctrlMed > 5
+              ? `시즌·OVR 교란변수를 제거하고 +8강 기준가로 매칭한 결과 중앙값 +${ctrlMed}%의 양(+)의 공식 신규특성 프리미엄이 확인됩니다.`
+              : ctrlMed < -5
+                ? `시즌·OVR 통제 시 중앙값 ${ctrlMed}%로 단독 신규특성 효과보다 양발·체형·팀컬러 수요가 더 크게 작용합니다.`
+                : `시즌·OVR 통제 후 중앙값 ${ctrlMed}%로 중립 범위이며, 타 신규특성(level: 8)과의 복합 보유 시 시너지가 발생합니다.`,
         matched_examples: matchedExamples,
       };
     }
   );
 
-  // 3) Competing Trait Substitution Analysis (Data-Driven Hypothesis Testing)
-  const marketRet7d = round2(mean(seriesList.map((s) => s.return_7d_pct)));
+  // 3) Competing Official New Trait Substitution Analysis (Strictly level: 8 vs level: 8)
+  const marketRet7d = round2(mean(evalSeries.map((s) => s.return_7d_pct)));
   const traitSubstitutions: TraitCompetingSubstitutionCase[] = [
     buildSubstitutionCase({
-      caseId: "sub-aerial-box-vs-linebreaker",
+      caseId: "sub-new-box-finisher-vs-linebreaker",
       title:
-        "가설 1: 신규 박스 타격 특성(크로스 포쳐·아크로바틱 피니셔) 부상에 따른 기존 침투 특성(라인 브레이커) 상대 가치 변화",
+        "공식 신규특성 가설 1: 박스 타격 신규특성(크로스 포쳐·아크로바틱 피니셔·레이저 슈터) vs 침투 신규특성(라인 브레이커) 상대 가치",
       hypothesis:
-        "크로스 포쳐 및 아크로바틱 피니셔 등 박스 안 다이렉트 마무리 특성이 부각되면서, 라인 브레이커 단독 보유 공격수의 상대적 프리미엄과 시세 방어력이 대체·약화되었는지 실제 시계열 및 매칭 표본으로 검증합니다.",
-      risingTraits: ["크로스 포쳐", "아크로바틱 피니셔"],
+        "level: 8 공식 공격 신규특성 중 박스 안 다이렉트 마무리(크로스 포쳐·아크로바틱 피니셔·레이저 슈터) 보유 공격수가 라인 브레이커 단독 보유 공격수 대비 +8~+11강 시세 방어력과 통제 프리미엄에서 우위를 보이는지 검증합니다.",
+      risingTraits: ["크로스 포쳐", "아크로바틱 피니셔", "레이저 슈터"],
       incumbentTrait: "라인 브레이커",
       targetPositions: ["ST", "CF", "LW", "RW"],
       fullCards,
-      seriesList,
+      seriesList: evalSeries,
       traitPremiums,
       marketRet7d,
     }),
     buildSubstitutionCase({
-      caseId: "sub-passmaster-vs-playmaker",
+      caseId: "sub-new-commander-vs-twohearts",
       title:
-        "가설 2: 신규 상위 배급 특성(패스 마스터·커맨더) vs 기존 일반 패스 특성(플레이 메이커·긴 패스 선호) 프리미엄 비교",
+        "공식 신규특성 가설 2: 중원 백스핀 로빙 배급(커맨더) vs 활동량·스태미너 특화(2개의 심장) 상대 가치",
       hypothesis:
-        "중원(CM/CAM/CDM)에서 신규 마스터급 패스 특성(패스 마스터·커맨더) 보유 카드가 기존 일반 패스 특성만 보유한 동급 OVR 미드필더 대비 가격 방어력과 통제 프리미엄에서 우위를 점하는지 검증합니다.",
-      risingTraits: ["패스 마스터", "커맨더"],
-      incumbentTrait: "플레이 메이커",
+        "중원(CM/CAM/CDM) 공식 신규특성 중 결정적 백스핀 로빙 스루패스를 제공하는 '커맨더' 보유 미드필더와 '2개의 심장' 보유 미드필더 간 +8~+11강 통제 프리미엄 및 수익률 흐름을 비교 검증합니다.",
+      risingTraits: ["커맨더"],
+      incumbentTrait: "2개의 심장",
       targetPositions: ["CM", "CAM", "CDM"],
       fullCards,
-      seriesList,
+      seriesList: evalSeries,
       traitPremiums,
       marketRet7d,
     }),
     buildSubstitutionCase({
-      caseId: "sub-dual-shooting-vs-single",
+      caseId: "sub-new-titan-fighter-vs-tackler-chaser",
       title:
-        "가설 3: 양대 슈팅 특성(예리한 감아차기 + 중거리 슛 선호) 동시 보유 vs 단일 슈팅 특성 보유 가치 격차",
+        "공식 신규특성 가설 3: 공중볼·어깨 경합 제어(타이탄·파이터) vs 태클·추격 특화(와일드 태클러·체이서) 수비 가치",
       hypothesis:
-        "페널티 박스 외곽 ZD와 D슛을 모두 구사할 수 있는 '예리한 감아차기' 보유 공격/2선 자원이 비보유 동급 카드 대비 뚜렷한 통제 프리미엄과 시세 하방 경직성을 유지하는지 검증합니다.",
-      risingTraits: ["예리한 감아차기"],
-      incumbentTrait: "테크니컬 드리블러",
-      targetPositions: ["ST", "CF", "LW", "RW", "CAM"],
+        "수비진(CB/CDM/LB/RB) 공식 신규특성 중 피지컬·공중볼 제압형(타이탄·파이터)과 스탠딩 태클·배후 추격형(와일드 태클러·체이서) 간 +8~+11강 시세 지지력을 비교합니다.",
+      risingTraits: ["타이탄", "파이터"],
+      incumbentTrait: "와일드 태클러",
+      targetPositions: ["CB", "CDM", "LB", "RB"],
       fullCards,
-      seriesList,
+      seriesList: evalSeries,
       traitPremiums,
       marketRet7d,
     }),
   ];
 
-  // 4) Trait-Lacking Season Discount Analysis
+  // 4) Official New Trait-Lacking Season Discount Analysis
   const seasonMap = new Map<string, PlayerCard[]>();
   for (const c of fullCards) {
     if (!seasonMap.has(c.season_code)) seasonMap.set(c.season_code, []);
@@ -2639,41 +2616,45 @@ export function analyzeTraitMetaAndPremiums(
     .filter(([, cards]) => cards.length >= 2)
     .map(([seasonCode, cards]) => {
       const avgOvr = round2(mean(cards.map((c) => c.ovr)));
-      const avgBp = Math.round(mean(cards.map((c) => c.bp_1)));
-      const avgTraitCnt = round2(
-        mean(cards.map((c) => (c.traits || []).length))
+      const avgBp = Math.round(mean(cards.map((c) => getCardGoldOrBaseBp(c))));
+      const avgNewTraitCnt = round2(
+        mean(
+          cards.map((c) => extractCardNewAndLegacyTraits(c).newTraits.length)
+        )
       );
 
-      const cardsWithCoreTrait = cards.filter((c) =>
-        (c.traits || []).some((t) => CORE_OP_TRAITS.has(t.name))
+      const cardsWithOfficialNewTrait = cards.filter(
+        (c) => extractCardNewAndLegacyTraits(c).newTraits.length > 0
       );
       const coveragePct = round2(
-        (cardsWithCoreTrait.length / cards.length) * 100
+        (cardsWithOfficialNewTrait.length / cards.length) * 100
       );
 
-      const allSeasonTraitNames = new Set(
-        cards.flatMap((c) => (c.traits || []).map((t) => t.name))
+      const allSeasonNewTraitNames = new Set(
+        cards.flatMap((c) => extractCardNewAndLegacyTraits(c).newTraits)
       );
       const missingKeyTraits = [
         "크로스 포쳐",
         "아크로바틱 피니셔",
-        "패스 마스터",
-        "예리한 감아차기",
-        "중거리 슛 선호",
-      ].filter((k) => !allSeasonTraitNames.has(k));
+        "레이저 슈터",
+        "커맨더",
+        "타이탄",
+        "파이터",
+      ].filter((k) => !allSeasonNewTraitNames.has(k));
 
-      // Compare against all fullCards with OVR within ±1.5 of avgOvr
       const ovrPeers = fullCards.filter(
-        (c) => Math.abs(c.ovr - avgOvr) <= 1.5 && c.bp_1 > 0
+        (c) => Math.abs(c.ovr - avgOvr) <= 1.5 && getCardGoldOrBaseBp(c) > 0
       );
       const expectedBp =
-        ovrPeers.length > 0 ? Math.round(median(ovrPeers.map((c) => c.bp_1))) : avgBp;
+        ovrPeers.length > 0
+          ? Math.round(median(ovrPeers.map((c) => getCardGoldOrBaseBp(c))))
+          : avgBp;
       const discountPct =
         expectedBp > 0
           ? round2(((avgBp - expectedBp) / expectedBp) * 100)
           : 0;
 
-      const tsSeason = seriesList.filter((s) => s.season_code === seasonCode);
+      const tsSeason = evalSeries.filter((s) => s.season_code === seasonCode);
       const ret7d =
         tsSeason.length > 0
           ? round2(mean(tsSeason.map((s) => s.return_7d_pct)))
@@ -2682,31 +2663,31 @@ export function analyzeTraitMetaAndPremiums(
       const sectorInfo = classifySeasonSector(seasonCode);
       const compFactors: string[] = [];
       if (sectorInfo.sector === "LIMITED_DISCONTINUED") {
-        compFactors.push("단종·공급 제한 희소성으로 특성 부재를 상쇄");
+        compFactors.push("공급 제한·단종 희소성으로 신규특성 제한을 상쇄");
       }
       if (cards.some((c) => c.foot.includes("5") && c.foot.includes("5"))) {
-        compFactors.push("양발(5/5) 및 고유 레전드 체형 메리트 보유");
+        compFactors.push("양발(5/5) 및 고유 체형 메리트 보유");
       }
       if (avgOvr >= 118) {
-        compFactors.push(`최상위 기본 OVR(${avgOvr}) 깡스탯 우위`);
+        compFactors.push(`최상위 기본 OVR(${avgOvr}) 스탯 우위`);
       }
       if (compFactors.length === 0) {
         compFactors.push("인기 클럽 팀컬러 및 급여 가성비 수요");
       }
 
       const diagnosis =
-        missingKeyTraits.length >= 2 && discountPct < -10
-          ? `동일 OVR 기대가 대비 ${discountPct}% 할인 거래 중이며, 신규 핵심 특성(${missingKeyTraits.slice(0, 2).join("·")}) 미보유가 상위 시즌 대비 가치 할인 요인으로 작용하고 있습니다.`
+        missingKeyTraits.length >= 3 && discountPct < -10
+          ? `동일 OVR 기대가 대비 ${discountPct}% 할인 거래 중이며, 공식 신규특성(${missingKeyTraits.slice(0, 3).join("·")} 등 level: 8) 미보유가 가치 할인 요인으로 작용하고 있습니다.`
           : sectorInfo.sector === "LIMITED_DISCONTINUED"
-            ? `신규 시즌 전용 마스터 특성 일부가 없더라도 단종 희소성과 기본 스펙 우위로 기대가 대비 ${discountPct >= 0 ? "+" : ""}${discountPct}% 프리미엄을 방어하고 있습니다.`
-            : `핵심 메타 특성 보유율 ${coveragePct}% (평균 특성 ${avgTraitCnt}개)로 동일 OVR 기대가 대비 ${discountPct >= 0 ? "+" : ""}${discountPct}% 수준을 형성 중입니다.`;
+            ? `공식 신규특성 일부가 없더라도 단종 희소성과 기본 스펙 우위로 기대가 대비 ${discountPct >= 0 ? "+" : ""}${discountPct}% 수준을 방어하고 있습니다.`
+            : `공식 신규특성(level: 8) 보유율 ${coveragePct}% (카드당 평균 ${avgNewTraitCnt}개)로 동일 OVR 기대가 대비 ${discountPct >= 0 ? "+" : ""}${discountPct}% 수준을 형성 중입니다.`;
 
       return {
         season_code: seasonCode,
         season_name: cards[0].season_name || seasonCode,
         season_sector_label: sectorInfo.label,
         evaluated_card_count: cards.length,
-        avg_trait_count: avgTraitCnt,
+        avg_trait_count: avgNewTraitCnt,
         core_meta_trait_coverage_pct: coveragePct,
         missing_key_traits: missingKeyTraits,
         avg_ovr: avgOvr,
@@ -2726,7 +2707,7 @@ export function analyzeTraitMetaAndPremiums(
     traitPremiums,
     traitSubstitutions,
     traitSeasonDiscounts,
-    traitPatches: TRAIT_PATCH_HISTORY,
+    traitPatches: OFFICIAL_NEW_TRAIT_PATCH_HISTORY,
   };
 }
 
@@ -2757,36 +2738,36 @@ function buildSubstitutionCase(params: {
 
   const posSet = new Set(targetPositions);
   const posSeries = seriesList.filter(
-    (s) => posSet.has(s.primary_position) && s.traits.length > 0
+    (s) => posSet.has(s.primary_position) && (s.new_traits || s.traits).length > 0
   );
 
-  // Rising group: holds at least one of risingTraits
   const risingSeries = posSeries.filter((s) =>
-    s.traits.some((t) => risingTraits.includes(t))
+    (s.new_traits || s.traits).some((t) => risingTraits.includes(t))
   );
-  // Incumbent only group: holds incumbentTrait AND does NOT hold risingTraits
   const incumbentOnlySeries = posSeries.filter(
     (s) =>
-      s.traits.includes(incumbentTrait) &&
-      !s.traits.some((t) => risingTraits.includes(t))
+      (s.new_traits || s.traits).includes(incumbentTrait) &&
+      !(s.new_traits || s.traits).some((t) => risingTraits.includes(t))
   );
   const dualSeries = posSeries.filter(
     (s) =>
-      s.traits.includes(incumbentTrait) &&
-      s.traits.some((t) => risingTraits.includes(t))
+      (s.new_traits || s.traits).includes(incumbentTrait) &&
+      (s.new_traits || s.traits).some((t) => risingTraits.includes(t))
   );
 
-  const risingCards = fullCards.filter(
-    (c) =>
-      posSet.has(c.primary_position) &&
-      (c.traits || []).some((t) => risingTraits.includes(t.name))
-  );
-  const incumbentOnlyCards = fullCards.filter(
-    (c) =>
-      posSet.has(c.primary_position) &&
-      (c.traits || []).some((t) => t.name === incumbentTrait) &&
-      !(c.traits || []).some((t) => risingTraits.includes(t.name))
-  );
+  const risingCards = fullCards.filter((c) => {
+    if (!posSet.has(c.primary_position)) return false;
+    const { newTraits } = extractCardNewAndLegacyTraits(c);
+    return newTraits.some((t) => risingTraits.includes(t));
+  });
+  const incumbentOnlyCards = fullCards.filter((c) => {
+    if (!posSet.has(c.primary_position)) return false;
+    const { newTraits } = extractCardNewAndLegacyTraits(c);
+    return (
+      newTraits.includes(incumbentTrait) &&
+      !newTraits.some((t) => risingTraits.includes(t))
+    );
+  });
 
   const risingRet7d =
     risingSeries.length > 0
@@ -2818,7 +2799,6 @@ function buildSubstitutionCase(params: {
     risingRet7d - incRet7d + (ctrlRisingPrem - ctrlIncPrem) * 0.25
   );
 
-  // Build 30-day comparative index curve
   const fullRising = risingSeries.filter((s) => s.points.length >= 28);
   const fullInc = incumbentOnlySeries.filter((s) => s.points.length >= 28);
   const fullAll = seriesList.filter((s) => s.points.length >= 28);
@@ -2869,19 +2849,31 @@ function buildSubstitutionCase(params: {
     "부분 지지 (보완재·공존 우세)";
   let explanation = "";
 
-  if (risingCards.length < 3 || incumbentOnlyCards.length < 2) {
+  if (risingCards.length < 2 || incumbentOnlyCards.length < 1) {
     verdict = "표본 제한적 (추적 관찰 필요)";
-    explanation = `현재 상세 능력치가 수집된 표본 중 신규·부상 특성군(${risingCards.length}종)과 기존 단독 특성군(${incumbentOnlyCards.length}종)의 교차 표본 수가 적어 단정적 결론을 내리지 않고 조건부 관찰 대상으로 분류합니다.`;
+    explanation = `현재 상세 능력치가 수집된 표본 중 공식 신규특성 비교군(${risingCards.length}종 vs ${incumbentOnlyCards.length}종)의 교차 표본 수가 적어 단정적 결론을 내리지 않고 판별 보류·추적 관찰 대상으로 분류합니다.`;
   } else if (risingRet7d >= incRet7d && ctrlRisingPrem >= ctrlIncPrem) {
     verdict = "가설 지지 (대체·상대 강세 확인)";
-    explanation = `실제 관측 데이터 기준 [${risingTraits.join("·")}] 보유군의 7일 평균 수익률(${risingRet7d}%)과 통제 프리미엄(${ctrlRisingPrem}%)이 [${incumbentTrait}] 단독 보유군(7일 ${incRet7d}%, 프리미엄 ${ctrlIncPrem}%)을 상회하여 상대 가치 우위 가설이 지지됩니다.`;
+    explanation = `실제 관측 데이터 기준 공식 신규특성 [${risingTraits.join("·")}] 보유군의 7일 평균 수익률(${risingRet7d}%)과 +8강 통제 프리미엄(${ctrlRisingPrem}%)이 [${incumbentTrait}] 단독 보유군(7일 ${incRet7d}%, 프리미엄 ${ctrlIncPrem}%)을 상회하여 상대 가치 우위 가설이 지지됩니다.`;
   } else {
     verdict = "부분 지지 (보완재·공존 우세)";
-    explanation = `실제 관측 데이터 기준 [${risingTraits.join("·")}] 보유군(7일 ${risingRet7d}%, 통제 프리미엄 ${ctrlRisingPrem}%)이 높은 기준가를 형성하고 있으나, [${incumbentTrait}] 보유군(7일 ${incRet7d}%) 역시 속가·양발 스탯이 결합된 대장 카드에서 여전히 견조한 수요를 유지하여 완전 대체보다는 전술별 공존·보완 관계가 우세합니다.`;
+    explanation = `실제 관측 데이터 기준 공식 신규특성 [${risingTraits.join("·")}] 보유군(7일 ${risingRet7d}%, 통제 프리미엄 ${ctrlRisingPrem}%)과 [${incumbentTrait}] 보유군(7일 ${incRet7d}%)이 전술 역할에 따라 공존하며 상호 보완적 수요를 형성하고 있습니다.`;
   }
 
+  const uniqueBySpid = (arr: MarketNormalizedSeries[]) => {
+    const seen = new Set<number>();
+    const out: MarketNormalizedSeries[] = [];
+    for (const item of arr) {
+      if (!seen.has(item.spid)) {
+        seen.add(item.spid);
+        out.push(item);
+      }
+    }
+    return out;
+  };
+
   const repCards: TraitCompetingSubstitutionCase["representative_cards"] = [
-    ...risingSeries.slice(0, 3).map((s) => ({
+    ...uniqueBySpid(risingSeries).slice(0, 3).map((s) => ({
       group: "신규·부상 특성군" as const,
       spid: s.spid,
       name: s.name,
@@ -2892,9 +2884,9 @@ function buildSubstitutionCase(params: {
       current_bp_text: s.current_bp_text,
       return_7d_pct: s.return_7d_pct,
       return_30d_pct: s.return_30d_pct,
-      key_traits: s.traits.slice(0, 4),
+      key_traits: (s.new_traits || s.traits).slice(0, 4),
     })),
-    ...incumbentOnlySeries.slice(0, 3).map((s) => ({
+    ...uniqueBySpid(incumbentOnlySeries).slice(0, 3).map((s) => ({
       group: "기존 경쟁 특성군" as const,
       spid: s.spid,
       name: s.name,
@@ -2905,7 +2897,7 @@ function buildSubstitutionCase(params: {
       current_bp_text: s.current_bp_text,
       return_7d_pct: s.return_7d_pct,
       return_30d_pct: s.return_30d_pct,
-      key_traits: s.traits.slice(0, 4),
+      key_traits: (s.new_traits || s.traits).slice(0, 4),
     })),
   ];
 
@@ -2943,22 +2935,32 @@ export function buildMarketLabDashboard(): MarketLabDashboardPayload {
   const allCards = Object.values(store.cards);
   const { seriesList, unitConversionRecords } = buildNormalizedMarketSeries();
 
-  const marketRet1d = round2(mean(seriesList.map((s) => s.return_1d_pct)));
-  const marketRet7d = round2(mean(seriesList.map((s) => s.return_7d_pct)));
-  const marketRet30d = round2(mean(seriesList.map((s) => s.return_30d_pct)));
-  const marketVol30d = round2(mean(seriesList.map((s) => s.volatility_30d_pct)));
+  // Core market indices are computed on +8~+11강 mainstream series so +12~+13강 never distort the market
+  const coreSeries = seriesList.filter(
+    (s) => s.grade_tier_zone === "CORE_GOLD_8_11"
+  );
+  const benchmarkSeries = coreSeries.length > 0 ? coreSeries : seriesList;
 
-  const { seasonSectors, capitalTierSectors, gradeSectors } =
-    buildMultiAxisSectors(allCards, seriesList, marketRet7d);
+  const marketRet1d = round2(mean(benchmarkSeries.map((s) => s.return_1d_pct)));
+  const marketRet7d = round2(mean(benchmarkSeries.map((s) => s.return_7d_pct)));
+  const marketRet30d = round2(mean(benchmarkSeries.map((s) => s.return_30d_pct)));
+  const marketVol30d = round2(mean(benchmarkSeries.map((s) => s.volatility_30d_pct)));
+
+  const {
+    seasonSectors,
+    capitalTierSectors,
+    gradeSectors,
+    multiAxisSectors,
+  } = buildMultiAxisSectors(allCards, seriesList, marketRet7d);
 
   const fearGreed = buildMarketFearGreedIndex(
     allCards,
-    seriesList,
+    benchmarkSeries,
     seasonSectors,
     capitalTierSectors
   );
 
-  const { events, impacts } = analyzeMarketEvents(seriesList);
+  const { events, impacts } = analyzeMarketEvents(benchmarkSeries);
   const { playerForecasts, sectorForecasts, backtestReport } =
     buildForecastsAndBacktest(seriesList, seasonSectors);
 
@@ -2969,6 +2971,14 @@ export function buildMarketLabDashboard(): MarketLabDashboardPayload {
     traitSeasonDiscounts,
     traitPatches,
   } = analyzeTraitMetaAndPremiums(allCards, seriesList);
+
+  const gradeTierComparisons = buildGradeTierComparisons(allCards, seriesList);
+  const dynamicFlagshipCandidates = buildDynamicFlagshipCandidates(
+    allCards,
+    seriesList,
+    store.rankerMetaSnapshot || undefined
+  );
+  const codeAuditFindings = buildCodeAuditFindings();
 
   const latestIndex =
     fearGreed.history_30d.length > 0
@@ -2982,9 +2992,16 @@ export function buildMarketLabDashboard(): MarketLabDashboardPayload {
     (s) => s.quality_status === "verified_direct"
   ).length;
 
+  const core8to11Count = seriesList.filter(
+    (s) => s.grade >= 8 && s.grade <= 11
+  ).length;
+  const high12to13Count = seriesList.filter(
+    (s) => s.grade >= 12 && s.grade <= 13
+  ).length;
+
   const collectionStatus: MarketCollectionStatus = {
     environment_mode:
-      "Next.js Node.js 서버 온디맨드 배치 수집 + .fclab-store.json 시계열 영구 축적 (이전 시점 덮어쓰기 금지)",
+      "Next.js Node.js 서버 온디맨드 실시간 수집 + .fclab-store.json 시계열 영구 축적 (이전 시점 덮어쓰기 금지)",
     total_catalog_cards: allCards.length,
     cards_with_full_ability: allCards.filter((c) => c.has_full_ability).length,
     cards_with_multi_grade_prices: allCards.filter(
@@ -2993,19 +3010,27 @@ export function buildMarketLabDashboard(): MarketLabDashboardPayload {
     timeseries_stored_count: Object.keys(store.priceHistory).length,
     valid_30d_series_count: seriesList.filter((s) => s.points.length >= 28)
       .length,
+    core_grades_8_11_series_count: core8to11Count,
+    separated_12_13_series_count: high12to13Count,
     unit_rescaled_series_count: rescaledCount,
     direct_verified_series_count: directCount,
+    official_events_count: (store.marketEvents || []).length,
+    ranker_usage_players_count:
+      (store.rankerMetaSnapshot?.position_top_players?.length || 0) +
+      (store.rankerMetaSnapshot?.daily_record_leaders?.length || 0),
     last_crawled_at:
+      store.rankerMetaSnapshot?.last_synced_at ||
       seriesList[0]?.collected_at ||
       new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC",
     rate_limit_policy:
-      "배치 1회당 최대 8~12건 순차 요청 + 요청 간 딜레이 적용으로 외부 데이터센터 차단 방지",
+      "배치 1회당 순차 요청 + 요청 간 딜레이 적용으로 외부 데이터센터 차단 방지 (+8~+11강 주류 기준 우선 수집)",
     deduplication_policy:
       "동일 (spid, grade, date) 관측 시 원본 값을 보존하고 신규 일자 포인트를 시계열에 병합",
     unobservable_metrics_disclosure: [
       "이적시장 전체 유저 실시간 매수·매도 호가창 잔량(Order Book Depth): 넥슨 공식 API 미제공으로 수집 불가 (추정 제외)",
-      "선수별 일간 실제 거래 체결 건수(Transaction Volume): 넥슨 공식 API 미제공으로 가짜 거래량을 생성하지 않고 가격 등락 확산도(Breadth)와 변동성으로 대체",
-      "이벤트 선수팩 전체 유저 개봉 수량: 비공개 서버 지표이므로 보수적·기준·공격적 3단계 공급 시나리오 모델로 분리 제시",
+      "선수별·강화 단계별 일간 실제 거래 체결 건수(Transaction Volume): 넥슨 공식 API 미제공으로 가짜 거래량을 생성하지 않고 '시계열 가격 관측 횟수(Observation Count)'와 '실제 거래량(미제공)'을 명확히 구분 표기",
+      "이벤트 선수팩 전체 유저 개봉 수량 및 개인 보유 BP 총량: 비공개 서버 지표이므로 공식 공지·이벤트 크롤링 사실과 보수적·기준·공격적 3단계 공급 시나리오 모델로 분리 제시",
+      "+12~+13강 초고가 구간: 단일 거래에 따른 가격 왜곡이 크므로 주류 시장(+8~+11강) 지수 및 예측 모델에서 분리하여 별도 관리",
     ],
     unit_conversion_samples: unitConversionRecords,
   };
@@ -3013,6 +3038,8 @@ export function buildMarketLabDashboard(): MarketLabDashboardPayload {
   return {
     generated_at:
       new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC",
+    core_analysis_grades: [8, 9, 10, 11],
+    separated_high_grades: [12, 13],
     market_index_current: latestIndex,
     market_return_1d_pct: marketRet1d,
     market_return_7d_pct: marketRet7d,
@@ -3022,18 +3049,30 @@ export function buildMarketLabDashboard(): MarketLabDashboardPayload {
     season_sectors: seasonSectors,
     capital_tier_sectors: capitalTierSectors,
     grade_sectors: gradeSectors,
+    multi_axis_sectors: multiAxisSectors,
+    grade_tier_comparisons: gradeTierComparisons,
+    dynamic_flagship_candidates: dynamicFlagshipCandidates,
+    ranker_meta_snapshot: store.rankerMetaSnapshot || undefined,
     events,
+    event_change_logs: store.marketEventChangeLogs || [],
     event_impacts: impacts,
     player_forecasts: playerForecasts,
     sector_forecasts: sectorForecasts,
     backtest_report: backtestReport,
     trait_catalog: traitCatalog,
+    legacy_traits_excluded: EXCLUDED_LEGACY_TRAITS_LIST,
     trait_premiums: traitPremiums,
     trait_substitutions: traitSubstitutions,
     trait_season_discounts: traitSeasonDiscounts,
     trait_patches: traitPatches,
+    code_audit_findings: codeAuditFindings,
     collection_status: collectionStatus,
-    normalized_series_preview: seriesList.slice(0, 50),
+    normalized_series_preview: [
+      ...coreSeries.slice(0, 45),
+      ...seriesList
+        .filter((s) => s.grade_tier_zone === "SEPARATED_ULTRA_12_13")
+        .slice(0, 10),
+    ],
   };
 }
 
@@ -3048,23 +3087,26 @@ export async function runIncrementalMarketCollectionBatch(options?: {
   completedAt: string;
 }> {
   const store = getStoreSnapshot();
-  const limit = clamp(Number(options?.limit || 6), 1, 10);
-  const grade = clamp(Number(options?.grade || 1), 1, 10);
+  const maxGrade = getSystemRules().maxEnhanceLevel || 13;
+  const limit = clamp(Number(options?.limit || 6), 1, 12);
+  // Default to +8강 (core gold market standard) instead of +1강
+  const grade = clamp(Number(options?.grade || 8), 1, maxGrade);
   const targetSeason = (options?.targetSeason || "").trim().toUpperCase();
 
-  let candidates = Object.values(store.cards).filter((c) => c.bp_1 > 0);
+  let candidates = Object.values(store.cards).filter(
+    (c) => getCardGoldOrBaseBp(c) > 0
+  );
   if (targetSeason && targetSeason !== "ALL") {
     candidates = candidates.filter((c) => c.season_code === targetSeason);
   }
 
-  // Prioritize cards that either lack 30d priceHistory or lack full ability traits
   candidates.sort((a, b) => {
     const aHasPh = Boolean(store.priceHistory[`${a.spid}_${grade}`]);
     const bHasPh = Boolean(store.priceHistory[`${b.spid}_${grade}`]);
     if (aHasPh !== bHasPh) return aHasPh ? 1 : -1;
     if (a.has_full_ability !== b.has_full_ability)
       return a.has_full_ability ? 1 : -1;
-    return b.bp_1 - a.bp_1;
+    return getCardGoldOrBaseBp(b) - getCardGoldOrBaseBp(a);
   });
 
   const picked = candidates.slice(0, limit);
@@ -3092,3 +3134,4 @@ export async function runIncrementalMarketCollectionBatch(options?: {
       new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC",
   };
 }
+

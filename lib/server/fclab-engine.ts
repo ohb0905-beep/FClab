@@ -503,7 +503,7 @@ export const ARCHETYPES: ArchetypeDef[] = [
   },
 ];
 
-interface FClabStore {
+export interface FClabStore {
   seasons: Record<number, { class_name: string; season_code: string; season_img: string }>;
   positions: Record<number, string>;
   divisions: Record<number, string>;
@@ -512,6 +512,10 @@ interface FClabStore {
   priceHistory: Record<string, PriceHistoryData>;
   savedSquads: SavedSquad[];
   systemRules: SystemRules;
+  marketEvents?: import("@/lib/fclab-types").MarketEventRecord[];
+  marketEventChangeLogs?: import("@/lib/fclab-types").OfficialEventChangeLog[];
+  rankerMetaSnapshot?: import("@/lib/fclab-types").RankerMetaSnapshot;
+  traitPatches?: import("@/lib/fclab-types").TraitPatchHistoryItem[];
   seeded: boolean;
   updatedAt: string;
 }
@@ -604,6 +608,11 @@ function saveStore(): void {
     // ignore write error on read-only fs
   }
 }
+
+export function persistStore(): void {
+  saveStore();
+}
+
 
 export function getSystemRules(): SystemRules {
   const store = loadStore();

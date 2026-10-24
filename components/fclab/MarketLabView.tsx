@@ -222,7 +222,15 @@ function BasisBadge({ basis }: { basis: MarketDataBasis }) {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
         <Database className="w-3 h-3" />
-        관측 데이터 (Observed)
+        실측 데이터 (Observed)
+      </span>
+    );
+  }
+  if (basis === "official_public") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold bg-sky-500/15 text-sky-300 border border-sky-500/30">
+        <CheckCircle2 className="w-3 h-3" />
+        공식 공개 데이터 (Official Public)
       </span>
     );
   }
@@ -231,6 +239,14 @@ function BasisBadge({ basis }: { basis: MarketDataBasis }) {
       <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
         <Scale className="w-3 h-3" />
         통계적 통제 추정 (Controlled Estimate)
+      </span>
+    );
+  }
+  if (basis === "on_hold_insufficient_data") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold bg-rose-500/15 text-rose-300 border border-rose-500/30">
+        <AlertTriangle className="w-3 h-3" />
+        데이터 부족 판별 보류 (On Hold)
       </span>
     );
   }
@@ -279,14 +295,17 @@ export default function MarketLabView({
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
 
-  // Sector axis state
+  // Sector axis & dynamic flagship filter state
   const [sectorAxis, setSectorAxis] = useState<
-    "season" | "capital_tier" | "grade"
+    "season" | "capital_tier" | "grade" | "multi_axis"
   >("season");
+  const [flagshipCategoryFilter, setFlagshipCategoryFilter] =
+    useState<string>("ALL");
 
-  // Forecast & Player Inspector state
+  // Forecast & Player Inspector state (Default +8강 core gold tier)
   const [selectedForecastEntityId, setSelectedForecastEntityId] =
     useState<string>("");
+  const [selectedInspectGrade, setSelectedInspectGrade] = useState<number>(8);
   const [selectedTraceSpid, setSelectedTraceSpid] = useState<number>(0);
   const [playerQuery, setPlayerQuery] = useState<string>("");
   const [loadingPlayerForecast, setLoadingPlayerForecast] =
@@ -302,14 +321,15 @@ export default function MarketLabView({
   const [simHasPcRoom, setSimHasPcRoom] = useState<boolean>(true);
   const [simCouponPct, setSimCouponPct] = useState<number>(30);
 
-  // Trait filter state
+  // Trait filter state (Strictly level: 8 Official New Traits)
   const [selectedSubstitutionCaseId, setSelectedSubstitutionCaseId] =
-    useState<string>("sub-aerial-box-vs-linebreaker");
+    useState<string>("sub-new-box-finisher-vs-linebreaker");
   const [selectedTraitForDetail, setSelectedTraitForDetail] =
     useState<string>("크로스 포쳐");
 
   // Operations & Event Registration state
   const [collectingBatch, setCollectingBatch] = useState<boolean>(false);
+  const [syncingSources, setSyncingSources] = useState<boolean>(false);
   const [batchMessage, setBatchMessage] = useState<string>("");
   const [newEvtTitle, setNewEvtTitle] = useState<string>("");
   const [newEvtType, setNewEvtType] = useState<
@@ -317,7 +337,7 @@ export default function MarketLabView({
   >("PACK_RELEASE");
   const [newEvtStart, setNewEvtStart] = useState<string>("10.15");
   const [newEvtEnd, setNewEvtEnd] = useState<string>("10.22");
-  const [newEvtSeasons, setNewEvtSeasons] = useState<string>("26TOTY,WS,UC");
+  const [newEvtSeasons, setNewEvtSeasons] = useState<string>("25UCL,WS,26TOTY");
   const [newEvtCouponPct, setNewEvtCouponPct] = useState<number>(30);
 
   async function fetchMarketOverview() {
@@ -394,7 +414,7 @@ export default function MarketLabView({
     };
   }, []);
 
-  async function handleInspectCustomPlayer(spid: number, grade = 1) {
+  async function handleInspectCustomPlayer(spid: number, grade = selectedInspectGrade) {
     setLoadingPlayerForecast(true);
     try {
       const res = await fetch(
@@ -425,13 +445,13 @@ export default function MarketLabView({
       const res = await fetch("/api/fclab/v1/market/collect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ limit: 5, grade: 1 }),
+        body: JSON.stringify({ limit: 5, grade: 8 }),
       });
       const data = await res.json();
       if (data.ok && data.dashboard) {
         setDashboard(data.dashboard);
         setBatchMessage(
-          `증분 수집 완료: 신규 시계열 ${data.batchResult.collectedSeriesCount}건, 상세 능력치·특성 ${data.batchResult.collectedAbilityCount}건 갱신됨 (${data.batchResult.completedAt})`
+          `증분 수집 완료 (+8~+13강): 신규 시계열 ${data.batchResult.collectedSeriesCount}건, 상세 능력치·특성 ${data.batchResult.collectedAbilityCount}건 갱신됨 (${data.batchResult.completedAt})`
         );
       }
     } catch (err) {
@@ -440,6 +460,31 @@ export default function MarketLabView({
       );
     } finally {
       setCollectingBatch(false);
+    }
+  }
+
+  async function handleSyncOfficialSources(mode = "all") {
+    setSyncingSources(true);
+    setBatchMessage("");
+    try {
+      const res = await fetch("/api/fclab/v1/market/sync-sources", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
+      const data = await res.json();
+      if (data.ok && data.dashboard) {
+        setDashboard(data.dashboard);
+        setBatchMessage(
+          `공식 데이터 동기화 완료: 이벤트·공지 변경감지 및 Top 10,000 랭커 점유율·+8~+13강 시계열 반영 완료`
+        );
+      }
+    } catch (err) {
+      setBatchMessage(
+        `공식 동기화 오류: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      setSyncingSources(false);
     }
   }
 
@@ -1110,7 +1155,7 @@ export default function MarketLabView({
       )}
 
       {/* =====================================================================
-          SUB-TAB 2: MULTI-AXIS SECTOR ANALYSIS
+          SUB-TAB 2: MULTI-AXIS SECTOR ANALYSIS & DYNAMIC FLAGSHIP EXPLORER
       ===================================================================== */}
       {subTab === "sectors" && (
         <div className="space-y-6">
@@ -1118,19 +1163,21 @@ export default function MarketLabView({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-bold text-white">
-                  다축 섹터 분석 (시즌 공급구조 · 자본 구간 · 강화 단계)
+                  다중 축 동적 섹터 분석 (시즌·자본·강화단계·포지션·팀컬러·신규특성)
                 </h3>
                 <BasisBadge basis="observed" />
+                <BasisBadge basis="official_public" />
               </div>
               <p className="text-xs text-slate-400 mt-1">
-                동일한 선수 카드라도 시즌 공급 제한 여부, 가격대(자본 구간), 강화 단계에 따라 시장 충격 반응이 다르게 나타납니다.
+                단일 선수는 시즌 공급구조, 자본 구간, 강화 구간(+8~+11강 주류 vs +12~+13강 분리), 포지션, 팀컬러, 공식 신규특성(level: 8) 보유 여부에 따라 복수의 동적 섹터에 동시에 소속됩니다.
               </p>
             </div>
-            <div className="flex items-center gap-1.5 bg-slate-950 p-1 border border-slate-800 self-start">
+            <div className="flex flex-wrap items-center gap-1.5 bg-slate-950 p-1 border border-slate-800 self-start">
               {[
                 { id: "season" as const, label: "시즌·공급구조 축" },
                 { id: "capital_tier" as const, label: "자본·가격대 축" },
-                { id: "grade" as const, label: "강화 단계 축" },
+                { id: "grade" as const, label: "강화 구간 축 (+8~+11 / +12~+13)" },
+                { id: "multi_axis" as const, label: "포지션·팀컬러·신규특성 다중축" },
               ].map((ax) => (
                 <button
                   key={ax.id}
@@ -1153,7 +1200,9 @@ export default function MarketLabView({
               ? dashboard.season_sectors
               : sectorAxis === "capital_tier"
                 ? dashboard.capital_tier_sectors
-                : dashboard.grade_sectors
+                : sectorAxis === "grade"
+                  ? dashboard.grade_sectors
+                  : dashboard.multi_axis_sectors || []
             ).map((sec) => (
               <div
                 key={sec.sector_id}
@@ -1293,9 +1342,9 @@ export default function MarketLabView({
                       섹터 내 주요 변동 카드 (7일 기준)
                     </div>
                     <div className="grid grid-cols-2 gap-2">
-                      {sec.top_movers.map((m) => (
+                      {sec.top_movers.map((m, idx) => (
                         <div
-                          key={`${m.spid}_${m.grade}`}
+                          key={`${m.spid}_${m.grade}_${idx}`}
                           onClick={() =>
                             onInspectPlayer && onInspectPlayer(m.spid, m.grade)
                           }
@@ -1318,6 +1367,242 @@ export default function MarketLabView({
               </div>
             ))}
           </div>
+
+          {/* Core Gold Tier (+8~+11강) vs Separated Ultra Tier (+12~+13강) Comparison Table */}
+          {dashboard.grade_tier_comparisons && (
+            <div className="bg-slate-900/85 border border-slate-800 p-5 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-white">
+                    강화 단계별 시세 분석 기준: +8~+11강 주류 금카 구간 vs +12~+13강 초고가·저유동성 분리 구간
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    13강 등 초고가 희소 매물이 전체 시장 평균을 왜곡하지 않도록 +8~+11강 핵심 금카 구간과 +12~+13강 구간을 엄격히 분리하며, 시계열 관측 횟수와 실제 거래량(미제공)을 명확히 구분합니다.
+                  </p>
+                </div>
+                <BasisBadge basis="observed" />
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
+                      <th className="py-2 pr-2">강화 단계 (구간 분류)</th>
+                      <th className="py-2 px-2 text-right">시계열 관측 표본 (일자 수)</th>
+                      <th className="py-2 px-2 text-right">실제 거래량 제공 여부</th>
+                      <th className="py-2 px-2 text-right">평균가 / 중앙값</th>
+                      <th className="py-2 px-2 text-right">7일 / 30일 수익률</th>
+                      <th className="py-2 pl-2">판별 상태 및 유동성 해석</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/70">
+                    {dashboard.grade_tier_comparisons.map((g) => (
+                      <tr key={g.grade} className="hover:bg-slate-950/60">
+                        <td className="py-2.5 pr-2">
+                          <span className="font-mono font-bold text-white mr-1.5">
+                            +{g.grade}강
+                          </span>
+                          <span
+                            className={`px-1.5 py-0.5 text-[10px] font-semibold ${
+                              g.tier_zone === "CORE_GOLD_8_11"
+                                ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+                                : "bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                            }`}
+                          >
+                            {g.tier_zone === "CORE_GOLD_8_11"
+                              ? "주류 금카 핵심 구간"
+                              : "고가·저유동성 분리 구간"}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-2 text-right font-mono text-slate-200">
+                          {g.timeseries_observation_count}종 (30일 시계열 관측)
+                        </td>
+                        <td className="py-2.5 px-2 text-right font-mono text-slate-400">
+                          미제공 (가격 스냅샷만 존재)
+                        </td>
+                        <td className="py-2.5 px-2 text-right font-mono">
+                          <div className="text-amber-300 font-semibold">
+                            {g.avg_bp_text} BP
+                          </div>
+                          <div className="text-[10px] text-slate-500">
+                            중앙값 {g.median_bp_text}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-2 text-right font-mono">
+                          <div>
+                            7일 <ReturnBadge val={g.return_7d_pct} />
+                          </div>
+                          <div className="text-[10px] text-slate-400">
+                            30일 {g.return_30d_pct >= 0 ? "+" : ""}
+                            {g.return_30d_pct}% (변동성 {g.volatility_30d_pct}%)
+                          </div>
+                        </td>
+                        <td className="py-2.5 pl-2 text-[11px]">
+                          <span
+                            className={`px-1.5 py-0.5 text-[10px] font-semibold mr-1.5 ${
+                              g.status === "analyzed"
+                                ? "bg-emerald-500/15 text-emerald-300"
+                                : "bg-rose-500/15 text-rose-300"
+                            }`}
+                          >
+                            {g.status === "analyzed"
+                              ? "정상 분석"
+                              : "표본 부족 판별 보류"}
+                          </span>
+                          <span className="text-slate-400">{g.liquidity_note}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Data-Driven Dynamic Flagship ("대장") Candidates Explorer */}
+          {dashboard.dynamic_flagship_candidates && (
+            <div className="bg-slate-900/85 border border-slate-800 p-5 space-y-4">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-white">
+                      데이터 기반 동적 대장 판별 탐색기 (하드코딩 시즌 배열 전면 제거)
+                    </h3>
+                    <BasisBadge basis="official_public" />
+                    <BasisBadge basis="statistical_estimate" />
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1">
+                    고정 시즌 배열이나 선수 이름 하드코딩 없이, 공식 Top 10,000 랭커 스쿼드 사용률({dashboard.ranker_meta_snapshot?.snapshot_date || "최신"}), 포지션별 점유율, 공식 신규특성(level: 8) 보유 개수, +8강 가격 대비 성능(가성비), 7일 시세 방어력을 종합해 동적으로 분류합니다.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    "ALL",
+                    "최상위 메타픽",
+                    "팀컬러별 대장",
+                    "가성비 대장",
+                    "신규 시즌 수혜 후보",
+                    "경쟁력 하락 후보",
+                    "데이터 부족으로 판별 보류",
+                  ].map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setFlagshipCategoryFilter(cat)}
+                      className={`px-2.5 py-1 text-[11px] font-semibold border transition ${
+                        flagshipCategoryFilter === cat
+                          ? "bg-emerald-500 text-slate-950 border-emerald-400 font-bold"
+                          : "bg-slate-950 text-slate-300 border-slate-800 hover:text-white"
+                      }`}
+                    >
+                      {cat === "ALL" ? "전체 분류" : cat}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="overflow-x-auto max-h-96">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
+                      <th className="py-2 pr-2">동적 판별 분류</th>
+                      <th className="py-2 px-2">선수 카드 (+강화)</th>
+                      <th className="py-2 px-2 text-right">랭커 점유율 (시즌)</th>
+                      <th className="py-2 px-2 text-right">+8~+11강 시세 (7일)</th>
+                      <th className="py-2 px-2">보유 신규특성 (level: 8)</th>
+                      <th className="py-2 pl-2">데이터 기반 판별 근거</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/70">
+                    {dashboard.dynamic_flagship_candidates
+                      .filter(
+                        (c) =>
+                          flagshipCategoryFilter === "ALL" ||
+                          c.category === flagshipCategoryFilter
+                      )
+                      .slice(0, 24)
+                      .map((cand) => (
+                        <tr
+                          key={`${cand.spid}_${cand.analyzed_grade}`}
+                          onClick={() =>
+                            onInspectPlayer &&
+                            onInspectPlayer(cand.spid, cand.analyzed_grade)
+                          }
+                          className="hover:bg-slate-950/60 cursor-pointer"
+                        >
+                          <td className="py-2.5 pr-2">
+                            <span
+                              className={`px-2 py-0.5 text-[10px] font-bold border ${
+                                cand.category === "최상위 메타픽"
+                                  ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                                  : cand.category === "팀컬러별 대장"
+                                    ? "bg-sky-500/15 text-sky-300 border-sky-500/30"
+                                    : cand.category === "가성비 대장"
+                                      ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/30"
+                                      : cand.category === "데이터 부족으로 판별 보류"
+                                        ? "bg-rose-500/15 text-rose-300 border-rose-500/30"
+                                        : "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                              }`}
+                            >
+                              {cand.category}
+                            </span>
+                            <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                              대장점수 {cand.flagship_score}점 / 가성비 {cand.value_efficiency_score}점
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-2">
+                            <div className="font-bold text-white">
+                              [{cand.season_code}] {cand.name} +{cand.analyzed_grade}강
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              {cand.primary_position} · OVR {cand.ovr} · 급여 {cand.salary}
+                              {cand.team_colors.length > 0 &&
+                                ` · ${cand.team_colors.slice(0, 2).join("/")}`}
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-2 text-right font-mono">
+                            <div className="text-emerald-300 font-semibold">
+                              {cand.ranker_usage_pct > 0
+                                ? `${cand.ranker_usage_pct}% (${cand.ranker_usage_count}명)`
+                                : "포지션 외"}
+                            </div>
+                            <div className="text-[10px] text-slate-500">
+                              시즌 점유 {cand.season_ranker_share_pct}%
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-2 text-right font-mono">
+                            <div className="text-amber-300 font-semibold">
+                              {cand.current_bp_text} BP
+                            </div>
+                            <ReturnBadge val={cand.return_7d_pct} />
+                          </td>
+                          <td className="py-2.5 px-2 text-[11px]">
+                            {cand.new_traits.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {cand.new_traits.map((nt) => (
+                                  <span
+                                    key={nt}
+                                    className="px-1.5 py-0.5 text-[10px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+                                  >
+                                    {nt}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-slate-500 text-[10px]">
+                                신규특성 미보유 (제외 일반특성 {cand.legacy_traits_excluded_count}개)
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 pl-2 text-[11px] text-slate-300 max-w-xs">
+                            {cand.classification_rationale}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1337,15 +1622,29 @@ export default function MarketLabView({
                 <BasisBadge basis="model_forecast" />
               </div>
 
-              {/* Search any card from catalog */}
+              {/* Search any card from catalog + Grade Selector (+8~+13강) */}
               <div className="space-y-2">
+                <div className="flex items-center justify-between text-[11px] text-slate-400">
+                  <span>실시간 조회 강화 단계 (주류 금카 +8~+11강 권장):</span>
+                  <select
+                    value={selectedInspectGrade}
+                    onChange={(e) => setSelectedInspectGrade(Number(e.target.value))}
+                    className="bg-slate-950 border border-slate-700 px-2 py-0.5 text-xs text-emerald-300 font-mono"
+                  >
+                    {[8, 9, 10, 11, 12, 13, 5, 1].map((g) => (
+                      <option key={g} value={g}>
+                        +{g}강 {g >= 8 && g <= 11 ? "(주류 금카)" : g >= 12 ? "(분리 구간)" : "(하위 참조)"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
                   <input
                     type="text"
                     value={playerQuery}
                     onChange={(e) => setPlayerQuery(e.target.value)}
-                    placeholder="선수명 또는 시즌 검색 (예: 호날두, 굴리트, 26TOTY)"
+                    placeholder="선수명 또는 시즌 검색 (예: 호날두, 굴리트, 25UCL)"
                     className="w-full bg-slate-950 border border-slate-800 pl-8 pr-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
                   />
                 </div>
@@ -1356,7 +1655,7 @@ export default function MarketLabView({
                         key={c.spid}
                         onClick={() => {
                           setPlayerQuery("");
-                          handleInspectCustomPlayer(c.spid, 1);
+                          handleInspectCustomPlayer(c.spid, selectedInspectGrade);
                         }}
                         className="w-full px-3 py-2 text-left text-xs hover:bg-slate-900 flex items-center justify-between"
                       >
@@ -1365,14 +1664,18 @@ export default function MarketLabView({
                             [{c.season_code}]
                           </span>
                           <span className="font-semibold text-slate-100">
-                            {c.name}
+                            {c.name} +{selectedInspectGrade}강
                           </span>{" "}
                           <span className="text-slate-400">
                             ({c.primary_position} · OVR {c.ovr})
                           </span>
                         </span>
                         <span className="font-mono text-[11px] text-amber-300">
-                          {formatBpKorean(c.bp_1)}
+                          {formatBpKorean(
+                            c.prices?.[String(selectedInspectGrade)]?.bp ||
+                              c.bp_8 ||
+                              c.bp_1
+                          )}
                         </span>
                       </button>
                     ))}
@@ -1680,6 +1983,34 @@ export default function MarketLabView({
               </div>
             </div>
 
+            {/* Official New Trait (level: 8) Forecast Contribution Verification */}
+            {dashboard.backtest_report.new_trait_contribution && (
+              <div className="bg-slate-950/90 border border-emerald-500/30 p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="text-xs font-bold text-emerald-300">
+                    [신규특성(level: 8) 변수 예측 기여도 실증 검증 — M3(미반영) vs M4(신규특성 반영)]
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    {dashboard.backtest_report.new_trait_contribution.legacy_trait_excluded_note} (오차율 -{dashboard.backtest_report.new_trait_contribution.net_mape_reduction_pct}%p 감소, 방향 적중률 +{dashboard.backtest_report.new_trait_contribution.directional_gain_pct}%p 개선)
+                  </p>
+                </div>
+                <div className="flex items-center gap-4 shrink-0 font-mono text-xs">
+                  <div className="bg-slate-900 border border-slate-800 p-2.5 text-right">
+                    <div className="text-[10px] text-slate-400">M3 오차율 (미반영)</div>
+                    <div className="text-slate-200 font-bold">
+                      {dashboard.backtest_report.new_trait_contribution.without_new_trait_mape_7d_pct}%
+                    </div>
+                  </div>
+                  <div className="bg-slate-900 border border-emerald-500/40 p-2.5 text-right">
+                    <div className="text-[10px] text-emerald-300">M4 오차율 (신규특성 반영)</div>
+                    <div className="text-emerald-400 font-bold">
+                      {dashboard.backtest_report.new_trait_contribution.with_new_trait_mape_7d_pct}%
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Model Comparison Tables (1-Day & 7-Day) */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {[
@@ -1842,8 +2173,8 @@ export default function MarketLabView({
                     }
                     className="bg-slate-900 border border-slate-700 px-2.5 py-1 text-xs text-slate-200"
                   >
-                    {dashboard.backtest_report.sample_traces.map((t) => (
-                      <option key={t.spid} value={t.spid}>
+                    {dashboard.backtest_report.sample_traces.map((t, idx) => (
+                      <option key={`${t.spid}_${t.grade}_${idx}`} value={t.spid}>
                         [{t.season_code}] {t.name} +{t.grade}강
                       </option>
                     ))}
@@ -1897,6 +2228,56 @@ export default function MarketLabView({
       ===================================================================== */}
       {subTab === "events_supply" && (
         <div className="space-y-6">
+          {/* Automated Official Event & Notice Crawler + Change Detection Log */}
+          <div className="bg-slate-900/85 border border-slate-800 p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-white">
+                    공식 이벤트·공지사항 자동 크롤링 및 변경 감지(Change Detection) 로그
+                  </h3>
+                  <BasisBadge basis="official_public" />
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  고정 하드코딩 배열 없이 공식 홈페이지(news/events/list, news/notice/list)에서 수집된 이벤트·패키지·수수료 쿠폰 공지의 신규 발견·내용 변경·종료 전환 이력을 데이터베이스에 영구 보존합니다.
+                </p>
+              </div>
+              <button
+                onClick={() => handleSyncOfficialSources("events")}
+                disabled={syncingSources}
+                className="px-3.5 py-1.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-bold shrink-0"
+              >
+                {syncingSources ? "공식 공지 동기화 중..." : "공식 이벤트·공지 실시간 크롤링"}
+              </button>
+            </div>
+
+            {dashboard.event_change_logs && dashboard.event_change_logs.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 max-h-48 overflow-y-auto pr-1">
+                {dashboard.event_change_logs.slice(0, 9).map((log, idx) => (
+                  <div
+                    key={`${log.event_id}_${idx}`}
+                    className="bg-slate-950/90 border border-slate-800 p-2.5 text-xs space-y-1"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="px-1.5 py-0.5 text-[10px] font-bold bg-sky-500/15 text-sky-300 border border-sky-500/30">
+                        {log.change_type}
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-500">
+                        {log.detected_at.slice(0, 16).replace("T", " ")}
+                      </span>
+                    </div>
+                    <div className="font-semibold text-white truncate">
+                      {log.title}
+                    </div>
+                    <div className="text-[11px] text-slate-400 truncate">
+                      {log.detail}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Event DID Impact Cards */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -2222,6 +2603,41 @@ export default function MarketLabView({
       ===================================================================== */}
       {subTab === "trait_meta" && (
         <div className="space-y-6">
+          {/* Official New Traits (level: 8) vs Excluded Legacy Traits (level: 5) Policy Banner */}
+          <div className="bg-slate-900/90 border border-emerald-500/40 p-5 space-y-3">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 text-[11px] font-mono font-bold bg-emerald-500 text-slate-950">
+                  LEVEL 8 NEW TRAITS ONLY
+                </span>
+                <h3 className="text-sm font-bold text-white">
+                  시세 분석 및 예측 변수 원칙: 공식 신규특성(level: 8, trait_icon_50~68) 17종만 반영 · 기존 특성(level: 5) 전면 제외
+                </h3>
+              </div>
+              <BasisBadge basis="official_public" />
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              데이터센터 공식 스펙상 <code className="text-emerald-300 font-mono">data-ori=&quot;{`{"level":8}`}&quot;</code> 및 아이콘 ID <code className="text-emerald-300 font-mono">trait_icon_50.png ~ trait_icon_68.png</code>로 검증된 <strong>17종 공식 신규특성</strong>만 시세 프리미엄 산출(+8강 금카 매칭)과 시세 예측 입력(M4 모델)에 사용합니다.
+            </p>
+            {dashboard.legacy_traits_excluded && dashboard.legacy_traits_excluded.length > 0 && (
+              <div className="bg-slate-950/90 border border-slate-800 p-3 text-[11px] space-y-1.5">
+                <div className="font-semibold text-amber-300">
+                  시세 프리미엄 계산 및 예측 모델 입력에서 제외된 기존 일반 특성 (level: 5, ID 00~49 — 일반 선수 정보에서만 별도 표시)
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {dashboard.legacy_traits_excluded.map((lt) => (
+                    <span
+                      key={lt.trait_id}
+                      className="px-2 py-0.5 bg-slate-900 border border-slate-800 text-slate-400 font-mono text-[10px]"
+                    >
+                      [제외] {lt.trait_name} (ID {lt.trait_id})
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Section A: Competing Trait Substitution Empirical Testing */}
           <div className="bg-slate-900/90 border border-slate-800 p-6 space-y-5">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-800 pb-4">
@@ -2229,12 +2645,12 @@ export default function MarketLabView({
                 <div className="flex items-center gap-2">
                   <GitCompare className="w-4 h-4 text-emerald-400" />
                   <h3 className="text-base font-bold text-white">
-                    경쟁 특성 대체 효과 실증 검증 (예: 아크로바틱 피니셔·크로스 포쳐 vs 라인 브레이커)
+                    신규특성(level: 8) 간 경쟁·대체 효과 실증 검증 (예: 아크로바틱 피니셔·크로스 포쳐 vs 라인 브레이커)
                   </h3>
                   <BasisBadge basis="statistical_estimate" />
                 </div>
                 <p className="text-xs text-slate-400 mt-1">
-                  특정 선수 이름을 하드코딩하지 않고, 실제 보유 특성·포지션·동일 시즌 등급 매칭 표본과 30일 시계열 수익률을 비교해 가설이 지지되는지 검증합니다.
+                  특정 선수 이름을 하드코딩하지 않고, 실제 공식 신규특성(level: 8) 보유 여부·포지션·동일 시즌 등급 매칭 표본(+8강 금카 기준)과 30일 시계열 수익률을 비교해 가설이 지지되는지 검증합니다.
                 </p>
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -2305,7 +2721,7 @@ export default function MarketLabView({
 
                   <div className="bg-slate-950/70 border border-slate-800 p-3">
                     <div className="text-[11px] text-slate-400">
-                      기존 단독 특성군 ({activeSubstitutionCase.incumbent_trait})
+                      비교 신규특성군 ({activeSubstitutionCase.incumbent_trait})
                     </div>
                     <div className="text-sm font-mono font-bold text-white mt-1">
                       7일 평균{" "}
@@ -2321,7 +2737,7 @@ export default function MarketLabView({
 
                   <div className="bg-slate-950/70 border border-slate-800 p-3">
                     <div className="text-[11px] text-slate-400">
-                      부상 특성 통제 프리미엄
+                      부상 신규특성 통제 프리미엄
                     </div>
                     <div className="text-base font-mono font-bold text-emerald-400 mt-1">
                       {activeSubstitutionCase.controlled_rising_premium_pct >= 0
@@ -2330,13 +2746,13 @@ export default function MarketLabView({
                       {activeSubstitutionCase.controlled_rising_premium_pct}%
                     </div>
                     <div className="text-[11px] text-slate-500 mt-0.5">
-                      동일 포지션·시즌·OVR 매칭
+                      동일 포지션·시즌·OVR +8강 매칭
                     </div>
                   </div>
 
                   <div className="bg-slate-950/70 border border-slate-800 p-3">
                     <div className="text-[11px] text-slate-400">
-                      기존 특성 통제 프리미엄
+                      비교 신규특성 통제 프리미엄
                     </div>
                     <div className="text-base font-mono font-bold text-cyan-300 mt-1">
                       {activeSubstitutionCase.controlled_incumbent_premium_pct >=
@@ -2346,7 +2762,7 @@ export default function MarketLabView({
                       {activeSubstitutionCase.controlled_incumbent_premium_pct}%
                     </div>
                     <div className="text-[11px] text-slate-500 mt-0.5">
-                      동일 포지션·시즌·OVR 매칭
+                      동일 포지션·시즌·OVR +8강 매칭
                     </div>
                   </div>
 
@@ -2393,7 +2809,7 @@ export default function MarketLabView({
                           },
                           {
                             key: "incumbent_index",
-                            label: `기존 경쟁 (${activeSubstitutionCase.incumbent_trait})`,
+                            label: `비교 신규특성 (${activeSubstitutionCase.incumbent_trait})`,
                             color: "#f59e0b",
                             formatValue: (v) => v.toFixed(1),
                           },
@@ -2411,14 +2827,14 @@ export default function MarketLabView({
 
                   <div className="bg-slate-950/80 border border-slate-800 p-4 space-y-2.5">
                     <div className="text-xs font-bold text-white">
-                      실제 데이터셋 내 대표 비교 카드 표본 (하드코딩 없음)
+                      실제 데이터셋 내 대표 비교 카드 표본 (+8강 금카 기준 · 하드코딩 없음)
                     </div>
                     <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                      {activeSubstitutionCase.representative_cards.map((rc) => (
+                      {activeSubstitutionCase.representative_cards.map((rc, idx) => (
                         <div
-                          key={`${rc.spid}_${rc.group}`}
+                          key={`${rc.spid}_${rc.group}_${idx}`}
                           onClick={() =>
-                            onInspectPlayer && onInspectPlayer(rc.spid, 1)
+                            onInspectPlayer && onInspectPlayer(rc.spid, 8)
                           }
                           className="bg-slate-900/90 border border-slate-800 p-2.5 flex items-center justify-between cursor-pointer hover:border-emerald-500/40"
                         >
@@ -2439,7 +2855,7 @@ export default function MarketLabView({
                               </span>
                             </div>
                             <div className="text-[11px] text-slate-400 mt-1 truncate">
-                              보유 특성: {rc.key_traits.join(", ")}
+                              보유 신규특성(level:8): {rc.key_traits.join(", ")}
                             </div>
                           </div>
                           <div className="text-right shrink-0 ml-2">
@@ -2463,10 +2879,10 @@ export default function MarketLabView({
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-sm font-bold text-white">
-                    특성별 단순 가격 차이 vs 교란변수 통제 프리미엄 (Controlled Trait Premium)
+                    공식 신규특성(level: 8) 17종 단순 가격 차이 vs 교란변수 통제 프리미엄 (+8강 금카 매칭)
                   </h3>
                   <p className="text-xs text-slate-400">
-                    고급 특성이 비싼 시즌에 집중되는 착시를 제거하기 위해 동일 포지션군 · 동일 시즌 섹터 · OVR ±2 이내 매칭 쌍(Matched Pairs)으로 순수 특성 프리미엄을 분리합니다.
+                    고급 신규특성이 비싼 시즌에 집중되는 착시를 제거하기 위해 동일 포지션군 · 동일 시즌 섹터 · OVR ±2 · +8강 금카 기준가 매칭 쌍(Matched Pairs)으로 순수 신규특성 프리미엄을 분리합니다.
                   </p>
                 </div>
                 <BasisBadge basis="statistical_estimate" />
@@ -2476,7 +2892,7 @@ export default function MarketLabView({
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
-                      <th className="py-2 pr-2">특성명 (티어)</th>
+                      <th className="py-2 pr-2">공식 신규특성명 (아이콘 ID)</th>
                       <th className="py-2 px-2 text-right">보유/매칭 표본</th>
                       <th className="py-2 px-2 text-right">
                         단순 평균 차이 (보정 전)
@@ -2500,11 +2916,16 @@ export default function MarketLabView({
                         }`}
                       >
                         <td className="py-2.5 pr-2">
-                          <div className="font-bold text-white">
-                            {tp.trait_name}
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-white">
+                              {tp.trait_name}
+                            </span>
+                            <span className="px-1 py-0.5 text-[9px] font-mono bg-emerald-500/15 text-emerald-300">
+                              Lv.{tp.trait_level || 8}
+                            </span>
                           </div>
-                          <div className="text-[10px] text-slate-400">
-                            {tp.meta_tier} · {tp.category}
+                          <div className="text-[10px] text-slate-400 font-mono">
+                            ID {tp.trait_id ?? "50+"} · {tp.meta_tier} · {tp.category}
                           </div>
                         </td>
                         <td className="py-2.5 px-2 text-right font-mono text-slate-300">
@@ -2554,10 +2975,10 @@ export default function MarketLabView({
                 <>
                   <div>
                     <span className="text-[11px] font-mono text-emerald-400">
-                      선택 특성 통제 비교 상세
+                      선택 신규특성(level: 8) 통제 비교 상세
                     </span>
                     <h4 className="text-base font-bold text-white mt-0.5">
-                      [{activeTraitPremium.trait_name}] 유사 조건 매칭 사례
+                      [{activeTraitPremium.trait_name}] 유사 조건 +8강 매칭 사례
                     </h4>
                     <p className="text-xs text-slate-400 mt-1">
                       {activeTraitPremium.interpretation}
@@ -2573,11 +2994,11 @@ export default function MarketLabView({
 
                   <div className="space-y-3">
                     <div className="text-xs font-bold text-slate-200">
-                      실제 매칭된 보유 vs 미보유 카드 비교 쌍
+                      실제 매칭된 보유 vs 미보유 카드 비교 쌍 (+8강 금카 기준)
                     </div>
                     {activeTraitPremium.matched_examples.length === 0 ? (
                       <div className="text-xs text-slate-500 p-4 bg-slate-950 border border-slate-800">
-                        동일 시즌 섹터 및 OVR ±2 조건을 동시에 만족하는 매칭 쌍 표본이 부족합니다.
+                        동일 시즌 섹터 및 OVR ±2 조건을 동시에 만족하는 매칭 쌍 표본이 부족하여 판별을 보류합니다.
                       </div>
                     ) : (
                       activeTraitPremium.matched_examples.map((ex, i) => (
@@ -2643,10 +3064,10 @@ export default function MarketLabView({
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-sm font-bold text-white">
-                    시즌별 핵심 메타 특성 보유율 및 특성 부재 가치 할인(Discount) 분석
+                    시즌별 공식 신규특성(level: 8) 보유율 및 신규특성 부재 가치 할인(Discount) 분석
                   </h3>
                   <p className="text-xs text-slate-400">
-                    인기 신규 특성(크로스 포쳐·아크로바틱 피니셔·패스 마스터 등)이 없는 시즌이 동일 OVR 기대가 대비 할인을 받는지, 아니면 단종 희소성·양발로 방어하는지 판별합니다.
+                    공식 신규특성(크로스 포쳐·아크로바틱 피니셔·라인 브레이커·2개의 심장·타이탄 등)이 없는 시즌이 동일 OVR 기대가(+8강 기준) 대비 할인을 받는지, 아니면 단종 희소성·양발로 방어하는지 판별합니다.
                   </p>
                 </div>
                 <BasisBadge basis="statistical_estimate" />
@@ -2657,14 +3078,14 @@ export default function MarketLabView({
                   <thead>
                     <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
                       <th className="py-2 pr-2">시즌</th>
-                      <th className="py-2 px-2 text-right">평균 OVR / 기준가</th>
+                      <th className="py-2 px-2 text-right">평균 OVR / +8강 기준가</th>
                       <th className="py-2 px-2 text-right">
-                        핵심특성 보유율 (평균 개수)
+                        신규특성 보유율 (평균 개수)
                       </th>
                       <th className="py-2 px-2 text-right">
                         동일 OVR 대비 프리미엄/할인
                       </th>
-                      <th className="py-2 pl-2">미보유 주요 특성 및 방어 요인</th>
+                      <th className="py-2 pl-2">미보유 주요 신규특성 및 방어 요인</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/70">
@@ -2691,7 +3112,7 @@ export default function MarketLabView({
                             {sd.core_meta_trait_coverage_pct}%
                           </div>
                           <div className="text-[10px] text-slate-500">
-                            평균 {sd.avg_trait_count}개
+                            신규특성 평균 {sd.avg_trait_count}개
                           </div>
                         </td>
                         <td className="py-2.5 px-2 text-right font-mono">
@@ -2701,7 +3122,7 @@ export default function MarketLabView({
                           <div className="text-slate-400">
                             {sd.missing_key_traits.length > 0
                               ? `미보유: ${sd.missing_key_traits.slice(0, 3).join(", ")}`
-                              : "주요 메타 특성 전방위 보유"}
+                              : "주요 신규특성 전방위 보유"}
                           </div>
                           <div className="text-emerald-300/90 text-[10px] mt-0.5">
                             보완: {sd.compensating_factors.join(" · ")}
@@ -2718,9 +3139,9 @@ export default function MarketLabView({
             <div className="bg-slate-900/85 border border-slate-800 p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-bold text-white">
-                  특성 패치 및 메타 변화 이력
+                  공식 신규특성(level: 8) 도입 · 밸런스 패치 이력
                 </h3>
-                <BasisBadge basis="observed" />
+                <BasisBadge basis="official_public" />
               </div>
               <div className="space-y-3">
                 {dashboard.trait_patches.map((tp) => (
@@ -2752,29 +3173,105 @@ export default function MarketLabView({
       )}
 
       {/* =====================================================================
-          SUB-TAB 6: COLLECTION OPERATIONS, UNIT AUDIT & TRANSPARENCY
+          SUB-TAB 6: COLLECTION OPERATIONS, CODE AUDIT & TRANSPARENCY
       ===================================================================== */}
       {subTab === "operations" && (
         <div className="space-y-6">
+          {/* Code Audit Report Table */}
+          {dashboard.code_audit_findings && (
+            <div className="bg-slate-900/85 border border-slate-800 p-6 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                <div>
+                  <h3 className="text-base font-bold text-white">
+                    이적시장 분석 엔진 코드 감사(Code Audit) 및 데이터 기반 아키텍처 전환 검증표
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    1) 실제 하드코딩 확인 및 수정 항목, 2) 데이터 기반 구현 확인 항목, 3) 일부 구현 보강 항목, 4) 외부 비공개로 확인 불가한 항목을 투명하게 분류합니다.
+                  </p>
+                </div>
+                <BasisBadge basis="observed" />
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
+                      <th className="py-2 pr-2">감사 분류</th>
+                      <th className="py-2 px-2">점검 모듈 (파일 위치)</th>
+                      <th className="py-2 px-2">감사 발견 사항</th>
+                      <th className="py-2 pl-2">데이터 기반 개선 및 조치 내역</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/70">
+                    {dashboard.code_audit_findings.map((item, idx) => (
+                      <tr key={`${item.module_path}_${idx}`} className="hover:bg-slate-950/60">
+                        <td className="py-2.5 pr-2 whitespace-nowrap">
+                          <span
+                            className={`px-2 py-0.5 text-[10px] font-bold border ${
+                              item.category.startsWith("1.")
+                                ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                                : item.category.startsWith("2.")
+                                  ? "bg-sky-500/15 text-sky-300 border-sky-500/30"
+                                  : item.category.startsWith("3.")
+                                    ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/30"
+                                    : "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                            }`}
+                          >
+                            {item.category}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-2">
+                          <div className="font-bold text-white">{item.finding_title}</div>
+                          <div className="text-[10px] font-mono text-slate-500">
+                            {item.module_path}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-2 text-[11px] text-slate-300 max-w-xs">
+                          {item.before_state}
+                        </td>
+                        <td className="py-2.5 pl-2 text-[11px] text-emerald-300/90 max-w-md">
+                          {item.after_state}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           <div className="bg-slate-900/85 border border-slate-800 p-6 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
               <div>
                 <h3 className="text-base font-bold text-white">
-                  데이터 수집 아키텍처 · 시계열 단위 정규화 이력 · 비공개 지표 투명성 고지
+                  데이터 수집 아키텍처 (+8~+11강 주류 / +12~+13강 분리) · 단위 정규화 · 비공개 지표 고지
                 </h3>
                 <p className="text-xs text-slate-400 mt-1">
-                  {dashboard.collection_status.environment_mode}
+                  {dashboard.collection_status.environment_mode} (주류 +8~+11강 시계열{" "}
+                  {dashboard.collection_status.core_grades_8_11_series_count ?? 0}종 / 분리 +12~+13강 시계열{" "}
+                  {dashboard.collection_status.separated_12_13_series_count ?? 0}종)
                 </p>
               </div>
-              <button
-                onClick={handleRunIncrementalBatch}
-                disabled={collectingBatch}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-slate-950 font-bold text-xs shrink-0"
-              >
-                {collectingBatch
-                  ? "증분 배치 실행 중..."
-                  : "수동 증분 수집 배치 실행 (5종)"}
-              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => handleSyncOfficialSources("all")}
+                  disabled={syncingSources}
+                  className="px-3.5 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-bold text-xs"
+                >
+                  {syncingSources
+                    ? "공식 소스 동기화 중..."
+                    : "공식 이벤트·랭커·+8~13강 전체 동기화"}
+                </button>
+                <button
+                  onClick={handleRunIncrementalBatch}
+                  disabled={collectingBatch}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-slate-950 font-bold text-xs"
+                >
+                  {collectingBatch
+                    ? "증분 배치 실행 중..."
+                    : "수동 증분 수집 배치 실행 (+8~+13강)"}
+                </button>
+              </div>
             </div>
 
             {batchMessage && (

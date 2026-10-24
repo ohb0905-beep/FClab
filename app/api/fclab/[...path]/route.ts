@@ -26,6 +26,9 @@ import {
   buildMarketLabDashboard,
   registerMarketEvent,
   runIncrementalMarketCollectionBatch,
+  syncOfficialEventsAndNotices,
+  syncRankerUsageAndRecords,
+  syncCoreGradesPriceHistory,
 } from "@/lib/server/fclab-market-engine";
 
 function nowUtc(): string {
@@ -381,6 +384,12 @@ export async function GET(
 
     // 8. GET /api/fclab/v1/market/overview
     if (subPath === "v1/market/overview") {
+      if ((store.marketEvents || []).length === 0) {
+        await syncOfficialEventsAndNotices().catch(() => null);
+      }
+      if (!store.rankerMetaSnapshot) {
+        await syncRankerUsageAndRecords().catch(() => null);
+      }
       const payload = buildMarketLabDashboard();
       return NextResponse.json({
         ok: true,
@@ -395,7 +404,7 @@ export async function GET(
       const spid = Number(sp.get("spid") || 0);
       const grade = Math.max(
         1,
-        Math.min(rules.maxEnhanceLevel, Number(sp.get("grade") || 1))
+        Math.min(rules.maxEnhanceLevel, Number(sp.get("grade") || 8))
       );
       if (spid <= 0) {
         return NextResponse.json(
@@ -711,7 +720,7 @@ export async function POST(
     if (subPath === "v1/market/collect") {
       const batchResult = await runIncrementalMarketCollectionBatch({
         limit: Number(body.limit || 6),
-        grade: Number(body.grade || 1),
+        grade: Number(body.grade || 8),
         targetSeason: String(body.season || ""),
       });
       const dashboard = buildMarketLabDashboard();
@@ -730,6 +739,37 @@ export async function POST(
       return NextResponse.json({
         ok: true,
         event: created,
+        dashboard,
+        systemRules: getSystemRules(),
+      });
+    }
+
+    // 9. POST /api/fclab/v1/market/sync-sources
+    if (subPath === "v1/market/sync-sources") {
+      const target = String(body.target || body.mode || "all");
+      let eventsRes = null;
+      let rankerRes = null;
+      let gradesRes = null;
+      if (target === "all" || target === "events") {
+        eventsRes = await syncOfficialEventsAndNotices();
+      }
+      if (target === "all" || target === "ranker") {
+        rankerRes = await syncRankerUsageAndRecords();
+      }
+      if (target === "all" || target === "grades") {
+        gradesRes = await syncCoreGradesPriceHistory({
+          maxRequests: Number(body.maxRequests || body.spidCount || 12),
+          grades: Array.isArray(body.grades)
+            ? body.grades.map(Number)
+            : [8, 9, 10, 11, 12, 13],
+        });
+      }
+      const dashboard = buildMarketLabDashboard();
+      return NextResponse.json({
+        ok: true,
+        eventsRes,
+        rankerRes,
+        gradesRes,
         dashboard,
         systemRules: getSystemRules(),
       });

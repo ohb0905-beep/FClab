@@ -522,7 +522,12 @@ export function getPositionToneClass(pos: string): string {
 // Market Analysis, Price Prediction, Backtesting & Trait Meta Types
 // ============================================================================
 
-export type MarketDataBasis = "observed" | "statistical_estimate" | "model_forecast";
+export type MarketDataBasis =
+  | "observed"
+  | "official_public"
+  | "statistical_estimate"
+  | "model_forecast"
+  | "on_hold_insufficient_data";
 
 export type SeasonSectorType =
   | "LIMITED_DISCONTINUED"
@@ -537,6 +542,19 @@ export type CapitalTierType =
   | "MID_TIER"
   | "LOW_BUDGET_PRACTICAL"
   | "ENHANCEMENT_FODDER";
+
+export type DynamicFlagshipCategory =
+  | "최상위 메타픽"
+  | "팀컬러별 대장"
+  | "가성비 대장"
+  | "신규 시즌 수혜 후보"
+  | "경쟁력 하락 후보"
+  | "데이터 부족으로 판별 보류";
+
+export type GradeTierZone =
+  | "CORE_GOLD_8_11"
+  | "SEPARATED_ULTRA_12_13"
+  | "SUB_SILVER_1_7";
 
 export interface MarketUnitConversionRecord {
   key: string;
@@ -573,6 +591,7 @@ export interface MarketNormalizedSeries {
   ovr: number;
   salary: number;
   grade: number;
+  grade_tier_zone?: GradeTierZone;
   season_sector: SeasonSectorType;
   season_sector_label: string;
   capital_tier: CapitalTierType;
@@ -595,19 +614,34 @@ export interface MarketNormalizedSeries {
   source: string;
   raw_data_reference: string;
   traits: string[];
+  new_traits?: string[];
+  legacy_traits?: string[];
+  team_colors?: string[];
+  multi_sector_tags?: string[];
+  timeseries_observation_count?: number;
+  transaction_volume_provided?: boolean;
   points: MarketNormalizedPoint[];
 }
 
 export interface MarketSectorSummary {
   sector_id: string;
-  axis: "season" | "capital_tier" | "grade" | "season_code";
+  axis:
+    | "season"
+    | "capital_tier"
+    | "grade"
+    | "season_code"
+    | "position_role"
+    | "team_color"
+    | "new_trait"
+    | "ranker_meta";
   code: string;
   name: string;
   description: string;
   sample_card_count: number;
   timeseries_sample_count: number;
   coverage_ratio: number;
-  confidence_level: "high" | "medium" | "low";
+  confidence_level: "high" | "medium" | "low" | "on_hold_insufficient_data";
+  basis?: MarketDataBasis;
   avg_bp: number;
   avg_bp_text: string;
   median_bp: number;
@@ -685,6 +719,14 @@ export interface MarketFearGreedIndex {
   }[];
 }
 
+export interface OfficialEventChangeLog {
+  detected_at: string;
+  change_type: "신규 발견" | "내용 변경" | "보상·패키지 갱신" | "종료 전환";
+  event_id: string;
+  title: string;
+  detail: string;
+}
+
 export interface MarketEventRecord {
   id: string;
   title: string;
@@ -696,14 +738,20 @@ export interface MarketEventRecord {
     | "ENHANCEMENT_EVENT"
     | "TRAIT_ENGINE_PATCH";
   event_type_label: string;
-  start_date: string; // e.g., "10.01"
-  end_date: string; // e.g., "10.14"
+  published_at?: string;
+  start_date: string;
+  end_date: string;
+  status?: "신규" | "진행중" | "내용변경" | "종료";
   target_seasons: string[];
   target_capital_tiers: CapitalTierType[];
   target_grades: number[];
   bp_injection_scale: "소규모" | "중규모" | "대규모" | "해당없음";
   pack_supply_scale: "소규모" | "중규모" | "대규모" | "해당없음";
   fee_coupon_discount_pct: number;
+  official_url?: string;
+  last_collected_at?: string;
+  content_hash?: string;
+  basis?: MarketDataBasis;
   source: string;
   verified: boolean;
   description: string;
@@ -719,10 +767,11 @@ export interface MarketEventImpactReport {
   during_event_return_pct: number;
   post_event_return_pct: number;
   control_during_return_pct: number;
-  did_net_effect_pct: number; // Difference-in-Differences (Affected vs Control)
+  did_net_effect_pct: number;
   volatility_change_pct: number;
   duration_days_estimated: number;
   mechanism_diagnosis: string;
+  public_reward_vs_estimate_note?: string;
   supply_scenarios: {
     scenario: "보수적 (Conservative)" | "기준 (Base)" | "공격적 (Aggressive)";
     estimated_pack_influx_index: number;
@@ -771,6 +820,7 @@ export interface MarketEntityForecast {
   entity_id: string;
   spid?: number;
   grade?: number;
+  grade_tier_zone?: GradeTierZone;
   name: string;
   season_code: string;
   primary_position?: string;
@@ -778,6 +828,8 @@ export interface MarketEntityForecast {
   current_bp_text: string;
   season_sector_label: string;
   capital_tier_label: string;
+  dynamic_flagship_category?: DynamicFlagshipCategory;
+  new_traits?: string[];
   horizons: MarketHorizonForecast[];
   upward_factors: string[];
   downward_factors: string[];
@@ -805,6 +857,13 @@ export interface MarketBacktestReport {
   leakage_prevention_note: string;
   total_series_evaluated: number;
   total_rolling_windows: number;
+  new_trait_contribution?: {
+    without_new_trait_mape_7d_pct: number;
+    with_new_trait_mape_7d_pct: number;
+    net_mape_reduction_pct: number;
+    directional_gain_pct: number;
+    legacy_trait_excluded_note: string;
+  };
   models_1d: MarketModelBacktestMetric[];
   models_7d: MarketModelBacktestMetric[];
   by_season_sector_7d: {
@@ -850,8 +909,19 @@ export interface MarketBacktestReport {
 }
 
 export interface TraitMetaCatalogItem {
+  trait_id?: number;
+  trait_level?: 8 | 5;
+  icon_url?: string;
+  included_in_price_model?: boolean;
+  exclusion_reason?: string;
   trait_name: string;
-  category: "슈팅·득점" | "침투·오프더볼" | "드리블·탈압박" | "패스·찬스메이킹" | "피지컬·수비·특수";
+  category:
+    | "슈팅·득점"
+    | "침투·오프더볼"
+    | "드리블·탈압박"
+    | "패스·찬스메이킹"
+    | "피지컬·수비·특수"
+    | "골키퍼(GK) 특화";
   is_new_or_reworked_meta: boolean;
   release_or_patch_note: string;
   applicable_positions: string[];
@@ -866,14 +936,21 @@ export interface TraitMetaCatalogItem {
   relative_competitiveness_score: number;
   patch_impact_score: number;
   overall_meta_score: number;
-  meta_tier: "OP (핵심 메타)" | "1티어 (주류 선호)" | "2티어 (상황별 유효)" | "3티어 (보조·비주류)";
+  meta_tier:
+    | "OP (핵심 메타)"
+    | "1티어 (주류 선호)"
+    | "2티어 (상황별 유효)"
+    | "3티어 (보조·비주류)";
   position_suitability: Record<string, number>;
 }
 
 export interface TraitControlledPremiumItem {
+  trait_id?: number;
+  trait_level?: 8;
   trait_name: string;
   category: string;
   meta_tier: string;
+  analyzed_grade_range?: string;
   holder_sample_count: number;
   matched_pair_count: number;
   unadjusted_avg_bp_with: number;
@@ -886,7 +963,8 @@ export interface TraitControlledPremiumItem {
   return_7d_without_trait_pct: number;
   excess_return_7d_pct: number;
   confounder_control_summary: string;
-  confidence_level: "높음" | "보통" | "표본 부족 주의";
+  confidence_level: "높음" | "보통" | "표본 부족 주의" | "표본 부족으로 판별 보류";
+  basis?: MarketDataBasis;
   interpretation: string;
   matched_examples: {
     with_card: {
@@ -895,6 +973,7 @@ export interface TraitControlledPremiumItem {
       season_code: string;
       position: string;
       ovr: number;
+      grade?: number;
       bp_1: number;
       bp_1_text: string;
       traits: string[];
@@ -905,6 +984,7 @@ export interface TraitControlledPremiumItem {
       season_code: string;
       position: string;
       ovr: number;
+      grade?: number;
       bp_1: number;
       bp_1_text: string;
       traits: string[];
@@ -932,7 +1012,10 @@ export interface TraitCompetingSubstitutionCase {
   controlled_rising_premium_pct: number;
   controlled_incumbent_premium_pct: number;
   relative_spread_shift_pct: number;
-  empirical_verdict: "가설 지지 (대체·상대 강세 확인)" | "부분 지지 (보완재·공존 우세)" | "표본 제한적 (추적 관찰 필요)";
+  empirical_verdict:
+    | "가설 지지 (대체·상대 강세 확인)"
+    | "부분 지지 (보완재·공존 우세)"
+    | "표본 제한적 (추적 관찰 필요)";
   verdict_explanation: string;
   comparative_curve_30d: {
     date: string;
@@ -978,10 +1061,130 @@ export interface TraitPatchHistoryItem {
   patch_date: string;
   title: string;
   target_traits: string[];
-  change_type: "신규 추가" | "발동 조건 완화·상향" | "성능 하향·조정" | "체감 메타 변화";
+  change_type:
+    | "신규 추가"
+    | "발동 조건 완화·상향"
+    | "성능 하향·조정"
+    | "체감 메타 변화";
   summary: string;
   observed_market_reaction: string;
   verified_source: string;
+}
+
+export interface DynamicFlagshipCandidate {
+  spid: number;
+  name: string;
+  season_code: string;
+  season_name: string;
+  season_img: string;
+  thumb_url: string;
+  primary_position: string;
+  ovr: number;
+  salary: number;
+  analyzed_grade: number;
+  current_bp: number;
+  current_bp_text: string;
+  return_7d_pct: number;
+  return_30d_pct: number;
+  category: DynamicFlagshipCategory;
+  basis: MarketDataBasis;
+  confidence_score: number;
+  ranker_usage_count: number;
+  ranker_usage_pct: number;
+  season_ranker_share_pct: number;
+  team_colors: string[];
+  top_team_color_ranker_pct: number;
+  new_traits: string[];
+  legacy_traits_excluded_count: number;
+  match_stats?: {
+    appearances: number;
+    goals_per_game: number;
+    assists_per_game: number;
+    pass_success_pct: number;
+    avg_rating: number;
+    recorded_grade: number;
+  };
+  value_efficiency_score: number;
+  flagship_score: number;
+  classification_rationale: string;
+}
+
+export interface GradeTierComparisonItem {
+  grade: number;
+  tier_zone: GradeTierZone;
+  tier_zone_label: string;
+  included_in_core_market_index: boolean;
+  card_price_sample_count: number;
+  timeseries_observation_count: number;
+  transaction_volume_provided: false;
+  liquidity_note: string;
+  status: "analyzed" | "on_hold_insufficient_data";
+  avg_bp: number;
+  avg_bp_text: string;
+  median_bp: number;
+  median_bp_text: string;
+  spread_vs_prev_grade_multiple: number;
+  return_7d_pct: number;
+  return_30d_pct: number;
+  volatility_30d_pct: number;
+  basis: MarketDataBasis;
+}
+
+export interface RankerMetaSnapshot {
+  snapshot_date: string;
+  last_synced_at: string;
+  source_urls: string[];
+  season_usage_top: {
+    season_code: string;
+    usage_pct: number;
+  }[];
+  team_color_usage_top: {
+    team_color_id: string;
+    name: string;
+    user_count: number;
+    usage_pct: number;
+  }[];
+  position_top_players: {
+    spid: number;
+    name: string;
+    season_code: string;
+    position: string;
+    grade: number;
+    ovr: number;
+    salary: number;
+    user_count: number;
+    usage_pct: number;
+    bp_grade: number;
+    bp_grade_text: string;
+  }[];
+  daily_record_leaders: {
+    spid: number;
+    name: string;
+    season_code: string;
+    position: string;
+    grade: number;
+    appearances: number;
+    attack_points_per_game: number;
+    goals_per_game: number;
+    assists_per_game: number;
+    pass_pct: number;
+    dribble_pct: number;
+    tackle_pct: number;
+    avg_rating: number;
+  }[];
+}
+
+export interface CodeAuditFindingItem {
+  category:
+    | "1. 실제 하드코딩이 확인된 항목 (제거·개선 완료)"
+    | "2. 데이터 기반 구현이 확인된 항목"
+    | "3. 일부만 구현된 항목 (보강 완료)"
+    | "4. 관련 코드나 데이터가 없어 확인할 수 없는 항목 (판별 보류 처리)";
+  module_path: string;
+  finding_title: string;
+  before_state: string;
+  after_state: string;
+  data_basis: MarketDataBasis;
 }
 
 export interface MarketCollectionStatus {
@@ -990,10 +1193,19 @@ export interface MarketCollectionStatus {
   cards_with_full_ability: number;
   cards_with_multi_grade_prices: number;
   timeseries_stored_count: number;
+  core_grades_8_11_series_count?: number;
+  separated_12_13_series_count?: number;
   valid_30d_series_count: number;
   unit_rescaled_series_count: number;
   direct_verified_series_count: number;
+  official_events_count?: number;
+  official_notices_count?: number;
+  ranker_usage_players_count?: number;
+  official_new_traits_count?: number;
+  legacy_traits_excluded_count?: number;
   last_crawled_at: string;
+  last_events_synced_at?: string;
+  last_ranker_synced_at?: string;
   rate_limit_policy: string;
   deduplication_policy: string;
   unobservable_metrics_disclosure: string[];
@@ -1002,6 +1214,8 @@ export interface MarketCollectionStatus {
 
 export interface MarketLabDashboardPayload {
   generated_at: string;
+  core_analysis_grades: number[];
+  separated_high_grades: number[];
   market_index_current: number;
   market_return_1d_pct: number;
   market_return_7d_pct: number;
@@ -1011,17 +1225,30 @@ export interface MarketLabDashboardPayload {
   season_sectors: MarketSectorSummary[];
   capital_tier_sectors: MarketSectorSummary[];
   grade_sectors: MarketSectorSummary[];
+  multi_axis_sectors?: MarketSectorSummary[];
+  grade_tier_comparisons?: GradeTierComparisonItem[];
+  dynamic_flagship_candidates?: DynamicFlagshipCandidate[];
+  ranker_meta_snapshot?: RankerMetaSnapshot;
   events: MarketEventRecord[];
+  event_change_logs?: OfficialEventChangeLog[];
   event_impacts: MarketEventImpactReport[];
   player_forecasts: MarketEntityForecast[];
   sector_forecasts: MarketEntityForecast[];
   backtest_report: MarketBacktestReport;
   trait_catalog: TraitMetaCatalogItem[];
+  legacy_traits_excluded?: {
+    trait_id: number;
+    trait_name: string;
+    trait_level: 5;
+    reason: string;
+  }[];
   trait_premiums: TraitControlledPremiumItem[];
   trait_substitutions: TraitCompetingSubstitutionCase[];
   trait_season_discounts: TraitSeasonDiscountItem[];
   trait_patches: TraitPatchHistoryItem[];
+  code_audit_findings?: CodeAuditFindingItem[];
   collection_status: MarketCollectionStatus;
   normalized_series_preview: MarketNormalizedSeries[];
 }
+
 
