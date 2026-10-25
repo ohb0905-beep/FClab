@@ -9,6 +9,18 @@ import {
   BookmarkCheck,
   SlidersHorizontal,
   Scale,
+  Crosshair,
+  Zap,
+  Shield,
+  Compass,
+  Flame,
+  Sparkles,
+  Award,
+  Flag,
+  Trophy,
+  Info,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import {
   PlayerCard,
@@ -55,7 +67,6 @@ const STAT_CATEGORIES: { title: string; keys: string[] }[] = [
       "위치 선정",
       "발리 슛",
       "페널티 킥",
-      "약발/커브",
       "커브",
       "프리킥",
     ],
@@ -81,29 +92,233 @@ const STAT_CATEGORIES: { title: string; keys: string[] }[] = [
   },
 ];
 
+function getTraitVisualStyle(traitName: string): {
+  Icon: React.ComponentType<{ className?: string }>;
+  badgeTone: string;
+  iconColor: string;
+} {
+  if (
+    traitName.includes("감아차기") ||
+    traitName.includes("중거리") ||
+    traitName.includes("슈팅") ||
+    traitName.includes("칩슛") ||
+    traitName.includes("아웃사이드")
+  ) {
+    return {
+      Icon: Crosshair,
+      badgeTone:
+        "bg-rose-500/15 border-rose-500/40 text-rose-200",
+      iconColor: "text-rose-400",
+    };
+  }
+  if (
+    traitName.includes("드리블") ||
+    traitName.includes("스피드") ||
+    traitName.includes("개인기") ||
+    traitName.includes("플레어")
+  ) {
+    return {
+      Icon: Zap,
+      badgeTone:
+        "bg-amber-500/15 border-amber-500/40 text-amber-200",
+      iconColor: "text-amber-400",
+    };
+  }
+  if (
+    traitName.includes("패스") ||
+    traitName.includes("플레이메이커") ||
+    traitName.includes("크로스")
+  ) {
+    return {
+      Icon: Compass,
+      badgeTone:
+        "bg-sky-500/15 border-sky-500/40 text-sky-200",
+      iconColor: "text-sky-400",
+    };
+  }
+  if (
+    traitName.includes("헤더") ||
+    traitName.includes("강철몸") ||
+    traitName.includes("승부욕")
+  ) {
+    return {
+      Icon: Flame,
+      badgeTone:
+        "bg-orange-500/15 border-orange-500/40 text-orange-200",
+      iconColor: "text-orange-400",
+    };
+  }
+  if (
+    traitName.includes("수비") ||
+    traitName.includes("태클") ||
+    traitName.includes("GK")
+  ) {
+    return {
+      Icon: Shield,
+      badgeTone:
+        "bg-emerald-500/15 border-emerald-500/40 text-emerald-200",
+      iconColor: "text-emerald-400",
+    };
+  }
+  return {
+    Icon: Sparkles,
+    badgeTone:
+      "bg-purple-500/15 border-purple-500/40 text-purple-200",
+    iconColor: "text-purple-400",
+  };
+}
+
+function TraitIconBadge({
+  trait,
+}: {
+  trait: { icon?: string; name: string };
+}) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const { Icon, badgeTone, iconColor } = getTraitVisualStyle(trait.name);
+  const hasValidImg =
+    Boolean(trait.icon) &&
+    trait.icon!.startsWith("http") &&
+    !imgFailed;
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium ${badgeTone}`}
+    >
+      {hasValidImg ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={trait.icon}
+          alt={trait.name}
+          referrerPolicy="no-referrer"
+          onError={() => setImgFailed(true)}
+          className="w-4 h-4 object-contain shrink-0"
+        />
+      ) : (
+        <Icon className={`w-3.5 h-3.5 shrink-0 ${iconColor}`} />
+      )}
+      <span>{trait.name}</span>
+    </span>
+  );
+}
+
+const NATION_CREST_MAP: Record<string, { code: string; bg: string }> = {
+  대한민국: { code: "KOR", bg: "bg-rose-600 text-white" },
+  브라질: { code: "BRA", bg: "bg-amber-500 text-slate-950" },
+  네덜란드: { code: "NED", bg: "bg-orange-500 text-white" },
+  잉글랜드: { code: "ENG", bg: "bg-slate-200 text-rose-700" },
+  프랑스: { code: "FRA", bg: "bg-blue-600 text-white" },
+  우루과이: { code: "URU", bg: "bg-sky-500 text-white" },
+  벨기에: { code: "BEL", bg: "bg-red-700 text-amber-300" },
+  모로코: { code: "MAR", bg: "bg-emerald-700 text-rose-200" },
+  독일: { code: "GER", bg: "bg-slate-800 text-amber-400" },
+  스페인: { code: "ESP", bg: "bg-red-600 text-amber-300" },
+  포르투갈: { code: "POR", bg: "bg-rose-700 text-emerald-300" },
+  아르헨티나: { code: "ARG", bg: "bg-sky-400 text-slate-950" },
+  이탈리아: { code: "ITA", bg: "bg-blue-500 text-white" },
+};
+
+const CLUB_CREST_MAP: Record<string, { code: string; bg: string }> = {
+  "레알 마드리드": { code: "RMA", bg: "bg-indigo-600 text-amber-300" },
+  "AC 밀란": { code: "ACM", bg: "bg-red-700 text-white" },
+  "토트넘 홋스퍼": { code: "TOT", bg: "bg-slate-200 text-slate-900" },
+  "맨체스터 유나이티드": { code: "MUN", bg: "bg-red-600 text-amber-200" },
+  "바이에른 뮌헨": { code: "FCB", bg: "bg-rose-600 text-white" },
+  "리버풀 FC": { code: "LIV", bg: "bg-red-700 text-amber-200" },
+  "첼시 FC": { code: "CHE", bg: "bg-blue-600 text-white" },
+  "파리 생제르맹": { code: "PSG", bg: "bg-blue-800 text-rose-300" },
+  "인터 밀란": { code: "INT", bg: "bg-blue-700 text-slate-100" },
+  "FC 바르셀로나": { code: "BAR", bg: "bg-rose-700 text-amber-300" },
+  "보루시아 도르트문트": { code: "BVB", bg: "bg-amber-400 text-slate-950" },
+  "바이어 04 레버쿠젠": { code: "B04", bg: "bg-red-600 text-white" },
+  "SSC 나폴리": { code: "NAP", bg: "bg-sky-500 text-white" },
+  "PSV 에인트호번": { code: "PSV", bg: "bg-rose-600 text-white" },
+  "아인트라흐트 프랑크푸르트": { code: "SGE", bg: "bg-slate-800 text-rose-400" },
+};
+
+function TeamColorLogoBadge({
+  name,
+  type,
+  compact = false,
+}: {
+  name: string;
+  type?: string;
+  compact?: boolean;
+}) {
+  const cleanName = name.trim();
+  const nationStyle = NATION_CREST_MAP[cleanName];
+  const clubStyle =
+    CLUB_CREST_MAP[cleanName] ||
+    Object.entries(CLUB_CREST_MAP).find(([k]) => cleanName.includes(k))?.[1];
+
+  const isNation =
+    Boolean(nationStyle) ||
+    type === "국가대표" ||
+    ["대한민국", "브라질", "네덜란드", "잉글랜드", "프랑스", "우루과이", "벨기에", "모로코", "독일", "스페인", "포르투갈", "아르헨티나", "이탈리아"].includes(cleanName);
+
+  const badgeCode =
+    nationStyle?.code ||
+    clubStyle?.code ||
+    cleanName.replace(/[^A-Za-z가-힣0-9]/g, "").slice(0, 2).toUpperCase();
+
+  const crestBg =
+    nationStyle?.bg ||
+    clubStyle?.bg ||
+    (isNation
+      ? "bg-rose-600 text-white"
+      : "bg-emerald-600 text-white");
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-md border ${
+        compact
+          ? "px-1.5 py-0.5 text-[11px] bg-slate-800/90 border-slate-700 text-slate-200"
+          : "px-2 py-1 text-xs bg-[#0B0F17] border-slate-700/90 text-slate-200"
+      }`}
+    >
+      <span
+        className={`inline-flex items-center justify-center rounded px-1 py-0.5 text-[9px] font-mono font-extrabold leading-none tracking-tighter shrink-0 ${crestBg}`}
+      >
+        {isNation ? (
+          <Flag className="w-2.5 h-2.5 mr-0.5 inline" />
+        ) : (
+          <Trophy className="w-2.5 h-2.5 mr-0.5 inline" />
+        )}
+        {badgeCode}
+      </span>
+      <span className="font-medium">{cleanName}</span>
+      {!compact && type && (
+        <span className="text-[10px] text-slate-400">({type})</span>
+      )}
+    </span>
+  );
+}
+
 export default function PlayerLabView({
   rules = DEFAULT_SYSTEM_RULES,
   initialSpid,
-  initialQuery = "손흥민",
+  initialQuery = "",
   bookmarkedSpids,
   onToggleBookmark,
   onSendToEfficiencyLab,
   onSendToProfileLab,
   onAddToSquadSlot,
 }: PlayerLabViewProps) {
-  const [searchQuery, setSearchQuery] = useState(initialQuery);
+  const [searchQuery, setSearchQuery] = useState(initialQuery || "");
   const [posFilter, setPosFilter] = useState("ALL");
+  const [trapBadgeFilter, setTrapBadgeFilter] = useState("ALL");
   const [sortBy, setSortBy] = useState("ovr_desc");
   const [cards, setCards] = useState<PlayerCard[]>([]);
   const [searching, setSearching] = useState(false);
 
   const [selectedSpid, setSelectedSpid] = useState<number | null>(
-    initialSpid || 280200104
+    initialSpid || null
   );
   const [compareSpid, setCompareSpid] = useState<number | null>(null);
-  const [grade, setGrade] = useState<number>(5);
-  const [teamColorBonus, setTeamColorBonus] = useState<number>(3);
+  // 기본 강화 단계: +8강(8카), 기본 적응도/팀컬러 보너스: 0
+  const [grade, setGrade] = useState<number>(8);
+  const [teamColorBonus, setTeamColorBonus] = useState<number>(0);
   const [compareBeforeAfter, setCompareBeforeAfter] = useState<boolean>(true);
+  const [showFormulaDetail, setShowFormulaDetail] = useState<boolean>(false);
 
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailData, setDetailData] = useState<{
@@ -127,22 +342,26 @@ export default function PlayerLabView({
   );
 
   const runSearch = useCallback(
-    async (qStr: string, pos: string, sort: string, forceCrawl = false) => {
+    async (
+      qStr: string,
+      pos: string,
+      sort: string,
+      trapBadge = "ALL",
+      forceCrawl = false
+    ) => {
       setSearching(true);
       try {
         const params = new URLSearchParams({
           q: qStr,
           position: pos,
           sort,
+          trap_badge: trapBadge,
           crawl: forceCrawl ? "1" : "0",
         });
         const res = await fetch(`/api/fclab/v1/players/search?${params.toString()}`);
         const data = await res.json();
         if (Array.isArray(data.cards)) {
           setCards(data.cards);
-          if (!selectedSpid && data.cards.length > 0) {
-            setSelectedSpid(data.cards[0].spid);
-          }
         }
       } catch {
         // ignore
@@ -150,13 +369,13 @@ export default function PlayerLabView({
         setSearching(false);
       }
     },
-    [selectedSpid]
+    []
   );
 
   useEffect(() => {
-    runSearch(initialQuery, posFilter, sortBy, false);
+    runSearch(searchQuery, posFilter, sortBy, trapBadgeFilter, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [posFilter, sortBy]);
+  }, [posFilter, sortBy, trapBadgeFilter]);
 
   useEffect(() => {
     if (initialSpid) {
@@ -236,7 +455,7 @@ export default function PlayerLabView({
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              runSearch(searchQuery, posFilter, sortBy, true);
+              runSearch(searchQuery, posFilter, sortBy, trapBadgeFilter, true);
             }}
             className="flex-1 flex items-center gap-2"
           >
@@ -285,11 +504,26 @@ export default function PlayerLabView({
             </div>
 
             <select
+              value={trapBadgeFilter}
+              onChange={(e) => setTrapBadgeFilter(e.target.value)}
+              className="bg-[#0B0F17] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+              title="체감 판독 배지 필터"
+            >
+              <option value="ALL">체감 판독: 전체</option>
+              <option value="CHEAT_KEY">💎 체감 괴물 / 꿀매물</option>
+              <option value="NORMAL">일반 밸런스</option>
+              <option value="STAT_TRAP">⚠️ 스탯 대비 둔중함</option>
+            </select>
+
+            <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
               className="bg-[#0B0F17] border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
             >
               <option value="ovr_desc">OVR 높은순</option>
+              <option value="feel_desc">인게임 체감 지수순</option>
+              <option value="salary_eff_desc">유효 급여 효율순</option>
+              <option value="ranker_desc">상위 랭커 픽률(%)순</option>
               <option value="bp_desc">1강 시세 높은순</option>
               <option value="bp_asc">1강 시세 낮은순</option>
               <option value="salary_asc">급여(FP) 낮은순</option>
@@ -328,6 +562,7 @@ export default function PlayerLabView({
                 const isBookmarked = bookmarkedSpids.includes(c.spid);
                 const bp1Text = c.prices?.["1"]?.text || "-";
                 const bp5Text = c.prices?.["5"]?.text || "-";
+                const fm = c.feelMetrics;
 
                 return (
                   <div
@@ -347,7 +582,7 @@ export default function PlayerLabView({
                         className="w-12 h-12"
                       />
                       <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <SeasonBadge
                             seasonImg={c.season_img}
                             seasonCode={c.season_code}
@@ -355,8 +590,25 @@ export default function PlayerLabView({
                           <span className="text-sm font-semibold text-slate-100 truncate">
                             {c.name}
                           </span>
+                          {fm && (
+                            <span
+                              className={`text-[11px] font-mono font-semibold ${
+                                fm.statTrapBadge === "CHEAT_KEY"
+                                  ? "text-cyan-300"
+                                  : fm.statTrapBadge === "STAT_TRAP"
+                                  ? "text-rose-400"
+                                  : "text-slate-400"
+                              }`}
+                            >
+                              {fm.statTrapBadge === "CHEAT_KEY"
+                                ? "💎 체감괴물"
+                                : fm.statTrapBadge === "STAT_TRAP"
+                                ? "⚠️ 둔중주의"
+                                : "일반체감"}
+                            </span>
+                          )}
                         </div>
-                        <div className="flex items-center gap-1.5 text-xs text-slate-400 mt-0.5 font-mono tabular-nums">
+                        <div className="flex items-center gap-1.5 text-xs text-slate-400 mt-0.5 font-mono tabular-nums flex-wrap">
                           <span
                             className={`font-semibold ${getPositionToneClass(
                               c.primary_position
@@ -373,6 +625,21 @@ export default function PlayerLabView({
                           <span>·</span>
                           <span>{c.foot}</span>
                         </div>
+                        {fm && (
+                          <div className="flex items-center gap-1.5 text-[11px] font-mono tabular-nums text-slate-400 mt-0.5">
+                            <span className="text-emerald-400 font-semibold">
+                              체감 {fm.feelScore}
+                            </span>
+                            <span>·</span>
+                            <span className="text-sky-400">
+                              급여효율 {fm.positionSalaryEfficiency}
+                            </span>
+                            <span>·</span>
+                            <span className="text-amber-300">
+                              랭커픽 {fm.rankerPickRate}%
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -431,8 +698,8 @@ export default function PlayerLabView({
                       name={activeCard.name}
                       className="w-20 h-20"
                     />
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <SeasonBadge
                           seasonImg={activeCard.season_img}
                           seasonCode={activeCard.season_code}
@@ -461,7 +728,7 @@ export default function PlayerLabView({
                           적용 OVR {activeCard.ovr + totalAdd}
                         </span>
                         <span className="text-slate-500">
-                          (기본 {activeCard.ovr} + 강화 {enhAdd} + 팀컬러 {teamColorBonus})
+                          (기본 {activeCard.ovr} + 강화 {enhAdd} + 적응도/팀컬러 {teamColorBonus})
                         </span>
                         <span className="text-slate-600">·</span>
                         <span>급여 {activeCard.salary} FP</span>
@@ -477,11 +744,23 @@ export default function PlayerLabView({
                         <span>양발/주발 {activeCard.foot}</span>
                         <span>·</span>
                         <span>개인기 {activeCard.skill_moves}</span>
+                      </div>
+
+                      {/* 소속 클럽 및 국가대표 팀컬러 로고 배지 */}
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
                         {activeCard.nation && (
-                          <>
-                            <span>·</span>
-                            <span>{activeCard.nation}</span>
-                          </>
+                          <TeamColorLogoBadge
+                            name={activeCard.nation}
+                            type="국가대표"
+                            compact
+                          />
+                        )}
+                        {activeCard.team && (
+                          <TeamColorLogoBadge
+                            name={activeCard.team}
+                            type="소속 클럽"
+                            compact
+                          />
                         )}
                       </div>
                     </div>
@@ -514,19 +793,31 @@ export default function PlayerLabView({
                         }
                         className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1"
                       >
-                        카드 효율 비교
+                        카드 효율 분석
                         <ArrowRight className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
                 </div>
 
+                {/* 보유 고유 특성 (Traits) 시각 아이콘 배지 */}
+                {activeCard.traits && activeCard.traits.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 pb-1">
+                    <span className="text-xs font-semibold text-slate-400 mr-1">
+                      보유 특성:
+                    </span>
+                    {activeCard.traits.map((t) => (
+                      <TraitIconBadge key={t.name} trait={t} />
+                    ))}
+                  </div>
+                )}
+
                 {/* Interactive Enhancement (Dynamic 1..rules.maxEnhanceLevel) & Team Color Simulation Controls */}
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-1">
                   <div className="md:col-span-6 space-y-2">
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-slate-400">
-                        강화 단계 시뮬레이션 (최대 +{rules.maxEnhanceLevel}강 동적 감지)
+                        강화 단계 설정 (기본 +8강 금카 · 최대 +{rules.maxEnhanceLevel}강)
                       </span>
                       <span className="font-mono text-emerald-400 font-semibold">
                         +{grade}강 (OVR +{enhAdd})
@@ -563,7 +854,7 @@ export default function PlayerLabView({
 
                   <div className="md:col-span-4">
                     <label className="block text-xs text-slate-400 mb-1.5">
-                      팀컬러 &amp; 적응도 보너스 (+{teamColorBonus})
+                      적응도 &amp; 팀컬러 보너스 (기본 0 · 현재 +{teamColorBonus})
                     </label>
                     <div className="flex flex-wrap gap-1">
                       {[0, 1, 2, 3, 4, 5, 7, 9].map((tc) => (
@@ -606,41 +897,42 @@ export default function PlayerLabView({
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-slate-800/80">
                   <div className="p-3 bg-[#0B0F17] rounded-lg border border-slate-800/80">
                     <div className="text-[11px] text-slate-400">
-                      {activeEff.target_position} 포지션 코어 점수
-                    </div>
-                    <div className="text-lg font-mono font-bold text-slate-100 tabular-nums mt-0.5">
-                      {activeEff.core_score}점
-                    </div>
-                    <div className="text-[11px] font-mono text-slate-500">
-                      OVR 대비{" "}
-                      {activeEff.ovr_to_core_gap >= 0
-                        ? `+${activeEff.ovr_to_core_gap}`
-                        : activeEff.ovr_to_core_gap}
-                    </div>
-                  </div>
-
-                  <div className="p-3 bg-[#0B0F17] rounded-lg border border-slate-800/80">
-                    <div className="text-[11px] text-slate-400">
-                      가격 대비 효율 지수
+                      인게임 체감 지수 · 판독
                     </div>
                     <div className="text-lg font-mono font-bold text-emerald-400 tabular-nums mt-0.5">
-                      {activeEff.efficiency_index}
+                      {activeEff.feelMetrics?.feelScore ?? activeEff.core_score}점
                     </div>
-                    <div className="text-[11px] text-slate-400 truncate">
-                      {activeEff.tier}
+                    <div className="text-[11px] font-mono text-cyan-300 truncate">
+                      {activeEff.feelMetrics?.statTrapBadge === "CHEAT_KEY"
+                        ? "💎 체감 괴물 / 꿀매물"
+                        : activeEff.feelMetrics?.statTrapBadge === "STAT_TRAP"
+                        ? "⚠️ 스탯 대비 둔중함"
+                        : "일반 밸런스"}
                     </div>
                   </div>
 
                   <div className="p-3 bg-[#0B0F17] rounded-lg border border-slate-800/80">
                     <div className="text-[11px] text-slate-400">
-                      최적 플레이 스타일
+                      핵심 스탯 vs OVR 효율
                     </div>
-                    <div className="text-sm font-semibold text-slate-100 truncate mt-1">
+                    <div className="text-lg font-mono font-bold text-sky-400 tabular-nums mt-0.5">
+                      {activeEff.efficiency_index}점
+                    </div>
+                    <div className="text-[11px] text-slate-400 truncate font-mono">
+                      핵심평균 {activeEff.core_score} / OVR {activeEff.effective_ovr}
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-[#0B0F17] rounded-lg border border-slate-800/80">
+                    <div className="text-[11px] text-slate-400">
+                      상위 랭커 픽률 · 주 유형
+                    </div>
+                    <div className="text-lg font-mono font-bold text-amber-300 tabular-nums mt-0.5">
+                      {activeEff.feelMetrics?.rankerPickRate ?? 0}%
+                    </div>
+                    <div className="text-[11px] font-mono text-slate-300 truncate">
                       {activeProf.primary_archetype?.name.split("(")[0] ||
                         "올라운더"}
-                    </div>
-                    <div className="text-[11px] font-mono text-sky-400">
-                      적합도 {activeProf.primary_archetype?.fit_percent || 85}%
                     </div>
                   </div>
 
@@ -649,12 +941,39 @@ export default function PlayerLabView({
                       추천 가성비 강화 구간
                     </div>
                     <div className="text-lg font-mono font-bold text-amber-300 tabular-nums mt-0.5">
-                      +{activeEff.best_sweetspot_grade?.grade || 5}강
+                      +{activeEff.best_sweetspot_grade?.grade || 8}강
                     </div>
                     <div className="text-[11px] font-mono text-slate-400 truncate">
                       {activeEff.best_sweetspot_grade?.bp_text || "-"} BP
                     </div>
                   </div>
+                </div>
+
+                {/* Collapsible Formula Details Toggle */}
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowFormulaDetail((v) => !v)}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-400 hover:text-slate-200 transition-colors"
+                  >
+                    <Info className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>ℹ️ 체감 및 효율 산출 기준 자세히 보기</span>
+                    {showFormulaDetail ? (
+                      <ChevronUp className="w-3.5 h-3.5" />
+                    ) : (
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                  {showFormulaDetail && (
+                    <div className="mt-2 p-3 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs text-slate-400 space-y-1 leading-relaxed">
+                      <p>
+                        • <strong className="text-slate-200">인게임 체감 지수:</strong> 방향 전환 4대 스탯(민첩성·밸런스·반응속도·드리블)에 체형 보정(고유/마름 우대) 및 신장·몸무게 물리 페널티를 반영한 실전 체감 점수입니다.
+                      </p>
+                      <p>
+                        • <strong className="text-slate-200">핵심 스탯 vs OVR 효율:</strong> (포지션 핵심 스탯 평균 ÷ 표기 OVR) × 100 공식으로 산출되어, 프리킥·페널티킥 등으로 표기 OVR만 부풀려진 카드를 걸러냅니다.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -702,7 +1021,7 @@ export default function PlayerLabView({
                   />
                   <div className="mt-4 pt-3 border-t border-slate-800/80">
                     <div className="text-xs text-slate-400 mb-2">
-                      강화 단계별 가격 대비 코어 효율 비교 (클릭 시 강화 단계 전환)
+                      강화 단계별 코어 효율 비교 (클릭 시 강화 단계 전환)
                     </div>
                     <GradeEfficiencyBarChart
                       curve={activeEff.grade_curve}
@@ -721,19 +1040,13 @@ export default function PlayerLabView({
                       04. 세부 능력치 (34개 인게임 스탯)
                     </h3>
                     <p className="text-xs text-slate-400 mt-0.5">
-                      강화 +{grade}강(+{enhAdd}) 및 팀컬러(+{teamColorBonus})가 반영된 실제 인게임 능력치입니다.
+                      강화 +{grade}강(+{enhAdd}) 및 적응도/팀컬러(+{teamColorBonus})가 반영된 실제 인게임 능력치입니다.
                     </p>
                   </div>
                   {activeCard.traits && activeCard.traits.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
-                      <span className="text-slate-500">고유 특성:</span>
-                      {activeCard.traits.map((t, idx) => (
-                        <React.Fragment key={t.name}>
-                          {idx > 0 && <span className="text-slate-600">·</span>}
-                          <span className="text-amber-300 font-medium">
-                            {t.name}
-                          </span>
-                        </React.Fragment>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {activeCard.traits.map((t) => (
+                        <TraitIconBadge key={t.name} trait={t} />
                       ))}
                     </div>
                   )}
@@ -752,9 +1065,12 @@ export default function PlayerLabView({
                         {cat.keys.map((sKey) => {
                           const baseVal =
                             activeCard.stats?.[sKey] ??
+                            activeCard.stats?.[sKey.replace(/\s+/g, "")] ??
                             Math.max(70, activeCard.ovr - 5);
                           const finalVal = baseVal + totalAdd;
-                          const compBase = compareDetail?.card.stats?.[sKey];
+                          const compBase =
+                            compareDetail?.card.stats?.[sKey] ??
+                            compareDetail?.card.stats?.[sKey.replace(/\s+/g, "")];
                           const compFinal =
                             compBase !== undefined ? compBase + totalAdd : null;
                           const diffFromComp =
@@ -799,19 +1115,18 @@ export default function PlayerLabView({
                   ))}
                 </div>
 
-                {/* Team Colors List */}
+                {/* Team Colors List with Club / Nation Logos */}
                 {activeCard.team_colors && activeCard.team_colors.length > 0 && (
-                  <div className="pt-3 border-t border-slate-800/80 text-xs text-slate-400 flex flex-wrap items-center gap-1.5">
-                    <span className="text-slate-300 font-medium mr-1">
-                      적용 가능한 소속/관계 팀컬러:
+                  <div className="pt-3 border-t border-slate-800/80 text-xs text-slate-400 flex flex-wrap items-center gap-2">
+                    <span className="text-slate-300 font-semibold mr-1">
+                      소속 클럽 및 국가대표 팀컬러:
                     </span>
                     {activeCard.team_colors.map((tc, i) => (
-                      <React.Fragment key={`${tc.id}-${i}`}>
-                        {i > 0 && <span className="text-slate-600">·</span>}
-                        <span>
-                          {tc.name} ({tc.type})
-                        </span>
-                      </React.Fragment>
+                      <TeamColorLogoBadge
+                        key={`${tc.id}-${i}`}
+                        name={tc.name}
+                        type={tc.type}
+                      />
                     ))}
                   </div>
                 )}
@@ -833,7 +1148,7 @@ export default function PlayerLabView({
                     }
                     className="text-xs text-emerald-400 hover:underline flex items-center gap-1"
                   >
-                    선수 유형 연구소에서 정밀 비교
+                    선수 유형 분석에서 정밀 비교
                     <ArrowRight className="w-3.5 h-3.5" />
                   </button>
                 </div>
@@ -847,7 +1162,7 @@ export default function PlayerLabView({
                       {(detailData?.otherSeasons || []).slice(0, 5).map((os) => (
                         <div
                           key={os.spid}
-                          className="px-3 py-2 flex items-center justify-between text-xs hover:bg-slate-800/40"
+                          className="px-3 py-2.5 flex items-center justify-between text-xs hover:bg-slate-800/40"
                         >
                           <div className="flex items-center gap-2">
                             <SeasonBadge
@@ -861,7 +1176,10 @@ export default function PlayerLabView({
                           </div>
                           <div className="flex items-center gap-2 font-mono tabular-nums">
                             <span className="text-emerald-400">
-                              {os.prices?.["1"]?.text || "-"}
+                              {os.prices?.[String(grade)]?.text ||
+                                os.prices?.["8"]?.text ||
+                                os.prices?.["1"]?.text ||
+                                "-"}
                             </span>
                             <button
                               type="button"
@@ -878,39 +1196,71 @@ export default function PlayerLabView({
                   </div>
 
                   <div className="space-y-2">
-                    <div className="text-xs font-medium text-slate-400">
-                      동일 포지션({activeCard.primary_position}) 주요 경쟁 카드
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-slate-400">
+                        동일 포지션({activeCard.primary_position}) 경쟁 카드
+                      </span>
+                      <span className="text-[11px] text-emerald-400 font-medium">
+                        동일 팀컬러 · 랭커 픽률 우선
+                      </span>
                     </div>
                     <div className="divide-y divide-slate-800/70 bg-[#0B0F17] border border-slate-800 rounded-lg overflow-hidden">
-                      {(detailData?.competitors || []).slice(0, 5).map((comp) => (
-                        <div
-                          key={comp.spid}
-                          className="px-3 py-2 flex items-center justify-between text-xs hover:bg-slate-800/40"
-                        >
-                          <div className="flex items-center gap-2">
-                            <SeasonBadge
-                              seasonImg={comp.season_img}
-                              seasonCode={comp.season_code}
-                            />
-                            <span className="font-medium text-slate-200">
-                              {comp.name} · OVR {comp.ovr}
-                            </span>
+                      {(detailData?.competitors || []).slice(0, 5).map((comp) => {
+                        const sharedTc =
+                          comp.sharedTeamColor ||
+                          comp.team ||
+                          comp.nation;
+                        const pickRate =
+                          comp.rankerPickRate ??
+                          comp.feelMetrics?.rankerPickRate ??
+                          0;
+                        return (
+                          <div
+                            key={comp.spid}
+                            className="px-3 py-2.5 flex items-center justify-between gap-2 text-xs hover:bg-slate-800/40"
+                          >
+                            <div className="flex items-center gap-2 flex-wrap min-w-0">
+                              <SeasonBadge
+                                seasonImg={comp.season_img}
+                                seasonCode={comp.season_code}
+                              />
+                              <span className="font-semibold text-slate-100">
+                                {comp.name}
+                              </span>
+                              <span className="text-slate-400 font-mono">
+                                OVR {comp.ovr}
+                              </span>
+                              {sharedTc && (
+                                <TeamColorLogoBadge
+                                  name={sharedTc}
+                                  compact
+                                />
+                              )}
+                              {pickRate > 0 && (
+                                <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono text-[10px]">
+                                  픽률 {pickRate}%
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 font-mono tabular-nums shrink-0">
+                              <span className="text-emerald-400">
+                                {comp.prices?.[String(grade)]?.text ||
+                                  comp.prices?.["8"]?.text ||
+                                  comp.prices?.["1"]?.text ||
+                                  "-"}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setCompareSpid(comp.spid)}
+                                className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-[11px] flex items-center gap-1"
+                              >
+                                <Scale className="w-3 h-3" />
+                                비교
+                              </button>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2 font-mono tabular-nums">
-                            <span className="text-emerald-400">
-                              {comp.prices?.["1"]?.text || "-"}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setCompareSpid(comp.spid)}
-                              className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-[11px] flex items-center gap-1"
-                            >
-                              <Scale className="w-3 h-3" />
-                              비교
-                            </button>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </div>

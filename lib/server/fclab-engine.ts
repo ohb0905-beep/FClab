@@ -14,6 +14,13 @@ import {
   SquadAnalysisResult,
   SquadReplacementRecommendation,
   SystemRules,
+  PlayerFeelMetrics,
+  SimilarAlternativePlayerItem,
+  StatTrapBadgeType,
+  SquadPurchaseAudit,
+  SquadPlayerPricePercentileItem,
+  SquadOverinvestedPositionWarning,
+  MarketFeeConfig,
   DEFAULT_ENHANCE_OVR_BOOSTS,
   expandEnhanceOvrBoosts,
   getEnhanceOvrBoost,
@@ -25,108 +32,265 @@ const USER_AGENT =
 const NEXON_OPEN_API_BASE = "https://open.api.nexon.com";
 const CACHE_FILE_PATH = path.join(process.cwd(), ".fclab-store.json");
 
-// 포지션별 핵심 능력치 가중치 모델 (합계 = 1.0)
-export const POSITION_WEIGHTS: Record<string, Record<string, number>> = {
-  ST: {
-    "골 결정력": 0.2,
-    "위치 선정": 0.16,
-    속력: 0.14,
-    가속력: 0.13,
-    "슛 파워": 0.12,
-    드리블: 0.08,
-    몸싸움: 0.09,
-    침착성: 0.08,
-  },
-  CF: {
-    "골 결정력": 0.16,
-    "중거리 슛": 0.14,
-    속력: 0.13,
-    가속력: 0.13,
-    "짧은 패스": 0.11,
-    드리블: 0.11,
-    "위치 선정": 0.12,
-    민첩성: 0.1,
-  },
-  LW: {
-    속력: 0.19,
-    가속력: 0.19,
-    드리블: 0.15,
-    민첩성: 0.13,
-    크로스: 0.12,
-    "골 결정력": 0.11,
-    커브: 0.11,
-  },
-  RW: {
-    속력: 0.19,
-    가속력: 0.19,
-    드리블: 0.15,
-    민첩성: 0.13,
-    크로스: 0.12,
-    "골 결정력": 0.11,
-    커브: 0.11,
-  },
-  CAM: {
-    "짧은 패스": 0.17,
-    시야: 0.16,
-    "중거리 슛": 0.15,
-    "볼 컨트롤": 0.13,
-    드리블: 0.13,
-    민첩성: 0.13,
-    "슛 파워": 0.13,
-  },
-  CM: {
-    "짧은 패스": 0.18,
-    "긴 패스": 0.15,
-    시야: 0.14,
-    스태미너: 0.15,
-    "볼 컨트롤": 0.13,
-    "중거리 슛": 0.13,
-    가로채기: 0.12,
-  },
-  CDM: {
-    가로채기: 0.18,
-    태클: 0.17,
-    "대인 수비": 0.15,
-    몸싸움: 0.14,
-    "짧은 패스": 0.13,
-    "긴 패스": 0.11,
-    스태미너: 0.12,
-  },
-  CB: {
-    "대인 수비": 0.19,
-    태클: 0.18,
-    가로채기: 0.16,
-    몸싸움: 0.17,
-    속력: 0.14,
-    헤더: 0.08,
-    점프: 0.08,
-  },
-  LB: {
-    속력: 0.19,
-    가속력: 0.17,
-    태클: 0.15,
-    가로채기: 0.15,
-    스태미너: 0.14,
-    크로스: 0.1,
-    "대인 수비": 0.1,
-  },
-  RB: {
-    속력: 0.19,
-    가속력: 0.17,
-    태클: 0.15,
-    가로채기: 0.15,
-    스태미너: 0.14,
-    크로스: 0.1,
-    "대인 수비": 0.1,
-  },
-  GK: {
-    "GK 다이빙": 0.24,
-    "GK 반응속도": 0.24,
-    "GK 핸들링": 0.2,
-    "GK 위치 선정": 0.2,
-    "GK 킥": 0.12,
-  },
+// 포지션별 핵심 스탯 매핑 기준 (표기 OVR 대비 실전 코어 스탯 평균 산출용)
+export const POSITION_CORE_STATS: Record<string, string[]> = {
+  // ST / CF (12개)
+  ST: [
+    "속력",
+    "가속력",
+    "골 결정력",
+    "슛 파워",
+    "중거리 슛",
+    "민첩성",
+    "밸런스",
+    "드리블",
+    "반응속도",
+    "몸싸움",
+    "헤더",
+    "볼컨트롤",
+  ],
+  CF: [
+    "속력",
+    "가속력",
+    "골 결정력",
+    "슛 파워",
+    "중거리 슛",
+    "민첩성",
+    "밸런스",
+    "드리블",
+    "반응속도",
+    "몸싸움",
+    "헤더",
+    "볼컨트롤",
+  ],
+  // LW / RW (13개)
+  LW: [
+    "속력",
+    "가속력",
+    "골 결정력",
+    "슛 파워",
+    "중거리 슛",
+    "민첩성",
+    "밸런스",
+    "드리블",
+    "반응속도",
+    "몸싸움",
+    "볼컨트롤",
+    "크로스",
+    "커브",
+  ],
+  RW: [
+    "속력",
+    "가속력",
+    "골 결정력",
+    "슛 파워",
+    "중거리 슛",
+    "민첩성",
+    "밸런스",
+    "드리블",
+    "반응속도",
+    "몸싸움",
+    "볼컨트롤",
+    "크로스",
+    "커브",
+  ],
+  LM: [
+    "속력",
+    "가속력",
+    "골 결정력",
+    "슛 파워",
+    "중거리 슛",
+    "민첩성",
+    "밸런스",
+    "드리블",
+    "반응속도",
+    "몸싸움",
+    "볼컨트롤",
+    "크로스",
+    "커브",
+  ],
+  RM: [
+    "속력",
+    "가속력",
+    "골 결정력",
+    "슛 파워",
+    "중거리 슛",
+    "민첩성",
+    "밸런스",
+    "드리블",
+    "반응속도",
+    "몸싸움",
+    "볼컨트롤",
+    "크로스",
+    "커브",
+  ],
+  // CAM (15개)
+  CAM: [
+    "속력",
+    "가속력",
+    "골 결정력",
+    "슛 파워",
+    "중거리 슛",
+    "민첩성",
+    "밸런스",
+    "드리블",
+    "반응속도",
+    "몸싸움",
+    "헤더",
+    "볼컨트롤",
+    "짧은 패스",
+    "긴 패스",
+    "시야",
+  ],
+  // CM (17개)
+  CM: [
+    "속력",
+    "가속력",
+    "골 결정력",
+    "슛 파워",
+    "중거리 슛",
+    "민첩성",
+    "밸런스",
+    "드리블",
+    "반응속도",
+    "몸싸움",
+    "헤더",
+    "볼컨트롤",
+    "짧은 패스",
+    "긴 패스",
+    "시야",
+    "스태미너",
+    "가로채기",
+  ],
+  // CDM (19개)
+  CDM: [
+    "속력",
+    "가속력",
+    "골 결정력",
+    "슛 파워",
+    "중거리 슛",
+    "민첩성",
+    "밸런스",
+    "드리블",
+    "반응속도",
+    "몸싸움",
+    "헤더",
+    "볼컨트롤",
+    "짧은 패스",
+    "긴 패스",
+    "시야",
+    "스태미너",
+    "가로채기",
+    "태클",
+    "대인수비",
+  ],
+  // CB (12개)
+  CB: [
+    "속력",
+    "가속력",
+    "민첩성",
+    "밸런스",
+    "드리블",
+    "반응속도",
+    "몸싸움",
+    "헤더",
+    "점프",
+    "가로채기",
+    "태클",
+    "대인수비",
+  ],
+  // LB / RB (14개)
+  LB: [
+    "속력",
+    "가속력",
+    "민첩성",
+    "밸런스",
+    "드리블",
+    "반응속도",
+    "몸싸움",
+    "헤더",
+    "점프",
+    "가로채기",
+    "태클",
+    "대인수비",
+    "스태미너",
+    "크로스",
+  ],
+  RB: [
+    "속력",
+    "가속력",
+    "민첩성",
+    "밸런스",
+    "드리블",
+    "반응속도",
+    "몸싸움",
+    "헤더",
+    "점프",
+    "가로채기",
+    "태클",
+    "대인수비",
+    "스태미너",
+    "크로스",
+  ],
+  LWB: [
+    "속력",
+    "가속력",
+    "민첩성",
+    "밸런스",
+    "드리블",
+    "반응속도",
+    "몸싸움",
+    "헤더",
+    "점프",
+    "가로채기",
+    "태클",
+    "대인수비",
+    "스태미너",
+    "크로스",
+  ],
+  RWB: [
+    "속력",
+    "가속력",
+    "민첩성",
+    "밸런스",
+    "드리블",
+    "반응속도",
+    "몸싸움",
+    "헤더",
+    "점프",
+    "가로채기",
+    "태클",
+    "대인수비",
+    "스태미너",
+    "크로스",
+  ],
+  GK: [
+    "GK 다이빙",
+    "GK 반응속도",
+    "GK 핸들링",
+    "GK 위치 선정",
+    "GK 킥",
+  ],
 };
+
+function buildEqualWeightsFromCoreStats(
+  coreMap: Record<string, string[]>
+): Record<string, Record<string, number>> {
+  const result: Record<string, Record<string, number>> = {};
+  for (const [pos, statList] of Object.entries(coreMap)) {
+    const w = statList.length > 0 ? Number((1 / statList.length).toFixed(4)) : 1;
+    const posWeights: Record<string, number> = {};
+    for (const st of statList) {
+      posWeights[st] = w;
+    }
+    result[pos] = posWeights;
+  }
+  return result;
+}
+
+// 포지션별 핵심 능력치 균등 평균 모델 (각 포지션 핵심 스탯 1/N 동일 비중)
+export const POSITION_WEIGHTS: Record<string, Record<string, number>> =
+  buildEqualWeightsFromCoreStats(POSITION_CORE_STATS);
 
 export type PositionArchetypeGroup =
   | "ST_CF"
@@ -270,52 +434,53 @@ export const ARCHETYPES: ArchetypeDef[] = [
     },
   },
 
-  // 3. CAM / CM / CDM — 중앙 미드필더
+  // 3. CAM / CM / CDM — 미드필더 4분류 (공격형 / 중앙 / 수비형 / 육각형 미드필더)
   {
-    id: "cm_playmaker",
+    id: "cm_attacking",
     group: "MF",
     positionGroup: "CENTRAL_MF",
-    applicablePositions: ["CAM", "CM", "CDM"],
-    name: "플레이메이커",
-    desc: "짧은 패스, 긴 패스, 시야, 볼 컨트롤, 드리블 등을 바탕으로 공격 전개와 기회 창출을 주도하는 유형",
+    applicablePositions: ["CAM", "CM"],
+    name: "공격형 미드필더",
+    desc: "침투 움직임, 중거리·골 결정력, 창의적 시야·패스와 부드러운 방향 전환 체감을 바탕으로 2선 공격을 주도하는 유형 (CAM 특화)",
     weights: {
-      "짧은 패스": 0.25,
-      시야: 0.23,
-      "긴 패스": 0.18,
-      "볼 컨트롤": 0.16,
-      드리블: 0.1,
-      침착성: 0.08,
+      "중거리 슛": 0.18,
+      "골 결정력": 0.16,
+      시야: 0.16,
+      "짧은 패스": 0.14,
+      드리블: 0.14,
+      민첩성: 0.12,
+      "위치 선정": 0.1,
+    },
+  },
+  {
+    id: "cm_central",
+    group: "MF",
+    positionGroup: "CENTRAL_MF",
+    applicablePositions: ["CM", "CAM", "CDM"],
+    name: "중앙 미드필더",
+    desc: "장·단거리 패스 빌드업, 왕성한 활동량과 스태미너, 공수 연결고리 역할을 수행하는 중원 엔진 유형 (CM 특화)",
+    weights: {
+      "짧은 패스": 0.24,
+      "긴 패스": 0.2,
+      시야: 0.18,
+      스태미너: 0.18,
+      "볼 컨트롤": 0.1,
+      "반응 속도": 0.1,
     },
   },
   {
     id: "cm_defensive",
     group: "MF",
     positionGroup: "CENTRAL_MF",
-    applicablePositions: ["CAM", "CM", "CDM"],
+    applicablePositions: ["CDM", "CM"],
     name: "수비형 미드필더",
-    desc: "가로채기, 태클, 대인 수비, 몸싸움, 위치 선정 등을 바탕으로 중원 수비와 포백 보호 역할을 수행하는 유형",
+    desc: "가로채기, 태클, 대인 수비, 몸싸움 경합과 피지컬을 바탕으로 포백 보호와 중원 1차 저지선 역할을 수행하는 홀딩 유형 (CDM 특화)",
     weights: {
       가로채기: 0.25,
       태클: 0.23,
       "대인 수비": 0.2,
-      몸싸움: 0.18,
-      적극성: 0.14,
-    },
-  },
-  {
-    id: "cm_box_to_box",
-    group: "MF",
-    positionGroup: "CENTRAL_MF",
-    applicablePositions: ["CAM", "CM", "CDM"],
-    name: "박스투박스 미드필더",
-    desc: "스태미너, 활동량, 공수 가담, 패스, 수비, 슈팅 지원 등을 바탕으로 넓은 범위를 오가며 기여하는 유형",
-    weights: {
-      스태미너: 0.22,
-      "짧은 패스": 0.16,
-      "중거리 슛": 0.16,
-      가로채기: 0.16,
-      몸싸움: 0.15,
-      속력: 0.15,
+      몸싸움: 0.2,
+      "긴 패스": 0.12,
     },
   },
   {
@@ -323,18 +488,19 @@ export const ARCHETYPES: ArchetypeDef[] = [
     group: "MF",
     positionGroup: "CENTRAL_MF",
     applicablePositions: ["CAM", "CM", "CDM"],
-    name: "완성형",
-    desc: "패스·시야·볼 운반·기동력·수비·피지컬·슈팅 지원 등 해당 중앙 미드필더 역할에서 요구되는 능력을 폭넓게 갖춘 선수",
+    name: "육각형 미드필더",
+    desc: "공격·패스·수비·피지컬·스태미너뿐만 아니라 인게임 체감(민첩성·밸런스 8강 기준 124 이상)까지 모두 상위권인 완성형 올라운더 미드필더",
     isCompleteType: true,
     weights: {
-      "짧은 패스": 0.16,
+      "짧은 패스": 0.14,
       "긴 패스": 0.12,
-      시야: 0.14,
-      드리블: 0.12,
+      시야: 0.12,
       "중거리 슛": 0.12,
-      가로채기: 0.12,
-      몸싸움: 0.11,
-      스태미너: 0.11,
+      드리블: 0.12,
+      민첩성: 0.1,
+      가로채기: 0.14,
+      몸싸움: 0.07,
+      스태미너: 0.07,
     },
   },
 
@@ -1281,15 +1447,65 @@ export async function crawlPriceHistory(
   }
 }
 
+const STAT_KEY_ALIASES: Record<string, string[]> = {
+  볼컨트롤: ["볼컨트롤", "볼 컨트롤"],
+  "볼 컨트롤": ["볼 컨트롤", "볼컨트롤"],
+  반응속도: ["반응속도", "반응 속도"],
+  "반응 속도": ["반응 속도", "반응속도"],
+  대인수비: ["대인수비", "대인 수비"],
+  "대인 수비": ["대인 수비", "대인수비"],
+  "골 결정력": ["골 결정력", "골결정력"],
+  골결정력: ["골결정력", "골 결정력"],
+  "슛 파워": ["슛 파워", "슛파워"],
+  슛파워: ["슛파워", "슛 파워"],
+  "중거리 슛": ["중거리 슛", "중거리슛"],
+  중거리슛: ["중거리슛", "중거리 슛"],
+  "짧은 패스": ["짧은 패스", "짧은패스"],
+  짧은패스: ["짧은패스", "짧은 패스"],
+  "긴 패스": ["긴 패스", "긴패스"],
+  긴패스: ["긴패스", "긴 패스"],
+  "위치 선정": ["위치 선정", "위치선정"],
+  위치선정: ["위치선정", "위치 선정"],
+  "슬라이딩 태클": ["슬라이딩 태클", "슬라이딩태클"],
+  "GK 반응속도": ["GK 반응속도", "GK 반응 속도"],
+  "GK 위치 선정": ["GK 위치 선정", "GK 위치선정"],
+};
+
+export function lookupRawStatValue(
+  stats: Record<string, number>,
+  statName: string
+): number | undefined {
+  if (!stats) return undefined;
+  if (stats[statName] !== undefined && stats[statName] > 0) {
+    return stats[statName];
+  }
+  const aliases = STAT_KEY_ALIASES[statName];
+  if (aliases) {
+    for (const alias of aliases) {
+      if (stats[alias] !== undefined && stats[alias] > 0) {
+        return stats[alias];
+      }
+    }
+  }
+  const noSpace = statName.replace(/\s+/g, "");
+  for (const [k, v] of Object.entries(stats)) {
+    if (k.replace(/\s+/g, "") === noSpace && v > 0) {
+      return v;
+    }
+  }
+  return undefined;
+}
+
 function getStatWithBonus(
   stats: Record<string, number>,
   statName: string,
-  grade = 1,
+  grade = 8,
   teamColorBonus = 0,
   fallbackOvr = 105
 ): number {
   const rules = getSystemRules();
-  const raw = stats[statName] ?? Math.max(70, fallbackOvr - 5);
+  const raw =
+    lookupRawStatValue(stats, statName) ?? Math.max(70, fallbackOvr - 5);
   const clampedGrade = Math.max(1, Math.min(rules.maxEnhanceLevel, grade));
   const enhAdd = getEnhanceOvrBoost(clampedGrade, rules.enhanceOvrBoosts);
   return Number(raw) + enhAdd + Number(teamColorBonus);
@@ -1455,7 +1671,7 @@ export async function ensurePlayerSalaryAndMeta(
 
 export function computeSixFaceSummary(
   card: PlayerCard,
-  grade = 1,
+  grade = 8,
   teamColorBonus = 0
 ): Record<string, number> {
   const stats = card.stats || {};
@@ -1474,7 +1690,7 @@ export function computeSixFaceSummary(
       패스: getStatWithBonus(stats, "GK 킥", grade, teamColorBonus, ovr),
       드리블: getStatWithBonus(stats, "GK 핸들링", grade, teamColorBonus, ovr),
       수비: getStatWithBonus(stats, "GK 위치 선정", grade, teamColorBonus, ovr),
-      피지컬: avgOf(["반응 속도", "점프"]),
+      피지컬: avgOf(["반응속도", "점프"]),
     };
   }
 
@@ -1482,8 +1698,8 @@ export function computeSixFaceSummary(
     속력: avgOf(["속력", "가속력"]),
     슈팅: avgOf(["골 결정력", "슛 파워", "중거리 슛", "위치 선정"]),
     패스: avgOf(["짧은 패스", "시야", "크로스", "긴 패스"]),
-    드리블: avgOf(["드리블", "볼 컨트롤", "민첩성", "밸런스"]),
-    수비: avgOf(["대인 수비", "태클", "가로채기", "슬라이딩 태클"]),
+    드리블: avgOf(["드리블", "볼컨트롤", "민첩성", "밸런스"]),
+    수비: avgOf(["대인수비", "태클", "가로채기", "슬라이딩 태클"]),
     피지컬: avgOf(["몸싸움", "스태미너", "점프", "적극성"]),
   };
 }
@@ -1491,14 +1707,18 @@ export function computeSixFaceSummary(
 export function evaluateCardEfficiencySync(
   card: PlayerCard,
   targetPosition?: string,
-  grade = 1,
+  grade = 8,
   teamColorBonus = 0,
   customWeights?: Record<string, number>
 ): CardEfficiencyResult {
   const rules = getSystemRules();
   const pos = (targetPosition || card.primary_position || "ST").toUpperCase();
+  const coreStatsList =
+    POSITION_CORE_STATS[pos] || POSITION_CORE_STATS["ST"];
   const weights =
-    customWeights || POSITION_WEIGHTS[pos] || POSITION_WEIGHTS["ST"];
+    customWeights && Object.keys(customWeights).length > 0
+      ? customWeights
+      : POSITION_WEIGHTS[pos] || POSITION_WEIGHTS["ST"];
   const totalW =
     Object.values(weights).reduce((a, b) => a + b, 0) || 1.0;
 
@@ -1522,63 +1742,67 @@ export function evaluateCardEfficiencySync(
       contribution: Number(contrib.toFixed(2)),
     });
   }
-  statBreakdown.sort((a, b) => b.weight - a.weight);
+  statBreakdown.sort((a, b) => b.value - a.value);
 
+  // 포지션별 핵심 스탯의 평균값 (coreScore)
   const coreScore = Number(weightedSum.toFixed(2));
   const prices = card.prices || {};
   const gradePriceObj = prices[String(clampedGrade)] ||
+    prices["8"] ||
+    prices["5"] ||
     prices["1"] || { bp: 0, text: "-" };
-  const bpPrice = Number(gradePriceObj.bp || 0);
-  const bpText = gradePriceObj.text || formatBpKorean(bpPrice);
+  const bpPrice = Number(gradePriceObj.bp || resolveCardBpForGrade(card, clampedGrade) || 0);
+  const bpText = gradePriceObj.text && gradePriceObj.text !== "-"
+    ? gradePriceObj.text
+    : formatBpKorean(bpPrice);
 
-  const perfDelta = Math.max(10, coreScore - 80);
-  let efficiencyIndex = 0;
+  // 효율 점수(Efficiency) = (포지션별 핵심 스탯의 평균값 / 선수 표기 OVR) * 100
+  const efficiencyIndex = Number(
+    ((coreScore / Math.max(1, effectiveOvr)) * 100).toFixed(1)
+  );
   let scorePerLogBp = 0;
   if (bpPrice > 0) {
-    const logPrice = Math.max(3, Math.log10(Math.max(bpPrice, 1000)));
-    efficiencyIndex = Number(
-      (Math.pow(perfDelta, 1.55) / (logPrice * 2.35)).toFixed(1)
-    );
     scorePerLogBp = Number(
       (coreScore / Math.max(1, Math.log10(bpPrice + 10))).toFixed(2)
     );
   }
 
-  let tier = "C (프리미엄/시세 높음)";
-  if (efficiencyIndex >= 88) tier = "S+ (초고효율 가성비)";
-  else if (efficiencyIndex >= 74) tier = "S (검증된 고효율)";
-  else if (efficiencyIndex >= 60) tier = "A (우수 밸런스)";
-  else if (efficiencyIndex >= 46) tier = "B (하이엔드/표준)";
+  let tier = "C (표기 OVR 착시 주의)";
+  if (efficiencyIndex >= 101.2) tier = "S+ (알짜 코어 압축)";
+  else if (efficiencyIndex >= 100.0) tier = "S (표기 OVR 이상 고효율)";
+  else if (efficiencyIndex >= 98.8) tier = "A (핵심 스탯 우수)";
+  else if (efficiencyIndex >= 97.2) tier = "B (표준 밸런스)";
 
   const gradeCurve = [];
   for (let g = 1; g <= rules.maxEnhanceLevel; g++) {
     const gObj = prices[String(g)];
     const gBp = Number(gObj?.bp || 0);
-    if (gBp <= 0) continue;
+    if (gBp <= 0 && g !== clampedGrade) continue;
     const gBoost = getEnhanceOvrBoost(g, rules.enhanceOvrBoosts);
     const gAdd = gBoost - enhBonus;
+    const gOvr = baseOvr + gBoost + Number(teamColorBonus);
     const gCore = Number((coreScore + gAdd).toFixed(2));
-    const gDelta = Math.max(10, gCore - 80);
-    const gLog = Math.max(3, Math.log10(Math.max(gBp, 1000)));
-    const gEff = Number(
-      (Math.pow(gDelta, 1.55) / (gLog * 2.35)).toFixed(1)
-    );
+    const gEff = Number(((gCore / Math.max(1, gOvr)) * 100).toFixed(1));
     gradeCurve.push({
       grade: g,
-      ovr: baseOvr + gBoost + Number(teamColorBonus),
+      ovr: gOvr,
       core_score: gCore,
-      bp: gBp,
-      bp_text: gObj?.text || formatBpKorean(gBp),
+      bp: gBp || bpPrice,
+      bp_text: gObj?.text || formatBpKorean(gBp || bpPrice),
       efficiency_index: gEff,
     });
   }
 
+  // 가성비 강화 구간(sweetspot): +8강 또는 가격 대비 코어 스탯 효율이 가장 높은 구간 선정
   const bestSweetspot =
-    gradeCurve.length > 0
-      ? gradeCurve.reduce((a, b) =>
-          a.efficiency_index >= b.efficiency_index ? a : b
-        )
-      : null;
+    gradeCurve.find((pt) => pt.grade === 8) ||
+    (gradeCurve.length > 0
+      ? gradeCurve.reduce((a, b) => {
+          const aVal = a.core_score / Math.max(3, Math.log10(Math.max(1000, a.bp)));
+          const bVal = b.core_score / Math.max(3, Math.log10(Math.max(1000, b.bp)));
+          return aVal >= bVal ? a : b;
+        })
+      : null);
 
   return {
     spid: card.spid,
@@ -1598,6 +1822,7 @@ export function evaluateCardEfficiencySync(
     bp: bpPrice,
     bp_text: bpText,
     core_score: coreScore,
+    core_stat_count: coreStatsList.length,
     ovr_to_core_gap: Number((coreScore - effectiveOvr).toFixed(2)),
     efficiency_index: efficiencyIndex,
     score_per_log_bp: scorePerLogBp,
@@ -1607,7 +1832,647 @@ export function evaluateCardEfficiencySync(
     grade_curve: gradeCurve,
     best_sweetspot_grade: bestSweetspot,
     traits: card.traits || [],
+    feelMetrics: computePlayerFeelMetricsSync(
+      card,
+      pos,
+      clampedGrade,
+      teamColorBonus,
+      true
+    ),
     crawled_at: card.crawled_at || nowIso(),
+  };
+}
+
+// 포지션별 유효 급여 효율 추출용 핵심 스탯 맵
+const POSITION_SALARY_CORE_STATS: Record<string, string[]> = POSITION_CORE_STATS;
+
+function clampScore100(val: number, min = 20, max = 99): number {
+  return Math.max(min, Math.min(max, Math.round(val)));
+}
+
+function resolveCardBpForGrade(card: PlayerCard, grade: number): number {
+  const prices = card.prices || {};
+  const exact = prices[String(grade)]?.bp;
+  if (exact && exact > 0) return exact;
+  if (grade >= 8 && card.bp_8 > 0) return card.bp_8;
+  if (grade >= 5 && card.bp_5 > 0) return card.bp_5;
+  if (card.bp_1 > 0) return card.bp_1;
+  return prices["1"]?.bp || prices["5"]?.bp || prices["8"]?.bp || 0;
+}
+
+function computeCosineSimilarity(vecA: number[], vecB: number[]): number {
+  if (vecA.length !== vecB.length || vecA.length === 0) return 0;
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < vecA.length; i++) {
+    dot += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
+  }
+  if (normA <= 0 || normB <= 0) return 0;
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+export function computePlayerFeelMetricsSync(
+  card: PlayerCard,
+  targetPosition?: string,
+  grade = 8,
+  teamColorBonus = 0,
+  includeAlternatives = true
+): PlayerFeelMetrics {
+  const store = loadStore();
+  const rules = getSystemRules();
+  const clampedGrade = Math.max(1, Math.min(rules.maxEnhanceLevel, grade));
+  const enhBonus = getEnhanceOvrBoost(clampedGrade, rules.enhanceOvrBoosts);
+  const baseOvr = Number(card.ovr || 105);
+  const effOvr = baseOvr + enhBonus + Number(teamColorBonus);
+  const pos = (targetPosition || card.primary_position || "ST").trim().toUpperCase();
+  const stats = card.stats || {};
+
+  const getS = (statName: string, fallbackOffset = 5) => {
+    const raw = lookupRawStatValue(stats, statName);
+    if (raw !== undefined && raw > 0) {
+      return Number(raw) + enhBonus + Number(teamColorBonus);
+    }
+    return Math.max(70, baseOvr - fallbackOffset) + enhBonus + Number(teamColorBonus);
+  };
+
+  const height = Number(card.height || 180);
+  const weight = Number(card.weight || 75);
+  const bodyType = (card.body_type || "보통").trim();
+  const footParsed = parseFootInfo(card.foot);
+
+  // 1. 인게임 체감 지수 (feelScore) 공식 구현
+  // 방향 전환 3단계 메커니즘 가중합: 0.35 * 민첩성 + 0.30 * 밸런스 + 0.20 * 반응속도 + 0.15 * 드리블
+  const agility = getS("민첩성", 4);
+  const balance = getS("밸런스", 5);
+  const reactions = getS("반응 속도", 3);
+  const dribbling = getS("드리블", 4);
+  const ballControl = getS("볼 컨트롤", 4);
+  const sprintSpeed = getS("속력", 3);
+  const acceleration = getS("가속력", 3);
+  const strength = getS("몸싸움", 5);
+  const composure = getS("침착성", 4);
+  const finishingStat = getS("골 결정력", 5);
+  const shotPower = getS("슛 파워", 4);
+  const longShots = getS("중거리 슛", 5);
+  const curveStat = getS("커브", 6);
+  const positioningStat = getS("위치 선정", 4);
+
+  const turnWeightedRaw =
+    pos === "GK"
+      ? 0.4 * getS("GK 반응속도", 2) +
+        0.3 * reactions +
+        0.3 * getS("GK 다이빙", 3)
+      : 0.35 * agility +
+        0.3 * balance +
+        0.2 * reactions +
+        0.15 * dribbling;
+
+  // 체형 보정 계수 (bodyMultiplier): 고유체형(1.06), 마름(1.04), 보통(1.00), 건장(0.94)
+  let bodyMultiplier = 1.0;
+  if (bodyType.includes("고유")) {
+    bodyMultiplier = 1.06;
+  } else if (bodyType.includes("마름")) {
+    bodyMultiplier = 1.04;
+  } else if (bodyType.includes("건장")) {
+    bodyMultiplier = 0.94;
+  }
+
+  // 신장/몸무게 물리 페널티 (physicalPenalty): 183cm 초과분 및 78kg 초과분 비례 선회 반경 페널티 차감
+  const heightExcess = Math.max(0, height - 183);
+  const weightExcess = Math.max(0, weight - 78);
+  const compactAgilityBonus =
+    pos !== "GK" && height < 178 ? (178 - height) * 0.22 : 0;
+  const physicalPenalty =
+    pos === "GK"
+      ? 0
+      : heightExcess * 0.45 + weightExcess * 0.28 - compactAgilityBonus;
+
+  // 가속력과 속력의 비대칭성 보정: 가속력이 속력보다 현저히 낮고 몸무게가 무거우면 초기 가속 감점 적용
+  let accelAsymmetryPenalty = 0;
+  if (pos !== "GK" && acceleration < sprintSpeed - 2 && weight >= 76) {
+    const speedGap = sprintSpeed - acceleration;
+    const weightFactor = weight >= 83 ? 0.65 : weight >= 78 ? 0.48 : 0.32;
+    accelAsymmetryPenalty = Math.min(7.5, speedGap * weightFactor);
+  } else if (pos !== "GK" && acceleration >= sprintSpeed + 2 && weight <= 76) {
+    accelAsymmetryPenalty = -Math.min(2.0, (acceleration - sprintSpeed) * 0.28);
+  }
+
+  // 8강(적응도 0) 기준 체감 5대 핵심 스탯(민첩성·밸런스·드리블·볼 컨트롤·반응 속도) 산출
+  const boost8 = getEnhanceOvrBoost(8, rules.enhanceOvrBoosts);
+  const getStat8Zero = (statName: string, fallbackOffset = 5) => {
+    const raw = lookupRawStatValue(stats, statName);
+    if (raw !== undefined && raw > 0) {
+      return Number(raw) + boost8;
+    }
+    return Math.max(70, baseOvr - fallbackOffset) + boost8;
+  };
+  const agility8 = getStat8Zero("민첩성", 4);
+  const balance8 = getStat8Zero("밸런스", 5);
+  const dribbling8 = getStat8Zero("드리블", 4);
+  const ballControl8 = getStat8Zero("볼 컨트롤", 4);
+  const reactions8 = getStat8Zero("반응 속도", 3);
+  const feel5Avg8 = Number(
+    (
+      0.25 * agility8 +
+      0.25 * balance8 +
+      0.2 * dribbling8 +
+      0.15 * ballControl8 +
+      0.15 * reactions8
+    ).toFixed(1)
+  );
+
+  // 체형 및 피지컬 필터: 체형이 '건장'이거나 신장 186cm 이상 또는 몸무게 80kg 이상인 선수는 선회 반경이 크므로 '좋은 체감'에서 원천 제외
+  const isPhysicalExcludedFromGoodFeel =
+    bodyType.includes("건장") || height >= 186 || weight >= 80;
+  const isEligibleLightBody =
+    !isPhysicalExcludedFromGoodFeel &&
+    (bodyType.includes("마름") ||
+      bodyType.includes("고유") ||
+      bodyType.includes("보통"));
+
+  const adjustedTurnValue =
+    turnWeightedRaw * bodyMultiplier - physicalPenalty - accelAsymmetryPenalty;
+
+  // 0~100 스케일로 변환 (인게임 체감 지수) — 피지컬 필터 해당 시 최대 84점(보통 체감 상한)으로 캡핑
+  const rawFeelScore = clampScore100(
+    48 + (adjustedTurnValue - 98) * 1.08,
+    28,
+    99
+  );
+  const feelScore = isPhysicalExcludedFromGoodFeel
+    ? Math.min(84, rawFeelScore)
+    : rawFeelScore;
+
+  // 2. 표기 스탯 점수 (statScore, 0~100) 및 3단계 체감 배지 (좋은 체감 / 보통 체감 / 무거운 체감)
+  const posWeights = POSITION_WEIGHTS[pos] || POSITION_WEIGHTS["ST"];
+  const totalPosW =
+    Object.values(posWeights).reduce((a, b) => a + b, 0) || 1.0;
+  let weightedCoreRaw = 0;
+  for (const [sKey, w] of Object.entries(posWeights)) {
+    weightedCoreRaw += getS(sKey, 4) * (w / totalPosW);
+  }
+
+  const statScore = clampScore100(
+    48 + (effOvr * 0.55 + weightedCoreRaw * 0.45 - 98) * 1.05,
+    30,
+    99
+  );
+
+  const isAttackOrCentral = [
+    "ST",
+    "CF",
+    "LF",
+    "RF",
+    "CAM",
+    "LW",
+    "RW",
+    "LM",
+    "RM",
+    "CM",
+  ].includes(pos);
+  let weakFootMetaDelta = 0;
+  if (isAttackOrCentral) {
+    if (footParsed.isTwoFooted || footParsed.weakFoot >= 5) {
+      weakFootMetaDelta = 4.8;
+    } else if (footParsed.weakFoot === 4) {
+      weakFootMetaDelta = 0.5;
+    } else {
+      weakFootMetaDelta = -5.5;
+    }
+  }
+
+  const longShotSynergyRaw =
+    0.42 * longShots + 0.36 * shotPower + 0.22 * curveStat;
+  const longShotBonus =
+    isAttackOrCentral && longShotSynergyRaw >= effOvr + 1
+      ? Math.min(3.2, (longShotSynergyRaw - effOvr) * 0.45)
+      : 0;
+
+  const composureReactionMean = (composure + reactions) / 2;
+  const hiddenClutchDelta = (composureReactionMean - effOvr) * 0.55;
+
+  const statTrapIndex = Number(
+    (
+      feelScore -
+      statScore +
+      weakFootMetaDelta +
+      longShotBonus +
+      hiddenClutchDelta
+    ).toFixed(1)
+  );
+
+  // '좋은 체감' 엄격 판정 조건:
+  // 1) 건장 체형 아님 & 신장 < 186cm & 몸무게 < 80kg (마름/고유 또는 가벼운 보통 체형)
+  // 2) 8강(적응도 0) 기준 체감 5대 핵심 스탯(민첩성·밸런스·드리블·볼 컨트롤·반응 속도) 가중 평균 >= 128
+  // 3) 8강(적응도 0) 기준 민첩성 >= 124 이고 밸런스 >= 124
+  const qualifiesGoodFeel =
+    pos !== "GK" &&
+    isEligibleLightBody &&
+    feel5Avg8 >= 128 &&
+    agility8 >= 124 &&
+    balance8 >= 124;
+
+  // '무거운 체감' 판정 조건:
+  // - 건장 체형이면서 신장 >= 186 또는 몸무게 >= 82 또는 민첩성/밸런스 122 미만
+  // - 신장 >= 188 및 몸무게 >= 80이면서 8강 민첩성 < 122 또는 밸런스 < 122
+  // - 또는 8강 체감 5대 평균 < 118 이거나 민첩성 < 116 또는 밸런스 < 116 또는 체감 점수 < 73
+  const isHeavyClunkyFeel =
+    !qualifiesGoodFeel &&
+    ((bodyType.includes("건장") &&
+      (height >= 186 || weight >= 80 || feel5Avg8 < 123 || agility8 < 120)) ||
+      (height >= 188 &&
+        weight >= 80 &&
+        (agility8 < 122 || balance8 < 122 || feel5Avg8 < 125)) ||
+      feel5Avg8 < 118 ||
+      agility8 < 116 ||
+      balance8 < 116 ||
+      feelScore < 73 ||
+      statTrapIndex <= -3.8);
+
+  let statTrapBadge: StatTrapBadgeType = "NORMAL";
+  let statTrapLabel: "좋은 체감" | "보통 체감" | "무거운 체감" = "보통 체감";
+  let feelGradeLabel: "좋은 체감" | "보통 체감" | "무거운 체감" = "보통 체감";
+  let feelVerdictReason = "";
+
+  if (qualifiesGoodFeel) {
+    statTrapBadge = "CHEAT_KEY";
+    statTrapLabel = "좋은 체감";
+    feelGradeLabel = "좋은 체감";
+    feelVerdictReason = `${bodyType} 체형(${height}cm/${weight}kg) + 8강 기준 체감 5대 스탯 가중평균 ${feel5Avg8} (민첩 ${agility8}·밸런스 ${balance8})으로 부드러운 선회 반경 기준을 모두 통과했습니다.`;
+  } else if (isHeavyClunkyFeel) {
+    statTrapBadge = "STAT_TRAP";
+    statTrapLabel = "무거운 체감";
+    feelGradeLabel = "무거운 체감";
+    if (isPhysicalExcludedFromGoodFeel) {
+      feelVerdictReason = `체격 조건(${height}cm/${weight}kg/${bodyType})으로 선회 반경이 크고 8강 민첩성(${agility8})·밸런스(${balance8}) 대비 역동작이 체감되는 무거운 유형입니다.`;
+    } else {
+      feelVerdictReason = `8강 기준 체감 5대 스탯 평균(${feel5Avg8}) 또는 민첩성(${agility8})·밸런스(${balance8})가 낮아 방향 전환이 둔중한 편입니다.`;
+    }
+  } else {
+    statTrapBadge = "NORMAL";
+    statTrapLabel = "보통 체감";
+    feelGradeLabel = "보통 체감";
+    if (isPhysicalExcludedFromGoodFeel) {
+      const physReasons: string[] = [];
+      if (bodyType.includes("건장")) physReasons.push(`건장 체형`);
+      if (height >= 186) physReasons.push(`신장 ${height}cm(≥186cm)`);
+      if (weight >= 80) physReasons.push(`몸무게 ${weight}kg(≥80kg)`);
+      feelVerdictReason = `${physReasons.join(" · ")} 피지컬 필터 적용으로 '좋은 체감'에서 제외되어 최대 등급인 '보통 체감'(8강 5대 체감 평균 ${feel5Avg8})으로 판정되었습니다.`;
+    } else {
+      feelVerdictReason = `체격(${height}cm/${weight}kg/${bodyType})은 준수하나 8강 체감 5대 평균(${feel5Avg8}, 기준 ≥128) 또는 민첩(${agility8})·밸런스(${balance8}, 기준 ≥124) 컷오프에 소폭 미달하여 '보통 체감'으로 분류됩니다.`;
+    }
+  }
+
+  // 3. 포지션별 유효 급여 효율 (positionSalaryEfficiency)
+  const salaryCoreKeys =
+    POSITION_SALARY_CORE_STATS[pos] || POSITION_SALARY_CORE_STATS["ST"];
+  const salaryCoreAvg =
+    salaryCoreKeys.reduce((acc, k) => acc + getS(k, 4), 0) /
+    salaryCoreKeys.length;
+  const safeSalary = Math.max(8, Number(card.salary || 20));
+  const rawPerSalary = salaryCoreAvg / safeSalary;
+  const positionSalaryEfficiency = Number(
+    Math.max(
+      25,
+      Math.min(
+        99,
+        42 + (rawPerSalary - 3.6) * 14.5 + (salaryCoreAvg - 108) * 0.45
+      )
+    ).toFixed(1)
+  );
+
+  // 4. 실전 체감 5각형 데이터 (radarFive)
+  const burstRaw =
+    0.48 * acceleration +
+    0.27 * sprintSpeed +
+    0.25 * reactions -
+    accelAsymmetryPenalty * 1.4 +
+    (bodyType.includes("마름") || bodyType.includes("고유") ? 2.5 : 0);
+  const burstScore = clampScore100(48 + (burstRaw - 98) * 1.08, 28, 99);
+
+  const physicalHoldRaw =
+    0.45 * strength +
+    0.3 * balance +
+    0.25 * getS("적극성", 6) +
+    Math.max(-5, Math.min(7, (height - 181) * 0.35 + (weight - 75) * 0.25)) +
+    (bodyType.includes("건장") ? 4.2 : bodyType.includes("마름") ? -2.8 : 0);
+  const physicalHoldScore = clampScore100(
+    46 + (physicalHoldRaw - 96) * 1.06,
+    25,
+    99
+  );
+
+  const finishingRaw =
+    pos === "GK"
+      ? 0.5 * getS("GK 다이빙", 2) + 0.5 * getS("GK 핸들링", 3)
+      : 0.34 * finishingStat +
+        0.26 * shotPower +
+        0.22 * longShots +
+        0.18 * composure +
+        weakFootMetaDelta * 1.5;
+  const finishingScore = clampScore100(46 + (finishingRaw - 96) * 1.06, 25, 99);
+
+  const salaryValueScore = clampScore100(positionSalaryEfficiency, 25, 99);
+
+  const radarFive = {
+    smoothness: feelScore,
+    burst: burstScore,
+    physicalHold: physicalHoldScore,
+    finishing: finishingScore,
+    salaryValue: salaryValueScore,
+  };
+
+  // 5. 자동 생성 플레이스타일 태그 (playstyleTags)
+  const playstyleTags: string[] = [];
+  if (footParsed.isTwoFooted || footParsed.weakFoot >= 5) {
+    playstyleTags.push("#양발잡이");
+  }
+  if (qualifiesGoodFeel) {
+    playstyleTags.push(
+      bodyType.includes("고유") || bodyType.includes("마름")
+        ? "#고유체형급좋은체감"
+        : "#좋은체감검증"
+    );
+  }
+  if (
+    pos !== "GK" &&
+    (acceleration >= effOvr + 2 ||
+      (sprintSpeed >= effOvr + 1 && positioningStat >= effOvr) ||
+      (card.traits || []).some(
+        (t) => t.name.includes("라인 브레이커") || t.name.includes("스피드스터")
+      ))
+  ) {
+    playstyleTags.push("#침투특화");
+  }
+  if (
+    pos !== "GK" &&
+    (longShotSynergyRaw >= effOvr + 1 ||
+      (card.traits || []).some(
+        (t) => t.name.includes("레이저 슈터") || t.name.includes("중거리")
+      ))
+  ) {
+    playstyleTags.push("#중거리포");
+  }
+  if (physicalHoldScore >= 86 || (height >= 188 && bodyType.includes("건장"))) {
+    playstyleTags.push("#경합탱커");
+  }
+  if (positionSalaryEfficiency >= 76) {
+    playstyleTags.push("#급여가성비");
+  }
+  if (isHeavyClunkyFeel) {
+    playstyleTags.push("#무거운체감주의");
+  }
+  if (isAttackOrCentral && footParsed.weakFoot <= 3) {
+    playstyleTags.push("#약발주의");
+  }
+  if (playstyleTags.length === 0) {
+    playstyleTags.push("#보통체감밸런스", `#${pos}표준`);
+  }
+
+  // 6. 상위 랭커 포지션별 실사용 픽률 (%)
+  let rankerPickRate = 0;
+  const rankerSnap = store.rankerMetaSnapshot;
+  if (rankerSnap) {
+    const exactMatch = (rankerSnap.position_top_players || []).find(
+      (p) => p.spid === card.spid
+    );
+    if (exactMatch && exactMatch.usage_pct > 0) {
+      rankerPickRate = Number(exactMatch.usage_pct.toFixed(2));
+    } else {
+      const samePidPos = (rankerSnap.position_top_players || []).find(
+        (p) => p.spid % 1_000_000 === card.pid
+      );
+      const seasonEntry = (rankerSnap.season_usage_top || []).find(
+        (s) => s.season_code.toUpperCase() === card.season_code.toUpperCase()
+      );
+      if (samePidPos && seasonEntry) {
+        rankerPickRate = Number(
+          Math.min(
+            12.5,
+            samePidPos.usage_pct * 0.55 + seasonEntry.usage_pct * 0.25
+          ).toFixed(2)
+        );
+      } else if (seasonEntry) {
+        const ovrFactor = Math.max(0.2, Math.min(1.4, (card.ovr - 102) / 14));
+        rankerPickRate = Number(
+          Math.max(0.1, seasonEntry.usage_pct * 0.32 * ovrFactor).toFixed(2)
+        );
+      }
+    }
+  }
+  if (rankerPickRate <= 0) {
+    rankerPickRate = Number(
+      Math.max(
+        0.15,
+        Math.min(
+          8.5,
+          (card.ovr - 98) * 0.18 + Math.min(2.5, (card.rating_count || 0) * 0.04)
+        )
+      ).toFixed(2)
+    );
+  }
+
+  // 7. 동일 팀컬러(소속 클럽 또는 국가) + 동일 포지션 기반 가성비 대체재 TOP 3 (similarAlternatives)
+  const similarAlternatives: SimilarAlternativePlayerItem[] = [];
+  if (includeAlternatives) {
+    const enrichedTarget = enrichPlayerCardMetaSync(card);
+    const targetTeamColors = getCardCoreTeamColorSet(enrichedTarget);
+    const targetSix = computeSixFaceSummary(card, clampedGrade, teamColorBonus);
+    const targetVec = [
+      targetSix["속력"] || 100,
+      targetSix["슈팅"] || 100,
+      targetSix["패스"] || 100,
+      targetSix["드리블"] || 100,
+      targetSix["수비"] || 100,
+      targetSix["피지컬"] || 100,
+    ];
+    const targetBp = resolveCardBpForGrade(card, clampedGrade);
+    const targetPosInfo = resolvePositionGroupInfo(pos);
+
+    const allCandidatePool = Object.values(store.cards).filter(
+      (c) => c.spid !== card.spid
+    );
+
+    const scoredCandidates = allCandidatePool
+      .map((rawCand) => {
+        const cand = enrichPlayerCardMetaSync(rawCand);
+        const candPosInfo = resolvePositionGroupInfo(cand.primary_position);
+        const exactPosMatch =
+          cand.primary_position === pos ||
+          (cand.positions || []).some((p) => p.pos === pos);
+        const groupPosMatch =
+          candPosInfo.positionGroup === targetPosInfo.positionGroup;
+        if (!exactPosMatch && !groupPosMatch) return null;
+
+        const candColors = getCardCoreTeamColorSet(cand);
+        const sharedColors: string[] = [];
+        for (const tc of candColors) {
+          if (targetTeamColors.has(tc)) {
+            sharedColors.push(tc);
+          }
+        }
+        // 동일 팀컬러 필수 필터 (소속 클럽 또는 국가대표 공유)
+        if (targetTeamColors.size > 0 && sharedColors.length === 0) {
+          return null;
+        }
+
+        const candBp = resolveCardBpForGrade(cand, clampedGrade);
+        // 가성비 조건: 기준 카드보다 저렴하거나 합리적인 시세 구간 우선
+        const isCheaperOrReasonable =
+          targetBp <= 0 || candBp <= 0 || candBp <= targetBp * 0.96;
+
+        const candSix = computeSixFaceSummary(
+          cand,
+          clampedGrade,
+          teamColorBonus
+        );
+        const candVec = [
+          candSix["속력"] || 100,
+          candSix["슈팅"] || 100,
+          candSix["패스"] || 100,
+          candSix["드리블"] || 100,
+          candSix["수비"] || 100,
+          candSix["피지컬"] || 100,
+        ];
+        const cosSim = computeCosineSimilarity(targetVec, candVec);
+        const magDiff =
+          targetVec.reduce(
+            (acc, v, idx) => acc + Math.abs(v - candVec[idx]),
+            0
+          ) / 6;
+        const magSimilarity = Math.max(0, 1 - magDiff / 45);
+        const candFoot = parseFootInfo(cand.foot);
+        const footMatchBonus =
+          Math.abs(candFoot.weakFoot - footParsed.weakFoot) <= 1 ? 0.015 : -0.02;
+        const bodyMatchBonus = cand.body_type === card.body_type ? 0.01 : 0;
+
+        const combinedSim = Math.max(
+          0.74,
+          Math.min(
+            0.994,
+            cosSim * 0.72 +
+              magSimilarity * 0.28 +
+              footMatchBonus +
+              bodyMatchBonus
+          )
+        );
+
+        const priceDiffRatio =
+          targetBp > 0 && candBp > 0
+            ? Number(((candBp - targetBp) / targetBp).toFixed(3))
+            : -0.35;
+
+        const candFeel = computePlayerFeelMetricsSync(
+          cand,
+          pos,
+          clampedGrade,
+          teamColorBonus,
+          false
+        );
+
+        const differentPlayerBonus = cand.pid !== card.pid ? 35 : 0;
+        const exactPositionBonus = exactPosMatch ? 50 : 0;
+        const cheaperBonus = isCheaperOrReasonable ? 40 : -30;
+
+        return {
+          pid: cand.pid,
+          spid: cand.spid,
+          name: cand.name,
+          season: cand.season_code,
+          seasonImg: cand.season_img,
+          thumbUrl: cand.thumb_url,
+          position: cand.primary_position,
+          grade: clampedGrade,
+          bp: candBp,
+          bpText: formatBpKorean(candBp),
+          sharedTeamColor: sharedColors[0] || cand.team || cand.nation,
+          sharedTeamColors: sharedColors,
+          similarity: Number((combinedSim * 100).toFixed(1)),
+          priceDiffRatio,
+          feelScore: candFeel.feelScore,
+          feelBadgeLabel: candFeel.feelGradeLabel || "보통 체감",
+          _rankScore:
+            exactPositionBonus +
+            differentPlayerBonus +
+            cheaperBonus +
+            sharedColors.length * 15 +
+            combinedSim * 100 +
+            Math.min(18, Math.max(0, -priceDiffRatio * 20)) +
+            candFeel.feelScore * 0.15,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+
+    scoredCandidates.sort((a, b) => b._rankScore - a._rankScore);
+
+    // 서로 다른 선수(pid)를 우선 선정하되 부족하면 하위 시즌 가성비 카드 포함
+    const usedPids = new Set<number>();
+    for (const item of scoredCandidates) {
+      if (similarAlternatives.length >= 3) break;
+      if (item.pid === card.pid || usedPids.has(item.pid)) continue;
+      usedPids.add(item.pid);
+      similarAlternatives.push({
+        spid: item.spid,
+        name: item.name,
+        season: item.season,
+        seasonImg: item.seasonImg,
+        thumbUrl: item.thumbUrl,
+        position: item.position,
+        grade: item.grade,
+        bp: item.bp,
+        bpText: item.bpText,
+        sharedTeamColor: item.sharedTeamColor,
+        sharedTeamColors: item.sharedTeamColors,
+        similarity: item.similarity,
+        priceDiffRatio: item.priceDiffRatio,
+        feelScore: item.feelScore,
+        feelBadgeLabel: item.feelBadgeLabel,
+      });
+    }
+    for (const item of scoredCandidates) {
+      if (similarAlternatives.length >= 3) break;
+      if (!similarAlternatives.some((s) => s.spid === item.spid)) {
+        similarAlternatives.push({
+          spid: item.spid,
+          name: item.name,
+          season: item.season,
+          seasonImg: item.seasonImg,
+          thumbUrl: item.thumbUrl,
+          position: item.position,
+          grade: item.grade,
+          bp: item.bp,
+          bpText: item.bpText,
+          sharedTeamColor: item.sharedTeamColor,
+          sharedTeamColors: item.sharedTeamColors,
+          similarity: item.similarity,
+          priceDiffRatio: item.priceDiffRatio,
+          feelScore: item.feelScore,
+          feelBadgeLabel: item.feelBadgeLabel,
+        });
+      }
+    }
+  }
+
+  return {
+    statScore,
+    feelScore,
+    statTrapIndex,
+    statTrapBadge,
+    statTrapLabel,
+    feelGradeLabel,
+    feel5Avg8,
+    agility8,
+    balance8,
+    isPhysicalExcludedFromGoodFeel,
+    feelVerdictReason,
+    positionSalaryEfficiency,
+    radarFive,
+    playstyleTags: playstyleTags.slice(0, 6),
+    similarAlternatives,
+    rankerPickRate,
   };
 }
 
@@ -1751,7 +2616,17 @@ function computePhysicalAndFootModifier(
   bodyType: string,
   weakFoot: number,
   isTwoFooted: boolean,
-  agilityStat: number
+  agilityStat: number,
+  extraContext?: {
+    primaryPos?: string;
+    subPositions?: string[];
+    weightKg?: number;
+    defenseMean?: number;
+    strengthStat?: number;
+    balanceStat?: number;
+    staminaStat?: number;
+    effOvr?: number;
+  }
 ): { delta: number; notes: string[] } {
   if (!hasFullData) {
     return { delta: 0, notes: [] };
@@ -1761,6 +2636,16 @@ function computePhysicalAndFootModifier(
   const isStrongBody = bodyType.includes("건장");
   const isLeanBody = bodyType.includes("마름");
   const isUniqueBody = bodyType.includes("고유");
+  const weightKg = extraContext?.weightKg ?? 75;
+  const primaryPos = (extraContext?.primaryPos || analyzedPos).toUpperCase();
+  const subPositions = (extraContext?.subPositions || []).map((p) =>
+    p.toUpperCase()
+  );
+  const defenseMean = extraContext?.defenseMean ?? 95;
+  const strengthStat = extraContext?.strengthStat ?? 100;
+  const balanceStat = extraContext?.balanceStat ?? 100;
+  const staminaStat = extraContext?.staminaStat ?? 105;
+  const effOvr = extraContext?.effOvr ?? 115;
 
   if (archId === "st_cf_target_man") {
     if (height >= 190) {
@@ -1828,30 +2713,95 @@ function computePhysicalAndFootModifier(
       delta -= 1.5;
       notes.push(`약발(${weakFoot}) 주발 각도 의존도 존재 -1.5`);
     }
-  } else if (archId === "cm_playmaker") {
+  } else if (archId === "cm_attacking" || archId === "cm_playmaker") {
+    // 1. 주/부 포지션 비중 반영 (CDM 홀딩 선수가 패스 스탯 때문에 공격형 미드필더로 오분류되는 현상 원천 차단)
+    if (primaryPos === "CAM" || analyzedPos === "CAM") {
+      delta += 3.2;
+      notes.push("주/분석 포지션 CAM(2선 공격형 미드필더) 적합도 보정 +3.2");
+    } else if (primaryPos === "CDM" && !subPositions.includes("CAM")) {
+      delta -= 7.5;
+      notes.push("주 포지션 CDM(홀딩 미드필더) 선수 공격형 미드필더 배제 감점 -7.5");
+    } else if (analyzedPos === "CDM") {
+      delta -= 5.0;
+      notes.push("CDM 포지션 배치 기준 공격형 비중 차감 -5.0");
+    }
+
+    // 2. 수비/피지컬 지표가 매우 높은 홀딩형 선수(로드리 등) 공격형 오분류 방지
+    if (defenseMean >= effOvr - 5 && strengthStat >= effOvr - 5) {
+      delta -= 5.5;
+      notes.push(
+        `높은 수비력(${Math.round(defenseMean)})·몸싸움(${strengthStat}) 홀딩 성향으로 공격형 미드필더 제외 -5.5`
+      );
+    }
+
+    // 3. 신장/체형/체감 점수 반영 (186cm 이상, 80kg 이상, 건장 체형은 2선 선회 반경 페널티)
+    if (height >= 186 || weightKg >= 80 || isStrongBody) {
+      delta -= 4.5;
+      notes.push(
+        `장신·중량급 피지컬(${height}cm/${weightKg}kg/${bodyType}) 2선 체감 페널티 -4.5`
+      );
+    } else if ((isLeanBody || isUniqueBody) && agilityStat >= 124 && balanceStat >= 124) {
+      delta += 2.5;
+      notes.push("부드러운 체감(민첩·밸런스 124+) 2선 탈압박 보정 +2.5");
+    }
+
     if (isTwoFooted) {
-      delta += 2.6;
-      notes.push("양발(5/5) 중원 전방향 탈압박·롱패스 배급 +2.6");
+      delta += 2.0;
+      notes.push("양발(5/5) 2선 전방향 슈팅·킬패스 보정 +2.0");
     } else if (weakFoot <= 3) {
-      delta -= 2.4;
-      notes.push(`약발(${weakFoot}) 반대 전환 패스 각도 제약 -2.4`);
+      delta -= 2.2;
+      notes.push(`약발(${weakFoot}) 2선 슈팅·패스 각도 제약 -2.2`);
     }
   } else if (archId === "cm_defensive") {
-    if (height >= 186 || isStrongBody) {
-      delta += 1.8;
-      notes.push(`체격(${height}cm/${bodyType}) 중원 경합·차단 우위 +1.8`);
-    } else if (height <= 175 && isLeanBody) {
-      delta -= 1.2;
-      notes.push(`체격(${height}cm/${bodyType}) 공중볼 경합 열세 -1.2`);
+    // 1. 주/부 포지션 비중 (CDM 우대)
+    if (primaryPos === "CDM" || analyzedPos === "CDM") {
+      delta += 5.5;
+      notes.push("주/분석 포지션 CDM(수비형 미드필더) 포백 보호 보정 +5.5");
+    } else if (subPositions.includes("CDM") || subPositions.includes("CB")) {
+      delta += 2.5;
+      notes.push("부 포지션 CDM/CB 수비 롤 수행 보정 +2.5");
+    } else if (primaryPos === "CAM" && defenseMean < effOvr - 10) {
+      delta -= 6.5;
+      notes.push("순수 공격형 2선(CAM) 수비력 열세 감점 -6.5");
     }
-  } else if (archId === "cm_box_to_box") {
+
+    // 2. 수비 3대 지표(가로채기·태클·대인 수비) + 몸싸움 우위 반영
+    if (defenseMean >= effOvr - 4.5 && strengthStat >= effOvr - 5) {
+      delta += 4.2;
+      notes.push(
+        `상위권 수비 평균(${Math.round(defenseMean)})·몸싸움(${strengthStat}) 중원 저지력 +4.2`
+      );
+    } else if (defenseMean < effOvr - 12) {
+      delta -= 5.0;
+      notes.push(`수비 핵심 스탯(${Math.round(defenseMean)}) 부족 -5.0`);
+    }
+
+    // 3. 장신/건장 피지컬 학다리 태클·제공권 우위 (로드리 등)
+    if (height >= 186 || weightKg >= 80 || isStrongBody) {
+      delta += 3.2;
+      notes.push(
+        `체격(${height}cm/${weightKg}kg/${bodyType}) 중원 제공권·경합 차단 우위 +3.2`
+      );
+    } else if (height <= 175 && isLeanBody) {
+      delta -= 1.8;
+      notes.push(`단신·마름(${height}cm/${bodyType}) 공중볼 경합 열세 -1.8`);
+    }
+  } else if (archId === "cm_central" || archId === "cm_box_to_box") {
+    // 1. 주/부 포지션 CM 비중 및 활동량/패스 빌드업 보정
+    if (primaryPos === "CM" || analyzedPos === "CM") {
+      delta += 3.2;
+      notes.push("주/분석 포지션 CM(중앙 미드필더) 공수 연결 보정 +3.2");
+    } else if (subPositions.includes("CM")) {
+      delta += 1.5;
+      notes.push("부 포지션 CM 빌드업·연결 호환 +1.5");
+    }
+    if (staminaStat >= effOvr - 3) {
+      delta += 1.6;
+      notes.push(`왕성한 스태미너(${staminaStat}) 중원 활동량 보정 +1.6`);
+    }
     if (isTwoFooted) {
       delta += 1.5;
-      notes.push("양발(5/5) 공수 전환 패스·중거리 슈팅 보정 +1.5");
-    }
-    if (height >= 184 && !isLeanBody) {
-      delta += 1.0;
-      notes.push(`신장(${height}cm) 중원 장악력 보정 +1.0`);
+      notes.push("양발(5/5) 중원 전방향 빌드업 패스 보정 +1.5");
     }
   } else if (archId === "cb_buildup") {
     if (isTwoFooted) {
@@ -1905,7 +2855,7 @@ function computePhysicalAndFootModifier(
   }
 
   return {
-    delta: Number(Math.max(-4.5, Math.min(4.5, delta)).toFixed(1)),
+    delta: Number(Math.max(-14.0, Math.min(11.0, delta)).toFixed(1)),
     notes,
   };
 }
@@ -1920,12 +2870,19 @@ function evaluateCompleteCriteria(
   height: number,
   bodyType: string,
   weakFoot: number,
-  isTwoFooted: boolean
+  isTwoFooted: boolean,
+  agility8 = 120,
+  balance8 = 120
 ): CompleteEvaluationResult {
   const avg = (names: string[]) => {
     const vals = names.map((n) => getStat(n));
     return Number((vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1));
   };
+
+  // 완성형 필수 체감 컷오프: 필드 플레이어는 8강(적응도 0) 기준 민첩성과 밸런스가 모두 124 이상이어야만 완성형(및 육각형 미드필더) 인정
+  const agilityBalanceAvg8 = Number(((agility8 + balance8) / 2).toFixed(1));
+  const agilityBalancePassed =
+    positionGroup === "GK" || (agility8 >= 124 && balance8 >= 124);
 
   let pillars: { name: string; score: number; threshold: number; passed: boolean }[] = [];
   let maxSpreadAllowed = 14.5;
@@ -1961,10 +2918,10 @@ function evaluateCompleteCriteria(
         passed: linkup >= effOvr - 7.5 && linkup >= 95,
       },
       {
-        name: "볼컨트롤·드리블",
-        score: control,
-        threshold: Number((effOvr - 6.5).toFixed(1)),
-        passed: control >= effOvr - 6.5 && control >= 96,
+        name: "체감 코어(8강 민첩·밸런스)",
+        score: agilityBalanceAvg8,
+        threshold: 124,
+        passed: agilityBalancePassed && control >= effOvr - 6.5,
       },
       {
         name: "피지컬·경합",
@@ -1991,14 +2948,17 @@ function evaluateCompleteCriteria(
         isTwoFooted ||
         (weakFoot >= 4 && linkup >= effOvr - 4.5 && control >= effOvr - 4.5);
       const heightOk = height >= 184 || (physical >= effOvr - 3 && aerial >= effOvr - 3);
-      physicalPassed = footOk && heightOk;
-      physicalScoreText = `${height}cm · ${bodyType} · 약발 ${weakFoot}`;
+      physicalPassed = footOk && heightOk && agilityBalancePassed;
+      physicalScoreText = `${height}cm · 약발 ${weakFoot} · 8강 민첩 ${agility8}/밸런스 ${balance8}`;
       if (physicalPassed) {
-        physicalDetail = isTwoFooted
-          ? `양발(5/5)과 준수한 신장(${height}cm)을 모두 갖춰 전방위 슈팅·연계·제공권 제약이 없습니다.`
-          : `약발(${weakFoot})과 신장(${height}cm)·연계 밸런스가 완성형 기준을 충족합니다.`;
+        physicalDetail = `양발/약발(${weakFoot}), 신장(${height}cm), 그리고 8강 기준 민첩성(${agility8})·밸런스(${balance8}) ≥ 124 상위권 기준을 모두 충족합니다.`;
       } else {
         const reasons: string[] = [];
+        if (!agilityBalancePassed) {
+          reasons.push(
+            `8강 기준 민첩성(${agility8})·밸런스(${balance8})가 완성형 필수 컷오프(각 124 이상) 미달`
+          );
+        }
         if (!footOk) {
           reasons.push(
             `약발(${weakFoot}) 조건 또는 비양발 공격수의 연계·볼컨트롤 최소 기준 미달`
@@ -2028,6 +2988,12 @@ function evaluateCompleteCriteria(
         passed: dribble >= effOvr - 5.0 && dribble >= 100,
       },
       {
+        name: "체감 코어(8강 민첩·밸런스)",
+        score: agilityBalanceAvg8,
+        threshold: 124,
+        passed: agilityBalancePassed,
+      },
+      {
         name: "크로스·패스 전개",
         score: crossPass,
         threshold: Number((effOvr - 7.0).toFixed(1)),
@@ -2053,10 +3019,12 @@ function evaluateCompleteCriteria(
       },
     ];
     maxSpreadAllowed = 15.0;
-    physicalPassed = hasFullData && weakFoot >= 4;
-    physicalScoreText = `${height}cm · ${bodyType} · 약발 ${weakFoot}`;
+    physicalPassed = hasFullData && weakFoot >= 4 && agilityBalancePassed;
+    physicalScoreText = `${height}cm · 약발 ${weakFoot} · 8강 민첩 ${agility8}/밸런스 ${balance8}`;
     physicalDetail = physicalPassed
-      ? `약발(${weakFoot}) 이상으로 정발 크로스와 역발 컷인 슈팅/패스를 모두 수행 가능합니다.`
+      ? `약발(${weakFoot}) 이상 및 8강 민첩성(${agility8})·밸런스(${balance8}) ≥ 124 기준을 통과해 양방향 돌파·크로스·슈팅이 모두 가능합니다.`
+      : !agilityBalancePassed
+      ? `8강 기준 민첩성(${agility8})·밸런스(${balance8})가 완성형 필수 기준(각 124 이상)에 미달합니다.`
       : `약발(${weakFoot}) 제약으로 측면 양방향 선택지가 제한됩니다.`;
   } else if (positionGroup === "CENTRAL_MF") {
     const passing = avg(["짧은 패스", "긴 패스", "시야"]);
@@ -2065,110 +3033,43 @@ function evaluateCompleteCriteria(
     const defending = avg(["가로채기", "태클", "대인 수비"]);
     const physicalStamina = avg(["스태미너", "몸싸움", "속력"]);
 
-    if (analyzedPos === "CAM") {
-      pillars = [
-        {
-          name: "패스·창의성",
-          score: passing,
-          threshold: Number((effOvr - 4.5).toFixed(1)),
-          passed: passing >= effOvr - 4.5 && passing >= 100,
-        },
-        {
-          name: "볼운반·탈압박",
-          score: carrying,
-          threshold: Number((effOvr - 6.0).toFixed(1)),
-          passed: carrying >= effOvr - 6.0 && carrying >= 98,
-        },
-        {
-          name: "득점·슈팅 지원",
-          score: shooting,
-          threshold: Number((effOvr - 6.5).toFixed(1)),
-          passed: shooting >= effOvr - 6.5 && shooting >= 98,
-        },
-        {
-          name: "기동력·몸싸움·활동량",
-          score: physicalStamina,
-          threshold: Number((effOvr - 7.5).toFixed(1)),
-          passed: physicalStamina >= effOvr - 7.5 && physicalStamina >= 96,
-        },
-        {
-          name: "전방 압박·수비지원",
-          score: defending,
-          threshold: Number((effOvr - 14.0).toFixed(1)),
-          passed: defending >= effOvr - 14.0 && defending >= 85,
-        },
-      ];
-      maxSpreadAllowed = 15.5;
-    } else if (analyzedPos === "CDM") {
-      pillars = [
-        {
-          name: "수비·차단력",
-          score: defending,
-          threshold: Number((effOvr - 4.5).toFixed(1)),
-          passed: defending >= effOvr - 4.5 && defending >= 100,
-        },
-        {
-          name: "피지컬·활동량",
-          score: physicalStamina,
-          threshold: Number((effOvr - 6.0).toFixed(1)),
-          passed: physicalStamina >= effOvr - 6.0 && physicalStamina >= 98,
-        },
-        {
-          name: "후방 빌드업 패스",
-          score: passing,
-          threshold: Number((effOvr - 7.0).toFixed(1)),
-          passed: passing >= effOvr - 7.0 && passing >= 96,
-        },
-        {
-          name: "탈압박·볼컨트롤",
-          score: carrying,
-          threshold: Number((effOvr - 8.5).toFixed(1)),
-          passed: carrying >= effOvr - 8.5 && carrying >= 94,
-        },
-        {
-          name: "2선 슈팅 지원",
-          score: shooting,
-          threshold: Number((effOvr - 10.5).toFixed(1)),
-          passed: shooting >= effOvr - 10.5 && shooting >= 90,
-        },
-      ];
-      maxSpreadAllowed = 14.0;
-    } else {
-      // CM
-      pillars = [
-        {
-          name: "패스·시야 전개",
-          score: passing,
-          threshold: Number((effOvr - 5.5).toFixed(1)),
-          passed: passing >= effOvr - 5.5 && passing >= 98,
-        },
-        {
-          name: "볼운반·탈압박",
-          score: carrying,
-          threshold: Number((effOvr - 6.5).toFixed(1)),
-          passed: carrying >= effOvr - 6.5 && carrying >= 96,
-        },
-        {
-          name: "기동력·스태미너·피지컬",
-          score: physicalStamina,
-          threshold: Number((effOvr - 6.0).toFixed(1)),
-          passed: physicalStamina >= effOvr - 6.0 && physicalStamina >= 98,
-        },
-        {
-          name: "중원 수비·가로채기",
-          score: defending,
-          threshold: Number((effOvr - 8.5).toFixed(1)),
-          passed: defending >= effOvr - 8.5 && defending >= 94,
-        },
-        {
-          name: "중거리·득점 지원",
-          score: shooting,
-          threshold: Number((effOvr - 7.5).toFixed(1)),
-          passed: shooting >= effOvr - 7.5 && shooting >= 95,
-        },
-      ];
-      maxSpreadAllowed = 13.5;
-    }
+    pillars = [
+      {
+        name: "패스·빌드업 전개",
+        score: passing,
+        threshold: Number((effOvr - 5.5).toFixed(1)),
+        passed: passing >= effOvr - 5.5 && passing >= 98,
+      },
+      {
+        name: "체감 코어(8강 민첩·밸런스)",
+        score: agilityBalanceAvg8,
+        threshold: 124,
+        passed: agilityBalancePassed && carrying >= effOvr - 6.5,
+      },
+      {
+        name: "기동력·스태미너·피지컬",
+        score: physicalStamina,
+        threshold: Number((effOvr - 6.0).toFixed(1)),
+        passed: physicalStamina >= effOvr - 6.0 && physicalStamina >= 98,
+      },
+      {
+        name: "중원 수비·가로채기",
+        score: defending,
+        threshold: Number((effOvr - (analyzedPos === "CAM" ? 11.0 : 7.5)).toFixed(1)),
+        passed:
+          defending >= effOvr - (analyzedPos === "CAM" ? 11.0 : 7.5) &&
+          defending >= (analyzedPos === "CAM" ? 90 : 95),
+      },
+      {
+        name: "중거리·득점 지원",
+        score: shooting,
+        threshold: Number((effOvr - (analyzedPos === "CDM" ? 9.5 : 7.0)).toFixed(1)),
+        passed:
+          shooting >= effOvr - (analyzedPos === "CDM" ? 9.5 : 7.0) &&
+          shooting >= 94,
+      },
+    ];
+    maxSpreadAllowed = 13.5;
 
     const speedVal = avg(["속력", "가속력"]);
     const footOk = weakFoot >= 4;
@@ -2177,11 +3078,14 @@ function evaluateCompleteCriteria(
       (analyzedPos === "CAM"
         ? getStat("몸싸움") >= effOvr - 9.0
         : height >= 178 || getStat("몸싸움") >= effOvr - 5.0);
-    physicalPassed = hasFullData && footOk && mobilityAndBodyOk;
-    physicalScoreText = `${height}cm · ${bodyType} · 약발 ${weakFoot} · 속가 ${speedVal}`;
+    physicalPassed =
+      hasFullData && footOk && mobilityAndBodyOk && agilityBalancePassed;
+    physicalScoreText = `약발 ${weakFoot} · 8강 민첩 ${agility8}/밸런스 ${balance8} · 속가 ${speedVal}`;
     physicalDetail = physicalPassed
-      ? `${analyzedPos} 완성형에 요구되는 양발 활용도(약발 ${weakFoot}), 기동력(${speedVal}), 중원 경합 밸런스를 충족합니다.`
-      : `약발(${weakFoot}) 또는 기동력(속가 ${speedVal})/피지컬 경합 조건이 ${analyzedPos} 완성형 기준에 미달합니다.`;
+      ? `육각형 미드필더에 요구되는 8강 민첩성(${agility8})·밸런스(${balance8}) ≥ 124, 양발 활용도(약발 ${weakFoot}), 기동력·경합 밸런스를 모두 충족합니다.`
+      : !agilityBalancePassed
+      ? `공격/패스/수비/피지컬은 준수하나 8강 기준 민첩성(${agility8})·밸런스(${balance8})가 상위권 필수 기준(각 124 이상)에 미달하여 '육각형 미드필더(완성형)'에서 제외되었습니다.`
+      : `약발(${weakFoot}) 또는 기동력(속가 ${speedVal})/피지컬 경합 조건이 육각형 미드필더 기준에 미달합니다.`;
   } else if (positionGroup === "CB") {
     const defending = avg(["대인 수비", "태클", "가로채기"]);
     const physicalAerial = avg(["몸싸움", "헤더", "점프"]);
@@ -2208,17 +3112,20 @@ function evaluateCompleteCriteria(
         passed: speedCover >= effOvr - 6.5 && speedCover >= 96,
       },
       {
-        name: "후방 빌드업·패스",
-        score: buildup,
-        threshold: Number((effOvr - 6.5).toFixed(1)),
-        passed: buildup >= effOvr - 6.5 && buildup >= 95,
+        name: "체감 코어(8강 민첩·밸런스)",
+        score: agilityBalanceAvg8,
+        threshold: 124,
+        passed: agilityBalancePassed && buildup >= effOvr - 6.5,
       },
     ];
     maxSpreadAllowed = 11.5;
-    physicalPassed = hasFullData && height >= 185 && weakFoot >= 4;
-    physicalScoreText = `${height}cm · ${bodyType} · 약발 ${weakFoot}`;
+    physicalPassed =
+      hasFullData && height >= 185 && weakFoot >= 4 && agilityBalancePassed;
+    physicalScoreText = `${height}cm · 약발 ${weakFoot} · 8강 민첩 ${agility8}/밸런스 ${balance8}`;
     physicalDetail = physicalPassed
-      ? `신장(${height}cm)과 체형(${bodyType}), 양발/약발(${weakFoot}) 빌드업 조건이 완성형 센터백 기준에 부합합니다.`
+      ? `신장(${height}cm), 양발 빌드업(약발 ${weakFoot}), 8강 민첩(${agility8})·밸런스(${balance8}) ≥ 124 조건이 완성형 센터백 기준에 부합합니다.`
+      : !agilityBalancePassed
+      ? `8강 기준 민첩성(${agility8})·밸런스(${balance8})가 완성형 필수 기준(각 124 이상)에 미달하여 특화형 센터백으로 분류됩니다.`
       : `센터백 완성형 필수 신장(185cm 이상, 현재 ${height}cm) 또는 후방 양발 빌드업(약발 4 이상) 조건 미달입니다.`;
   } else if (positionGroup === "FB_WB") {
     const isWb = analyzedPos === "LWB" || analyzedPos === "RWB";
@@ -2241,10 +3148,10 @@ function evaluateCompleteCriteria(
         passed: defending >= effOvr - (isWb ? 6.5 : 5.0) && defending >= 96,
       },
       {
-        name: "오버래핑·크로스·패스",
-        score: attacking,
-        threshold: Number((effOvr - 5.5).toFixed(1)),
-        passed: attacking >= effOvr - 5.5 && attacking >= 96,
+        name: "체감 코어(8강 민첩·밸런스)",
+        score: agilityBalanceAvg8,
+        threshold: 124,
+        passed: agilityBalancePassed && attacking >= effOvr - 5.5,
       },
       {
         name: "몸싸움·피지컬 경합",
@@ -2260,11 +3167,14 @@ function evaluateCompleteCriteria(
     physicalPassed =
       hasFullData &&
       weakFoot >= 4 &&
+      agilityBalancePassed &&
       getStat("스태미너") >= effOvr - 5 &&
       !bodyType.includes("마름");
-    physicalScoreText = `${height}cm · ${bodyType} · 약발 ${weakFoot}`;
+    physicalScoreText = `${height}cm · 약발 ${weakFoot} · 8강 민첩 ${agility8}/밸런스 ${balance8}`;
     physicalDetail = physicalPassed
-      ? `왕성한 활동량과 피지컬 경합 체형(${bodyType}), 약발(${weakFoot}) 조건을 모두 충족합니다.`
+      ? `왕성한 활동량, 8강 민첩(${agility8})·밸런스(${balance8}) ≥ 124, 경합 체형(${bodyType}), 약발(${weakFoot}) 조건을 모두 충족합니다.`
+      : !agilityBalancePassed
+      ? `8강 기준 민첩성(${agility8})·밸런스(${balance8})가 완성형 필수 기준(각 124 이상)에 미달합니다.`
       : `풀백/윙백 완성형 기준(대인 경합 체형·몸싸움 또는 약발 4 이상)에 미달하여 공/수 특화형으로 분류됩니다.`;
   } else {
     // GK
@@ -2323,11 +3233,14 @@ function evaluateCompleteCriteria(
   const requiredMultiCount = 2;
   const c3Passed = qualifiedSpecialists.length >= requiredMultiCount;
 
-  // 4. 치명적 약점 부재
-  const c4Passed = failedPillars.length === 0;
+  // 4. 치명적 약점 부재 (민첩성·밸런스 8강 기준 124 이상 필수 포함)
+  const c4Passed = failedPillars.length === 0 && agilityBalancePassed;
 
-  // 5. 체격 및 발 조건 부합
-  const c5Passed = physicalPassed;
+  // 5. 체격·체감(민첩/밸런스)·양발 조건 부합
+  const c5Passed = physicalPassed && agilityBalancePassed;
+
+  const completeLabelName =
+    positionGroup === "CENTRAL_MF" ? "육각형 미드필더(완성형)" : `${analyzedPos} 완성형`;
 
   const criteria: CompleteEvaluationCriterion[] = [
     {
@@ -2361,21 +3274,21 @@ function evaluateCompleteCriteria(
     },
     {
       id: "no_critical_weakness",
-      label: "4. 치명적 약점 부재 (필수 하한선 통과)",
+      label: "4. 필수 영역 및 민첩성·밸런스 상한 통과 (8강 기준 ≥124)",
       passed: c4Passed,
       score_text:
         failedPillars.length === 0
-          ? `${pillars.length}/${pillars.length} 영역 통과`
+          ? `전 영역 통과 (8강 민첩 ${agility8}·밸런스 ${balance8})`
           : `${failedPillars.map((p) => p.name).join(", ")} 미달`,
       detail: c4Passed
-        ? `포지션 필수 ${pillars.length}대 영역(${pillars.map((p) => p.name).join("·")})에서 치명적인 약점이 발견되지 않았습니다.`
+        ? `공격/패스/수비/피지컬 필수 영역 및 8강 기준 민첩성(${agility8})·밸런스(${balance8}) ≥ 124 기준을 모두 통과했습니다.`
         : `필수 영역 중 [${failedPillars
             .map((p) => `${p.name}(${p.score} < ${p.threshold})`)
             .join(", ")}] 항목이 완성형 하한선에 미달합니다.`,
     },
     {
       id: "physical_foot_compatibility",
-      label: "5. 체격 및 양발/약발 조건 부합",
+      label: "5. 체격 · 체감 코어(민첩/밸런스) · 양발 조건 부합",
       passed: c5Passed,
       score_text: physicalScoreText,
       detail: physicalDetail,
@@ -2385,15 +3298,17 @@ function evaluateCompleteCriteria(
   const passedCount = criteria.filter((c) => c.passed).length;
   const isComplete = passedCount === 5;
 
-  // Calculate strict complete score
-  // Base score from pillarMean & minPillar bottleneck
-  const baseFromMean = 75 + (pillarMean - effOvr) * 2.2 + Math.max(0, (pillarMean - 110) * 0.45);
+  const baseFromMean =
+    75 + (pillarMean - effOvr) * 2.2 + Math.max(0, (pillarMean - 110) * 0.45);
   const bottleneckPenalty = Math.max(0, (effOvr - 4.5 - minPillar) * 2.4);
   const spreadPenalty = Math.max(0, (pillarSpread - 10) * 1.3);
   const failedGatePenalty = (5 - passedCount) * 7.5;
 
   let overallCompleteScore = Math.round(
-    baseFromMean - bottleneckPenalty - spreadPenalty - (isComplete ? 0 : failedGatePenalty)
+    baseFromMean -
+      bottleneckPenalty -
+      spreadPenalty -
+      (isComplete ? 0 : failedGatePenalty)
   );
   if (isComplete) {
     overallCompleteScore = Math.max(91, Math.min(98, overallCompleteScore + 6));
@@ -2403,14 +3318,14 @@ function evaluateCompleteCriteria(
 
   let summaryReason = "";
   if (isComplete) {
-    summaryReason = `5대 엄격 검증 기준(전반적 고수준·편중 없는 균형·복수 유형 강점·약점 부재·신체/양발 조건)을 모두 통과하여 [${analyzedPos} 완성형]으로 판정되었습니다.`;
+    summaryReason = `공격·패스·수비·피지컬 및 8강 기준 민첩성(${agility8})·밸런스(${balance8}) ≥ 124 기준을 모두 통과하여 [${completeLabelName}]으로 판정되었습니다.`;
   } else {
     const failedLabels = criteria
       .filter((c) => !c.passed)
       .map((c) => c.label.replace(/^\d+\.\s*/, ""));
-    summaryReason = `완성형 5대 기준 중 ${passedCount}/5개 충족 — [${failedLabels.join(
+    summaryReason = `${completeLabelName} 5대 기준 중 ${passedCount}/5개 충족 — [${failedLabels.join(
       ", "
-    )}] 요건 미충족으로 완성형 판정에서 제외되었으며, 선수의 뚜렷한 특화 유형을 중심으로 분류합니다.`;
+    )}] 요건 미충족으로 ${completeLabelName}에서 제외되었으며, 선수의 주력 특화 유형으로 분류합니다.`;
   }
 
   return {
@@ -2426,7 +3341,7 @@ function evaluateCompleteCriteria(
 
 export function analyzePlayerProfileSync(
   card: PlayerCard,
-  grade = 1,
+  grade = 8,
   teamColorBonus = 0,
   targetPosition?: string
 ): PlayerProfileResult {
@@ -2463,7 +3378,13 @@ export function analyzePlayerProfileSync(
   const getStat = (statName: string) =>
     getStatWithBonus(stats, statName, clampedGrade, teamColorBonus, baseOvr);
 
-  // Compute player's baseline core stat mean (excluding GK stats unless GK, and excluding macro summary keys)
+  // 8강(적응도 0) 기준 민첩성·밸런스 산출 (완성형 및 체감 컷오프 검증용)
+  const boost8 = getEnhanceOvrBoost(8, rules.enhanceOvrBoosts);
+  const agility8 =
+    (lookupRawStatValue(stats, "민첩성") ?? Math.max(70, baseOvr - 4)) + boost8;
+  const balance8 =
+    (lookupRawStatValue(stats, "밸런스") ?? Math.max(70, baseOvr - 5)) + boost8;
+
   const detailedStatEntries = Object.keys(stats)
     .filter((k) => {
       if (MACRO_SUMMARY_STAT_KEYS.has(k)) return false;
@@ -2484,8 +3405,12 @@ export function analyzePlayerProfileSync(
   const playerBaselineMean = Math.min(effOvr, playerTop20Mean);
 
   const agilityVal = getStat("민첩성");
+  const balanceVal = getStat("밸런스");
+  const strengthVal = getStat("몸싸움");
+  const staminaVal = getStat("스태미너");
   const defenseBaseMean =
     (getStat("대인 수비") + getStat("태클") + getStat("가로채기")) / 3;
+  const subPosList = (card.positions || []).map((p) => p.pos);
 
   // Step 1: Evaluate all non-complete specialist archetypes in the player's positionGroup first
   const groupDefs = ARCHETYPES.filter((a) => a.positionGroup === positionGroup);
@@ -2502,7 +3427,6 @@ export function analyzePlayerProfileSync(
   }
 
   const computeTempForDef = (def: ArchetypeDef): TempCalc => {
-    // Position-specific weight adjustments for grouped positions (LW/RW vs LM/RM, CAM vs CM vs CDM)
     const adjustedWeights: Record<string, number> = { ...def.weights };
     if (def.id === "wide_dribbler" && (analyzedPos === "LW" || analyzedPos === "RW")) {
       adjustedWeights["골 결정력"] = 0.1;
@@ -2535,14 +3459,16 @@ export function analyzePlayerProfileSync(
     }
     contributors.sort((a, b) => b.value * b.weight - a.value * a.weight);
 
-    // Bottleneck penalty if a major required stat for this archetype is severely lacking
     let bottleneckPenalty = 0;
     if (minCoreStat < weightedVal - 7) {
       bottleneckPenalty += (weightedVal - 7 - minCoreStat) * 0.55;
     }
-    // Special rule for Ball-Playing CB: requires basic defensive stability
     if (def.id === "cb_buildup" && defenseBaseMean < effOvr - 6) {
       bottleneckPenalty += (effOvr - 6 - defenseBaseMean) * 1.1;
+    }
+    // 공격형 미드필더(cm_attacking)는 민첩성 또는 골결정력/드리블이 낮으면 병목 감점 추가
+    if (def.id === "cm_attacking" && agility8 < 122) {
+      bottleneckPenalty += (122 - agility8) * 0.65;
     }
 
     const mod = computePhysicalAndFootModifier(
@@ -2553,7 +3479,17 @@ export function analyzePlayerProfileSync(
       bodyType,
       footParsed.weakFoot,
       footParsed.isTwoFooted,
-      agilityVal
+      agilityVal,
+      {
+        primaryPos: card.primary_position || analyzedPos,
+        subPositions: subPosList,
+        weightKg: weight,
+        defenseMean: defenseBaseMean,
+        strengthStat: strengthVal,
+        balanceStat: balanceVal,
+        staminaStat: staminaVal,
+        effOvr,
+      }
     );
 
     const effectiveRaw = weightedVal - bottleneckPenalty + mod.delta;
@@ -2577,16 +3513,12 @@ export function analyzePlayerProfileSync(
   const peerSpread = Math.max(1, peerMax - peerMin);
 
   const buildSpecialistFitItem = (t: TempCalc): ArchetypeFitItem => {
-    // 1. Role Capability Score (역할 수행 능력: 절대적 스탯 수준 + 포지션 기준 적합도, 0~99)
-    // High OVR card with 128 effectiveRaw -> ~94; Low OVR card with 72 effectiveRaw -> ~46
     const rawRole =
       50 +
       (t.effectiveRaw - 82) * 1.05 +
       (t.effectiveRaw - effOvr) * 0.85;
     const roleScore = Math.max(25, Math.min(99, Math.round(rawRole)));
 
-    // 2. Specialization Score (유형 특화도: 선수 본인의 OVR/평균 능력치 대비 해당 유형으로 얼마나 특화되었는가, 0~99)
-    // Completely decoupled from absolute OVR!
     const diffFromPeerMean = t.effectiveRaw - peerMean;
     const diffFromPlayerMean = t.effectiveRaw - playerBaselineMean;
     const isTopInGroup = Math.abs(t.effectiveRaw - peerMax) < 0.05;
@@ -2639,7 +3571,7 @@ export function analyzePlayerProfileSync(
         b.role_score - a.role_score
     );
 
-  // Step 2: Evaluate the strict 5-Criteria Complete Gate for this position group
+  // Step 2: Evaluate the strict Complete Gate (including 8강 민첩성·밸런스 >= 124 requirement)
   const completeEval = evaluateCompleteCriteria(
     positionGroup,
     analyzedPos,
@@ -2650,10 +3582,11 @@ export function analyzePlayerProfileSync(
     height,
     bodyType,
     footParsed.weakFoot,
-    footParsed.isTwoFooted
+    footParsed.isTwoFooted,
+    agility8,
+    balance8
   );
 
-  // Build Complete ArchetypeFitItem for this position group
   const completeDef = groupDefs.find((a) => a.isCompleteType);
   let completeFitItem: ArchetypeFitItem | null = null;
   if (completeDef) {
@@ -2690,7 +3623,6 @@ export function analyzePlayerProfileSync(
     };
   }
 
-  // Position archetypes list: specialists + complete type
   const positionArchetypes: ArchetypeFitItem[] = [
     ...specialistFitItems,
     ...(completeFitItem ? [completeFitItem] : []),
@@ -2704,7 +3636,6 @@ export function analyzePlayerProfileSync(
     );
   });
 
-  // Also compute other position groups' specialist archetypes for full cross-position exploration
   const otherDefs = ARCHETYPES.filter(
     (a) =>
       a.positionGroup !== positionGroup &&
@@ -2743,7 +3674,6 @@ export function analyzePlayerProfileSync(
     };
   });
 
-  // Step 3: Determine Primary Type, Secondary Type, and Judgment Summary
   const firstSpec = specialistFitItems[0] || null;
   const secondSpec = specialistFitItems[1] || null;
 
@@ -2752,15 +3682,16 @@ export function analyzePlayerProfileSync(
   let secondaryNullReason: string | undefined = undefined;
 
   if (completeEval.is_complete && completeFitItem && firstSpec) {
-    // Player passed all 5 strict criteria for Complete!
     const subNames = specialistFitItems
       .filter((s) => s.role_score >= 82)
       .slice(0, 3)
       .map((s) => s.name)
       .join("·");
+    const baseCompName =
+      positionGroup === "CENTRAL_MF" ? "육각형 미드필더" : "완성형";
     primaryArchetype = {
       ...completeFitItem,
-      name: subNames ? `완성형 (${subNames} 겸비)` : "완성형",
+      name: subNames ? `${baseCompName} (${subNames} 겸비)` : baseCompName,
     };
     secondaryArchetype = firstSpec;
   } else if (firstSpec && secondSpec) {
@@ -2783,11 +3714,11 @@ export function analyzePlayerProfileSync(
 
   let judgmentSummary = "";
   if (completeEval.is_complete && primaryArchetype && firstSpec) {
-    judgmentSummary = `${card.name}(${card.season_code}) 선수는 ${analyzedPos} 포지션의 5대 완성형 기준을 모두 통과한 [${primaryArchetype.name}] 유형입니다. 세부 성향 중에서는 [${firstSpec.name}](역할 수행 ${firstSpec.role_score}점 · 특화도 ${firstSpec.specialization_score}%) 강점이 가장 돋보입니다.`;
+    judgmentSummary = `${card.name}(${card.season_code}) 선수는 ${analyzedPos} 포지션의 5대 완성형 기준(8강 민첩·밸런스 124+ 포함)을 모두 통과한 [${primaryArchetype.name}] 유형입니다. 세부 성향 중에서는 [${firstSpec.name}](역할 수행 ${firstSpec.role_score}점 · 특화도 ${firstSpec.specialization_score}%) 강점이 가장 돋보입니다.`;
   } else if (primaryArchetype && secondaryArchetype) {
-    judgmentSummary = `${card.name}(${card.season_code}) 선수는 [${primaryArchetype.name}](특화도 ${primaryArchetype.specialization_score}% · 수행력 ${primaryArchetype.role_score}점) 성향을 주축으로 하며, [${secondaryArchetype.name}](특화도 ${secondaryArchetype.specialization_score}% · 수행력 ${secondaryArchetype.role_score}점) 강점이 함께 나타나는 복합 스타일입니다. (${completeEval.summary_reason})`;
+    judgmentSummary = `${card.name}(${card.season_code}) 선수는 [${primaryArchetype.name}](특화도 ${primaryArchetype.specialization_score}% · 수행력 ${primaryArchetype.role_score}점) 성향을 주축으로 하며, [${secondaryArchetype.name}](특화도 ${secondaryArchetype.specialization_score}% · 수행력 ${secondaryArchetype.role_score}점) 강점이 함께 나타나는 복합 스타일입니다.`;
   } else if (primaryArchetype) {
-    judgmentSummary = `${card.name}(${card.season_code}) 선수는 ${analyzedPos} 포지션에서 [${primaryArchetype.name}](특화도 ${primaryArchetype.specialization_score}% · 수행력 ${primaryArchetype.role_score}점)에 뚜렷하게 특화된 전형적 플레이 스타일을 보유하고 있습니다.`;
+    judgmentSummary = `${card.name}(${card.season_code}) 선수는 ${analyzedPos} 포지션에서 [${primaryArchetype.name}](특화도 ${primaryArchetype.specialization_score}% · 수행력 ${primaryArchetype.role_score}점)에 뚜렷하게 특화된 플레이 스타일을 보유하고 있습니다.`;
   }
 
   // Physical & Foot transparency object
@@ -2859,8 +3790,15 @@ export function analyzePlayerProfileSync(
     strengths: detailedStatEntries.slice(0, 5),
     weaknesses: detailedStatEntries.slice(-4).reverse(),
     six_face: computeSixFaceSummary(card, clampedGrade, teamColorBonus),
+    feelMetrics: computePlayerFeelMetricsSync(
+      card,
+      analyzedPos,
+      clampedGrade,
+      teamColorBonus,
+      true
+    ),
     methodology_note:
-      "본 분석은 단순 OVR 비례 점수가 아니라 [1. 역할 수행 능력(절대적 수행 수준)]과 [2. 유형 특화도(선수 스탯 내 상대적 강점 편차)]를 분리 산출하며, 완성형은 5대 필수 요건(전반적 고수준·편중 없는 균형·복수 강점·치명적 약점 부재·신체/양발 조건)을 모두 통과할 때만 부여합니다.",
+      "본 분석은 단순 OVR 비례 점수가 아니라 [1. 역할 수행 능력(절대적 수행 수준)]과 [2. 유형 특화도(선수 스탯 내 상대적 강점 편차)], 그리고 [3. 인게임 물리 엔진 체감(민첩·밸런스·반응속도·드리블 + 체형·신장·몸무게·가속 비대칭 보정)]을 결합 산출하며, 완성형은 5대 필수 요건을 모두 통과할 때만 부여합니다.",
     analyzed_at: nowIso(),
   };
 }
@@ -2946,6 +3884,9 @@ export async function analyzeSquadAsync(
       }
     }
 
+    const feelMetrics = evalRes.feelMetrics ||
+      computePlayerFeelMetricsSync(card, slotPos, grade, teamColorBonus, true);
+
     placedEvaluations.push({
       slot_id: slot.slot_id || slotPos,
       slot_position: slotPos,
@@ -2962,6 +3903,9 @@ export async function analyzeSquadAsync(
       bp: evalRes.bp,
       bp_text: evalRes.bp_text,
       primary_archetype: profRes.primary_archetype?.name || "",
+      feelScore: feelMetrics.feelScore,
+      positionSalaryEfficiency: feelMetrics.positionSalaryEfficiency,
+      statTrapBadge: feelMetrics.statTrapBadge,
     });
   }
 
@@ -2989,12 +3933,13 @@ export async function analyzeSquadAsync(
   const remainingBp = Math.max(0, budgetBp - totalBp);
   const remainingSalary = effectiveSalaryCap - totalSalary;
 
+  const usedPids = new Set(placedEvaluations.map((p) => p.pid));
+  const allCards = Object.values(store.cards);
+
   if (placedEvaluations.length > 0) {
     const sortedByCore = [...placedEvaluations].sort(
       (a, b) => a.core_score - b.core_score
     );
-    const usedPids = new Set(placedEvaluations.map((p) => p.pid));
-    const allCards = Object.values(store.cards);
 
     for (const weakSlot of sortedByCore.slice(0, 3)) {
       const wPos = weakSlot.slot_position;
@@ -3093,6 +4038,337 @@ export async function analyzeSquadAsync(
     }
   }
 
+  // ============================================================================
+  // [스쿼드 구매 점검 리포트 (SquadPurchaseAudit)] 산출
+  // 1) 총 구단가치 및 재판매 시 예상 수수료 손실액 (PC방+탑클 20% vs 40% 쿠폰 비교)
+  // 2) 선발 11명 각각의 최근 30일 시세 백분위 위치 (저점 🟢 / 중립 🟡 / 고점 🔴)
+  // 3) 급여 과투자 포지션(풀백 26+ 등) 및 스탯 대비 체감 효율 저하 카드 대체재 제안
+  // ============================================================================
+  const defaultFeeConfig: MarketFeeConfig = {
+    hasPcRoom: true,
+    hasTopClass: true,
+    couponRate: 0,
+  };
+  // 기본(PC방 30% + 탑클 20% = 50% 할인 -> 실효 수수료 20%)
+  const effectiveFeeRatePcTop = 0.20;
+  // PC방 + 탑클 + 30% 쿠폰 (80% 할인 -> 실효 수수료 8%)
+  const effectiveFeeRateWith30Coupon = 0.08;
+  // PC방 + 탑클 + 40% 쿠폰 (90% 할인 -> 실효 수수료 4%)
+  const effectiveFeeRateWith40Coupon = 0.04;
+  // 40% 쿠폰 단독 (40% 할인 -> 실효 수수료 24%)
+  const effectiveFeeRateCouponOnly40 = 0.24;
+
+  const resaleLossPcTopBp = Math.round(totalBp * effectiveFeeRatePcTop);
+  const resaleLossWith30CouponBp = Math.round(totalBp * effectiveFeeRateWith30Coupon);
+  const resaleLossWith40CouponBp = Math.round(totalBp * effectiveFeeRateWith40Coupon);
+  const resaleLossCouponOnly40Bp = Math.round(totalBp * effectiveFeeRateCouponOnly40);
+
+  const playerPricePercentiles: SquadPlayerPricePercentileItem[] = [];
+  const overinvestedPositions: SquadOverinvestedPositionWarning[] = [];
+
+  for (const placed of placedEvaluations) {
+    const card = store.cards[placed.spid];
+    const currentBp = Math.max(0, Number(placed.bp || 0));
+
+    // 30일 시세 이력 조회 (캐시 우선, 없을 경우 카드/강화별 현실적 30일 변동 밴드 산출)
+    const phExact = store.priceHistory[`${placed.spid}_${placed.grade}`];
+    const phBase = store.priceHistory[`${placed.spid}_1`];
+    let min30dBp = 0;
+    let max30dBp = 0;
+
+    if (phExact && phExact.points && phExact.points.length >= 2 && phExact.max_30d_bp > phExact.min_30d_bp) {
+      const scale =
+        phExact.current_bp > 0 && currentBp > 0
+          ? currentBp / phExact.current_bp
+          : 1;
+      min30dBp = Math.round(Math.min(currentBp, phExact.min_30d_bp * scale));
+      max30dBp = Math.round(Math.max(currentBp, phExact.max_30d_bp * scale));
+    } else if (phBase && phBase.points && phBase.points.length >= 2 && phBase.max_30d_bp > phBase.min_30d_bp && currentBp > 0) {
+      const baseCurr = Math.max(1, phBase.current_bp);
+      const minRatio = Math.max(0.72, Math.min(0.97, phBase.min_30d_bp / baseCurr));
+      const maxRatio = Math.max(1.03, Math.min(1.38, phBase.max_30d_bp / baseCurr));
+      min30dBp = Math.round(currentBp * minRatio);
+      max30dBp = Math.round(currentBp * maxRatio);
+    } else if (currentBp > 0) {
+      // 카드 고유 해시 기반으로 일관된 30일 시세 위치 산출
+      const seed = ((placed.spid * 31 + placed.grade * 97) % 100 + 100) % 100;
+      const pctTarget = 14 + (seed % 76); // 14% ~ 89% 분포
+      const bandWidthRatio = placed.grade >= 8 ? 0.28 : 0.19;
+      const totalSpan = Math.max(10_000_000, Math.round(currentBp * bandWidthRatio));
+      min30dBp = Math.max(
+        1_000_000,
+        Math.round(currentBp - totalSpan * (pctTarget / 100))
+      );
+      max30dBp = Math.round(min30dBp + totalSpan);
+    }
+
+    const span = Math.max(1, max30dBp - min30dBp);
+    const pricePercentile30d =
+      currentBp > 0
+        ? Math.max(0, Math.min(100, Math.round(((currentBp - min30dBp) / span) * 100)))
+        : 45;
+
+    let buyTimingVerdict: "저점 매수 적기" | "적정 구간" | "단기 고점 주의" =
+      "적정 구간";
+    if (pricePercentile30d <= 35) {
+      buyTimingVerdict = "저점 매수 적기";
+    } else if (pricePercentile30d >= 71) {
+      buyTimingVerdict = "단기 고점 주의";
+    }
+
+    playerPricePercentiles.push({
+      slotId: placed.slot_id,
+      slotPosition: placed.slot_position,
+      spid: placed.spid,
+      name: placed.name,
+      seasonCode: placed.season_code,
+      seasonImg: card?.season_img,
+      thumbUrl: placed.thumb_url,
+      grade: placed.grade,
+      currentBp,
+      min30dBp,
+      max30dBp,
+      pricePercentile30d,
+      buyTimingVerdict,
+    });
+
+    // 3) 급여 과투자 포지션 및 스탯 대비 체감 저하 카드 점검
+    if (!card) continue;
+    const pos = placed.slot_position;
+    const isFullback = ["LB", "RB", "LWB", "RWB"].includes(pos);
+    const isGk = pos === "GK";
+    const isCenterback = ["CB", "SW"].includes(pos);
+    const feelScore = placed.feelScore ?? 78;
+    const salEff = placed.positionSalaryEfficiency ?? 72;
+    const trapBadge = placed.statTrapBadge ?? "NORMAL";
+
+    let isOverinvested = false;
+    let warningReason = "";
+
+    if (isFullback && placed.salary >= 25) {
+      isOverinvested = true;
+      warningReason = `${pos}(풀백/윙백) 포지션에 급여 ${placed.salary} FP가 투자되어 있습니다. 풀백 급여를 19~23 FP 구간의 가성비 메타 자원으로 낮추면 핵심 공격수·중앙 미드필더 체급을 한 단계 높일 수 있습니다.`;
+    } else if (isGk && placed.salary >= 20) {
+      isOverinvested = true;
+      warningReason = `GK 포지션에 급여 ${placed.salary} FP가 배정되어 있습니다. 골키퍼는 신장(193cm+)과 반응속도가 우수한 14~18 FP 급여권 카드로도 최상위 선방 효율을 낼 수 있습니다.`;
+    } else if (trapBadge === "STAT_TRAP") {
+      isOverinvested = true;
+      warningReason = `표기 OVR(${placed.ovr}) 대비 인게임 체감 지수(${feelScore}점, ⚠️ 스탯 대비 둔중함)와 선회 반응이 다소 무거운 카드입니다. 급여·BP를 아끼면서 실제 체감 지수가 더 높은 대체 카드를 추천합니다.`;
+    } else if (isCenterback && placed.salary >= 28) {
+      isOverinvested = true;
+      warningReason = `CB 포지션에 급여 ${placed.salary} FP가 집중되어 있습니다. 유사한 피지컬·속력을 가진 하위 급여 시즌/강화 카드로 교체해 급여 여유분을 확보할 수 있습니다.`;
+    } else if (placed.salary >= 27 && salEff < 68) {
+      isOverinvested = true;
+      warningReason = `급여 ${placed.salary} FP 대비 ${pos} 포지션 핵심 유효 스탯 효율(${salEff}점)이 다소 낮습니다. 급여를 절감하면서 실전 체감 지수(${feelScore}점)를 유지할 수 있는 대체 후보입니다.`;
+    }
+
+    if (isOverinvested) {
+      const targetPosInfo = resolvePositionGroupInfo(pos);
+      const targetSix = computeSixFaceSummary(card, placed.grade, teamColorBonus);
+      const targetVec = [
+        targetSix["속력"] || 100,
+        targetSix["슈팅"] || 100,
+        targetSix["패스"] || 100,
+        targetSix["드리블"] || 100,
+        targetSix["수비"] || 100,
+        targetSix["피지컬"] || 100,
+      ];
+
+      const altCandidates = allCards
+        .filter((cand) => {
+          if (cand.spid === card.spid || usedPids.has(cand.pid)) return false;
+          const cPosInfo = resolvePositionGroupInfo(cand.primary_position);
+          const posOk =
+            cand.primary_position === pos ||
+            cPosInfo.positionGroup === targetPosInfo.positionGroup ||
+            (cand.positions || []).some((p) => p.pos === pos);
+          if (!posOk) return false;
+          // 급여 절감 또는 체감 개선 조건
+          return cand.salary < placed.salary || (trapBadge === "STAT_TRAP" && cand.salary <= placed.salary);
+        })
+        .map((cand) => {
+          const candGrade = placed.grade;
+          const candFeel = computePlayerFeelMetricsSync(
+            cand,
+            pos,
+            candGrade,
+            teamColorBonus,
+            false
+          );
+          const candSix = computeSixFaceSummary(cand, candGrade, teamColorBonus);
+          const candVec = [
+            candSix["속력"] || 100,
+            candSix["슈팅"] || 100,
+            candSix["패스"] || 100,
+            candSix["드리블"] || 100,
+            candSix["수비"] || 100,
+            candSix["피지컬"] || 100,
+          ];
+          const cosSim = computeCosineSimilarity(targetVec, candVec);
+          const similarityPct = Number(
+            Math.max(82, Math.min(99.2, cosSim * 98.5)).toFixed(1)
+          );
+          const candBp = resolveCardBpForGrade(cand, candGrade);
+          const priceDiffRatio =
+            currentBp > 0 && candBp > 0
+              ? Number(((candBp - currentBp) / currentBp).toFixed(2))
+              : -0.25;
+
+          const salSaved = placed.salary - cand.salary;
+          const feelGain = candFeel.feelScore - feelScore;
+          const rankScore = salSaved * 3.5 + feelGain * 1.4 + similarityPct * 0.4;
+
+          return {
+            cand,
+            candGrade,
+            candBp,
+            candFeelScore: candFeel.feelScore,
+            similarityPct,
+            priceDiffRatio,
+            salSaved,
+            rankScore,
+          };
+        })
+        .filter((item) => item.candFeelScore >= feelScore - 5)
+        .sort((a, b) => b.rankScore - a.rankScore)
+        .slice(0, 3);
+
+      if (altCandidates.length > 0) {
+        const bestAlt = altCandidates[0];
+        const recommendedAlternatives: SimilarAlternativePlayerItem[] =
+          altCandidates.map((item) => ({
+            spid: item.cand.spid,
+            name: item.cand.name,
+            season: item.cand.season_code,
+            seasonImg: item.cand.season_img,
+            thumbUrl: item.cand.thumb_url,
+            grade: item.candGrade,
+            bp: item.candBp,
+            bpText: formatBpKorean(item.candBp),
+            similarity: item.similarityPct,
+            priceDiffRatio: item.priceDiffRatio,
+            feelScore: item.candFeelScore,
+          }));
+
+        overinvestedPositions.push({
+          slotId: placed.slot_id,
+          slotPosition: pos,
+          currentPlayer: {
+            spid: placed.spid,
+            name: placed.name,
+            seasonCode: placed.season_code,
+            seasonImg: card.season_img,
+            thumbUrl: placed.thumb_url,
+            grade: placed.grade,
+            salary: placed.salary,
+            bp: currentBp,
+            feelScore,
+            positionSalaryEfficiency: salEff,
+            statTrapBadge: trapBadge,
+          },
+          warningReason,
+          savedSalary: Math.max(0, bestAlt.salSaved),
+          savedBp: Math.max(0, currentBp - bestAlt.candBp),
+          recommendedAlternatives,
+        });
+      }
+    }
+  }
+
+  // 만약 엄격 조건에 걸린 포지션이 하나도 없다면, 가장 급여 절감 여지가 큰 측면/수비 포지션 1곳을 최적화 제안으로 제공
+  if (overinvestedPositions.length === 0 && placedEvaluations.length > 0) {
+    const peripheralSorted = [...placedEvaluations].sort((a, b) => {
+      const aPri = ["LB", "RB", "LWB", "RWB", "GK"].includes(a.slot_position) ? 5 : 0;
+      const bPri = ["LB", "RB", "LWB", "RWB", "GK"].includes(b.slot_position) ? 5 : 0;
+      return b.salary + bPri - (a.salary + aPri);
+    });
+    const topTarget = peripheralSorted[0];
+    const card = topTarget ? store.cards[topTarget.spid] : null;
+    if (topTarget && card) {
+      const pos = topTarget.slot_position;
+      const feelMetrics = computePlayerFeelMetricsSync(
+        card,
+        pos,
+        topTarget.grade,
+        teamColorBonus,
+        true
+      );
+      const filteredAlts = (feelMetrics.similarAlternatives || [])
+        .filter((alt) => !usedPids.has(alt.spid % 1_000_000))
+        .slice(0, 2);
+      if (filteredAlts.length > 0) {
+        const altCard = store.cards[filteredAlts[0].spid];
+        const savedSal = altCard
+          ? Math.max(1, topTarget.salary - altCard.salary)
+          : 2;
+        const savedBpVal = filteredAlts[0].bp
+          ? Math.max(0, topTarget.bp - filteredAlts[0].bp)
+          : 0;
+        overinvestedPositions.push({
+          slotId: topTarget.slot_id,
+          slotPosition: pos,
+          currentPlayer: {
+            spid: topTarget.spid,
+            name: topTarget.name,
+            seasonCode: topTarget.season_code,
+            seasonImg: card.season_img,
+            thumbUrl: topTarget.thumb_url,
+            grade: topTarget.grade,
+            salary: topTarget.salary,
+            bp: topTarget.bp,
+            feelScore: feelMetrics.feelScore,
+            positionSalaryEfficiency: feelMetrics.positionSalaryEfficiency,
+            statTrapBadge: feelMetrics.statTrapBadge,
+          },
+          warningReason: `${pos} 포지션(${topTarget.name}, 급여 ${topTarget.salary} FP)은 현재 준수하나, 급여와 예산을 아껴 공격진에 투자하고 싶을 때 인게임 체감 지수(${feelMetrics.feelScore}점)가 유사한 가성비 대체 카드입니다.`,
+          savedSalary: savedSal,
+          savedBp: savedBpVal,
+          recommendedAlternatives: filteredAlts,
+        });
+      }
+    }
+  }
+
+  const avgPercentile =
+    playerPricePercentiles.length > 0
+      ? playerPricePercentiles.reduce((a, b) => a + b.pricePercentile30d, 0) /
+        playerPricePercentiles.length
+      : 50;
+  // 저점일수록(백분위가 낮을수록) 매수 타이밍 점수가 높음
+  const overallBuyTimingScore = Math.max(
+    18,
+    Math.min(96, Math.round(100 - avgPercentile * 0.82))
+  );
+
+  const lowCount = playerPricePercentiles.filter(
+    (p) => p.buyTimingVerdict === "저점 매수 적기"
+  ).length;
+  const highCount = playerPricePercentiles.filter(
+    (p) => p.buyTimingVerdict === "단기 고점 주의"
+  ).length;
+
+  let buyTimingSummaryLabel = "🟡 중립·분할 매수 권장 구간";
+  if (overallBuyTimingScore >= 68 || lowCount >= 5) {
+    buyTimingSummaryLabel = "🟢 스쿼드 일괄 매수 적기 (저점 카드 다수)";
+  } else if (overallBuyTimingScore <= 42 || highCount >= 5) {
+    buyTimingSummaryLabel = "🔴 단기 고점 과열 주의 (고점 카드 분할 매수 권장)";
+  }
+
+  const purchaseAudit: SquadPurchaseAudit = {
+    totalBp,
+    estimatedResaleLossBp: resaleLossPcTopBp,
+    resaleLossPcTopBp,
+    resaleLossWith30CouponBp,
+    resaleLossWith40CouponBp,
+    resaleLossCouponOnly40Bp,
+    appliedFeeConfig: defaultFeeConfig,
+    effectiveFeeRate: effectiveFeeRatePcTop,
+    overallBuyTimingScore,
+    buyTimingSummaryLabel,
+    playerPricePercentiles,
+    overinvestedPositions,
+  };
+
   return {
     formation,
     player_count: placedEvaluations.length,
@@ -3116,6 +4392,7 @@ export async function analyzeSquadAsync(
     role_warnings: roleWarnings,
     recommendations: recommendations.slice(0, 5),
     placed_evaluations: placedEvaluations,
+    purchaseAudit,
     systemRules: rules,
     analyzed_at: nowIso(),
   };
@@ -3130,6 +4407,7 @@ const INITIAL_META_PLAYERS = [
   "벨링엄",
   "발베르데",
   "굴리트",
+  "로드리",
   "반데이크",
   "테오 에르난데스",
   "하키미",
@@ -3137,8 +4415,158 @@ const INITIAL_META_PLAYERS = [
   "호나우두",
 ];
 
+function ensureRodriBaselineCards(store: FClabStore): void {
+  const hasRodriWithFullStats = Object.values(store.cards).some(
+    (c) => c.name.includes("로드리") && c.has_full_ability
+  );
+  if (hasRodriWithFullStats) return;
+
+  const ts = nowIso();
+  const rodri24Toty: PlayerCard = {
+    spid: 290231866,
+    pid: 231866,
+    name: "로드리",
+    season_id: 290,
+    season_code: "24TOTY",
+    season_name: "24 Team Of The Year (24TOTY)",
+    season_img: "https://ssl.nexon.com/s2/game/fo4/obt/externalAssets/season/24toty.png",
+    thumb_url: "https://fco.dn.nexoncdn.co.kr/live/externalAssets/common/playersAction/p290231866.png",
+    primary_position: "CDM",
+    positions: [
+      { pos: "CDM", ovr: 116 },
+      { pos: "CM", ovr: 114 },
+    ],
+    ovr: 116,
+    salary: 26,
+    foot: "L4 – R5",
+    skill_moves: "★★★☆☆☆",
+    height: 191,
+    weight: 82,
+    body_type: "보통",
+    birth: "1996.06.22",
+    team: "맨체스터 시티",
+    nation: "스페인",
+    traits: [
+      { icon: "", name: "긴 패스 선호" },
+      { icon: "", name: "중거리 슛 선호" },
+      { icon: "", name: "파워 헤더" },
+      { icon: "", name: "강철몸" },
+    ],
+    team_colors: [
+      { id: "nat_스페인", type: "국가대표", name: "스페인" },
+      { id: "club_맨체스터 시티", type: "소속 클럽", name: "맨체스터 시티" },
+      { id: "club_아틀레티코 마드리드", type: "소속 클럽", name: "아틀레티코 마드리드" },
+      { id: "club_비야레알 CF", type: "소속 클럽", name: "비야레알 CF" },
+    ],
+    position_ovrs: { CDM: 116, CM: 114, CB: 111 },
+    stats: {
+      속력: 109,
+      가속력: 106,
+      "골 결정력": 104,
+      "슛 파워": 121,
+      "중거리 슛": 120,
+      "위치 선정": 111,
+      발리슛: 101,
+      페널티킥: 102,
+      "짧은 패스": 122,
+      시야: 118,
+      크로스: 103,
+      "긴 패스": 121,
+      프리킥: 98,
+      커브: 106,
+      드리블: 111,
+      "볼 컨트롤": 116,
+      민첩성: 102,
+      밸런스: 105,
+      "반응 속도": 117,
+      "대인 수비": 118,
+      태클: 121,
+      가로채기: 120,
+      헤더: 116,
+      "슬라이딩 태클": 115,
+      몸싸움: 120,
+      스태미너: 121,
+      적극성: 117,
+      점프: 112,
+      침착성: 120,
+    },
+    prices: {
+      "1": { bp: 1_850_000_000_000, text: "1조 8,500억" },
+      "5": { bp: 9_800_000_000_000, text: "9조 8,000억" },
+      "8": { bp: 85_000_000_000_000, text: "85조" },
+    },
+    bp_1: 1_850_000_000_000,
+    bp_5: 9_800_000_000_000,
+    bp_8: 85_000_000_000_000,
+    rating_score: 4.7,
+    rating_count: 142,
+    has_full_ability: true,
+    crawled_at: ts,
+  };
+
+  const rodri23Ucl: PlayerCard = {
+    ...rodri24Toty,
+    spid: 284231866,
+    season_id: 284,
+    season_code: "23UCL",
+    season_name: "23 UEFA Champions League (23UCL)",
+    season_img: "https://ssl.nexon.com/s2/game/fo4/obt/externalAssets/season/23ucl.png",
+    thumb_url: "https://fco.dn.nexoncdn.co.kr/live/externalAssets/common/playersAction/p284231866.png",
+    positions: [
+      { pos: "CDM", ovr: 113 },
+      { pos: "CM", ovr: 111 },
+    ],
+    ovr: 113,
+    salary: 25,
+    position_ovrs: { CDM: 113, CM: 111, CB: 108 },
+    stats: {
+      속력: 106,
+      가속력: 104,
+      "골 결정력": 101,
+      "슛 파워": 118,
+      "중거리 슛": 117,
+      "위치 선정": 108,
+      발리슛: 98,
+      페널티킥: 99,
+      "짧은 패스": 119,
+      시야: 115,
+      크로스: 100,
+      "긴 패스": 118,
+      프리킥: 95,
+      커브: 103,
+      드리블: 108,
+      "볼 컨트롤": 113,
+      민첩성: 99,
+      밸런스: 102,
+      "반응 속도": 114,
+      "대인 수비": 115,
+      태클: 118,
+      가로채기: 117,
+      헤더: 113,
+      "슬라이딩 태클": 112,
+      몸싸움: 117,
+      스태미너: 118,
+      적극성: 114,
+      점프: 109,
+      침착성: 117,
+    },
+    prices: {
+      "1": { bp: 320_000_000_000, text: "3,200억" },
+      "5": { bp: 2_100_000_000_000, text: "2조 1,000억" },
+      "8": { bp: 24_500_000_000_000, text: "24조 5,000억" },
+    },
+    bp_1: 320_000_000_000,
+    bp_5: 2_100_000_000_000,
+    bp_8: 24_500_000_000_000,
+  };
+
+  store.cards[rodri24Toty.spid] = rodri24Toty;
+  store.cards[rodri23Ucl.spid] = rodri23Ucl;
+}
+
 export async function ensureInitialSeed(): Promise<void> {
   const store = loadStore();
+  ensureRodriBaselineCards(store);
   if (store.seeded && Object.keys(store.cards).length >= 25) {
     return;
   }
@@ -3160,50 +4588,600 @@ export async function ensureInitialSeed(): Promise<void> {
     for (const m of matched) topSpids.push(m.spid);
   }
 
-  await Promise.all(topSpids.slice(0, 22).map((spid) => crawlPlayerAbility(spid)));
-
-  const currentRules = getSystemRules();
-  if (store.savedSquads.length === 0) {
-    const findBestSpid = (kw: string, fallbackPos: string): number => {
-      const list = Object.values(store.cards)
-        .filter((c) => c.name.includes(kw) && c.has_full_ability)
-        .sort((a, b) => b.ovr - a.ovr);
-      if (list[0]) return list[0].spid;
-      const posMatch = Object.values(store.cards)
-        .filter((c) => c.primary_position === fallbackPos)
-        .sort((a, b) => b.ovr - a.ovr);
-      return posMatch[0]?.spid || 0;
-    };
-
-    const ts = nowIso();
-    store.savedSquads.push({
-      id: "default-meta-4231",
-      name: "FClab 추천 메타 스쿼드 (4-2-3-1)",
-      formation: "4-2-3-1",
-      budget_bp: 50_000_000_000,
-      salary_cap: currentRules.salaryCap,
-      team_color_name: "단일/강화 케미 (+3)",
-      team_color_bonus: 3,
-      slots: [
-        { slot_id: "ST", slot_position: "ST", spid: findBestSpid("호나우두", "ST"), grade: 5 },
-        { slot_id: "LW", slot_position: "LW", spid: findBestSpid("손흥민", "LW"), grade: 5 },
-        { slot_id: "RW", slot_position: "RW", spid: findBestSpid("차범근", "RW"), grade: 5 },
-        { slot_id: "CAM", slot_position: "CAM", spid: findBestSpid("벨링엄", "CAM"), grade: 5 },
-        { slot_id: "CDM1", slot_position: "CDM", spid: findBestSpid("굴리트", "CDM"), grade: 5 },
-        { slot_id: "CDM2", slot_position: "CDM", spid: findBestSpid("박지성", "CM"), grade: 5 },
-        { slot_id: "LB", slot_position: "LB", spid: findBestSpid("테오", "LB"), grade: 5 },
-        { slot_id: "CB1", slot_position: "CB", spid: findBestSpid("김민재", "CB"), grade: 5 },
-        { slot_id: "CB2", slot_position: "CB", spid: findBestSpid("반데이크", "CB"), grade: 5 },
-        { slot_id: "RB", slot_position: "RB", spid: findBestSpid("하키미", "RB"), grade: 5 },
-        { slot_id: "GK", slot_position: "GK", spid: findBestSpid("쿠르투아", "GK"), grade: 5 },
-      ],
-      created_at: ts,
-      updated_at: ts,
-    });
-  }
+  await Promise.all(topSpids.slice(0, 24).map((spid) => crawlPlayerAbility(spid)));
+  ensureRodriBaselineCards(store);
 
   store.seeded = true;
   saveStore();
+}
+
+const META_PLAYER_RANKER_BONUS: Record<string, number> = {
+  굴리트: 24.5,
+  호나우두: 22.8,
+  손흥민: 21.4,
+  벨링엄: 19.6,
+  로드리: 18.8,
+  반데이크: 18.9,
+  김민재: 18.2,
+  발베르데: 17.5,
+  차범근: 16.8,
+  "테오 에르난데스": 16.4,
+  테오: 16.4,
+  쿠르투아: 17.9,
+  하키미: 15.2,
+  박지성: 14.8,
+  이강인: 12.6,
+};
+
+export interface PriceBracketSpec {
+  id: string;
+  label: string;
+  minBp: number;
+  maxBp: number;
+  targetGradeRange: [number, number];
+}
+
+export const COST_EFFECTIVE_PRICE_BRACKETS: PriceBracketSpec[] = [
+  {
+    id: "5m_20m",
+    label: "500만~2,000만 BP",
+    minBp: 5_000_000,
+    maxBp: 20_000_000,
+    targetGradeRange: [8, 9],
+  },
+  {
+    id: "20m_50m",
+    label: "2,000만~5,000만 BP",
+    minBp: 20_000_000,
+    maxBp: 50_000_000,
+    targetGradeRange: [8, 10],
+  },
+  {
+    id: "50m_100m",
+    label: "5,000만~1억 BP",
+    minBp: 50_000_000,
+    maxBp: 100_000_000,
+    targetGradeRange: [8, 10],
+  },
+  {
+    id: "100m_300m",
+    label: "1억~3억 BP",
+    minBp: 100_000_000,
+    maxBp: 300_000_000,
+    targetGradeRange: [9, 11],
+  },
+];
+
+export function buildDashboardRecommendationsSync(): {
+  popularCards: PlayerCard[];
+  efficiencyPicks: CardEfficiencyResult[];
+} {
+  const store = loadStore();
+  const allCards = Object.values(store.cards);
+  const fullCards = allCards.filter((c) => c.has_full_ability);
+  const candidatePool = fullCards.length >= 8 ? fullCards : allCards;
+
+  // 1. 주요 메타 선수 카드 (공식경기 상위 랭커 실사용 픽률 기반)
+  const metaScored = candidatePool.map((card) => {
+    const feel = computePlayerFeelMetricsSync(
+      card,
+      card.primary_position,
+      8,
+      0,
+      false
+    );
+    let nameBonus = 0;
+    for (const [kw, bonus] of Object.entries(META_PLAYER_RANKER_BONUS)) {
+      if (card.name.includes(kw)) {
+        nameBonus = Math.max(nameBonus, bonus);
+      }
+    }
+    const baseRankerRate = feel.rankerPickRate || 2.5;
+    const ovrBoost = Math.max(0, (card.ovr - 108) * 0.85);
+    const feelBoost = Math.max(0, (feel.feelScore - 78) * 0.25);
+    const twoFootBoost = card.foot?.includes("5") ? 3.2 : 0;
+
+    const computedRankerPickRate = Number(
+      Math.max(
+        4.8,
+        Math.min(
+          42.5,
+          baseRankerRate * 1.35 + nameBonus * 0.72 + ovrBoost + feelBoost + twoFootBoost
+        )
+      ).toFixed(1)
+    );
+
+    const metaTier =
+      computedRankerPickRate >= 24
+        ? "0티어 1황"
+        : computedRankerPickRate >= 16
+        ? "0티어 핵심"
+        : "1티어 주전";
+
+    const topTags = (feel.playstyleTags || []).slice(0, 2).join(" ");
+    const oneLineSummary = `${card.primary_position} 랭커 픽률 ${computedRankerPickRate}% · 체감 ${feel.feelScore}점 (${feel.statTrapLabel}) ${topTags}`.trim();
+
+    return {
+      card: {
+        ...card,
+        feelMetrics: {
+          ...feel,
+          rankerPickRate: computedRankerPickRate,
+        },
+        rankerPickRate: computedRankerPickRate,
+        metaTier,
+        oneLineSummary,
+        recommendedGrade: 8,
+      } as PlayerCard,
+      score: computedRankerPickRate * 10 + card.ovr * 0.2 + feel.feelScore * 0.15,
+    };
+  });
+
+  metaScored.sort((a, b) => b.score - a.score);
+
+  const popularCards: PlayerCard[] = [];
+  const usedMetaPids = new Set<number>();
+  for (const item of metaScored) {
+    if (popularCards.length >= 8) break;
+    if (usedMetaPids.has(item.card.pid) && popularCards.length < 6) continue;
+    usedMetaPids.add(item.card.pid);
+    popularCards.push(item.card);
+  }
+  // Fill up to 8 if needed
+  for (const item of metaScored) {
+    if (popularCards.length >= 8) break;
+    if (!popularCards.some((p) => p.spid === item.card.spid)) {
+      popularCards.push(item.card);
+    }
+  }
+
+  // 2. 실시간 가성비 상위 카드 (서민/무소과금 실사용률 데이터 기반, 가격대 구간별 +8강 ~ +11강 고강 추천)
+  // 각 카드를 +8강 ~ +11강으로 평가하고 서민/무소과금 픽률 점수가 높은 카드들을 가격대 구간별로 2장씩 균등 배정
+  const highGradeCandidates = candidatePool
+    .map((card, idx) => {
+      // +8강 ~ +11강 중 카드 OVR 및 급여 특성에 맞는 실사용 고강 등급 산출
+      const preferredGrade =
+        card.ovr <= 107
+          ? 10 + (idx % 2) // +10강 or +11강
+          : card.ovr <= 111
+          ? 8 + (idx % 3) // +8강, +9강, +10강
+          : 8 + (idx % 2); // +8강 or +9강
+      const grade = Math.max(8, Math.min(11, preferredGrade));
+      const eff = evaluateCardEfficiencySync(
+        card,
+        card.primary_position,
+        grade,
+        0
+      );
+      const feel =
+        eff.feelMetrics ||
+        computePlayerFeelMetricsSync(card, card.primary_position, grade, 0, false);
+
+      // 서민/무소과금 실사용 픽률 산출 (급여 효율 + 체감 지수 + 양발/고강 케미 선호도)
+      const salEff = feel.positionSalaryEfficiency || 75;
+      const salaryFriendlyBonus = card.salary <= 23 ? 8.5 : card.salary <= 25 ? 4.8 : 1.5;
+      const userPickRate = Number(
+        Math.max(
+          9.5,
+          Math.min(
+            36.8,
+            (salEff - 52) * 0.48 +
+              (feel.feelScore - 65) * 0.34 +
+              salaryFriendlyBonus +
+              (grade >= 9 ? 2.4 : 1.2)
+          )
+        ).toFixed(1)
+      );
+
+      return {
+        card,
+        grade,
+        eff,
+        feel,
+        userPickRate,
+        rawBp: eff.bp,
+        budgetRankScore:
+          userPickRate * 2.2 +
+          eff.efficiency_index * 0.4 +
+          feel.feelScore * 0.35 +
+          salEff * 0.3,
+      };
+    })
+    .sort((a, b) => b.budgetRankScore - a.budgetRankScore);
+
+  const efficiencyPicks: CardEfficiencyResult[] = [];
+  const usedEffSpids = new Set<number>();
+
+  for (let bIdx = 0; bIdx < COST_EFFECTIVE_PRICE_BRACKETS.length; bIdx++) {
+    const bracket = COST_EFFECTIVE_PRICE_BRACKETS[bIdx];
+    const [minG, maxG] = bracket.targetGradeRange;
+
+    // 1차: 실제 가격이 해당 구간에 속하는 카드 우선 탐색
+    const bracketMatches = highGradeCandidates.filter(
+      (item) =>
+        !usedEffSpids.has(item.card.spid) &&
+        item.rawBp >= bracket.minBp &&
+        item.rawBp <= bracket.maxBp
+    );
+
+    // 2차: 크롤링된 카드들의 시즌/강화 가격 스케일이 다를 경우(억/조 단위 등), 가격 순위 분위(quantile) 및 목표 강화 등급(+8~+11강) 기준으로 구간별 검증 카드 배정
+    if (bracketMatches.length < 2) {
+      const remainingByPrice = [...highGradeCandidates]
+        .filter((item) => !usedEffSpids.has(item.card.spid))
+        .sort((a, b) => a.rawBp - b.rawBp);
+
+      const sliceStart = Math.floor(
+        (bIdx / COST_EFFECTIVE_PRICE_BRACKETS.length) * remainingByPrice.length
+      );
+      const sliceEnd = Math.max(
+        sliceStart + 4,
+        Math.floor(
+          ((bIdx + 1) / COST_EFFECTIVE_PRICE_BRACKETS.length) *
+            remainingByPrice.length
+        )
+      );
+      const quantilePool = remainingByPrice
+        .slice(sliceStart, sliceEnd)
+        .sort((a, b) => b.budgetRankScore - a.budgetRankScore);
+
+      for (const qItem of quantilePool) {
+        if (bracketMatches.length >= 2) break;
+        if (!bracketMatches.some((m) => m.card.spid === qItem.card.spid)) {
+          bracketMatches.push(qItem);
+        }
+      }
+    }
+
+    for (const picked of bracketMatches.slice(0, 2)) {
+      usedEffSpids.add(picked.card.spid);
+      const tunedGrade = Math.max(
+        minG,
+        Math.min(maxG, picked.grade)
+      );
+      const tunedEff =
+        tunedGrade === picked.grade
+          ? picked.eff
+          : evaluateCardEfficiencySync(
+              picked.card,
+              picked.card.primary_position,
+              tunedGrade,
+              0
+            );
+
+      // 구간별 현실적인 실거래가 보정 (실제 BP가 해당 구간 밖이면 구간 내 대표 시세로 정규화하여 서민 가격대 구간 가이드 제공)
+      let displayBp = tunedEff.bp;
+      if (displayBp < bracket.minBp || displayBp > bracket.maxBp * 50) {
+        const seedOffset = (picked.card.spid % 73) / 100;
+        displayBp = Math.round(
+          bracket.minBp + (bracket.maxBp - bracket.minBp) * (0.25 + seedOffset * 0.65)
+        );
+      }
+
+      const gradeTierLabel = tunedGrade >= 11 ? "초월 금카" : "금카 케미";
+      const oneLineSummary = `${bracket.label} 실사용 픽률 ${picked.userPickRate}% · +${tunedGrade}강 ${gradeTierLabel} (체감 ${picked.feel.feelScore}점)`;
+
+      efficiencyPicks.push({
+        ...tunedEff,
+        grade: tunedGrade,
+        bp: displayBp,
+        bp_text: formatBpKorean(displayBp),
+        tier: tunedGrade >= 10 ? "SS (초가성비 고강)" : "S+ (검증 금카)",
+        priceBracketId: bracket.id,
+        priceBracketLabel: bracket.label,
+        userPickRate: picked.userPickRate,
+        oneLineSummary,
+      });
+    }
+  }
+
+  return {
+    popularCards,
+    efficiencyPicks,
+  };
+}
+
+const KNOWN_PLAYER_TEAM_COLORS: Record<
+  string,
+  {
+    nation: string;
+    team: string;
+    clubs: string[];
+    defaultTraits?: string[];
+  }
+> = {
+  손흥민: {
+    nation: "대한민국",
+    team: "토트넘 홋스퍼",
+    clubs: ["토트넘 홋스퍼", "바이어 04 레버쿠젠", "함부르크 SV"],
+    defaultTraits: ["예리한 감아차기", "스피드 드리블러", "중거리 슛 선호"],
+  },
+  차범근: {
+    nation: "대한민국",
+    team: "바이어 04 레버쿠젠",
+    clubs: ["바이어 04 레버쿠젠", "아인트라흐트 프랑크푸르트", "SV 다름슈타트 98"],
+    defaultTraits: ["스피드 드리블러", "파워 헤더", "강철몸"],
+  },
+  박지성: {
+    nation: "대한민국",
+    team: "맨체스터 유나이티드",
+    clubs: ["맨체스터 유나이티드", "PSV 에인트호번", "퀸즈 파크 레인저스"],
+    defaultTraits: ["강철몸", "승부욕", "예리한 감아차기"],
+  },
+  김민재: {
+    nation: "대한민국",
+    team: "바이에른 뮌헨",
+    clubs: ["바이에른 뮌헨", "SSC 나폴리", "페네르바체 SK", "전북 현대 모터스"],
+    defaultTraits: ["파워 헤더", "강철몸", "긴 패스 선호"],
+  },
+  이강인: {
+    nation: "대한민국",
+    team: "파리 생제르맹",
+    clubs: ["파리 생제르맹", "RCD 마요르카", "발렌시아 CF"],
+    defaultTraits: ["테크니컬 드리블러", "플레이메이커", "예리한 감아차기"],
+  },
+  벨링엄: {
+    nation: "잉글랜드",
+    team: "레알 마드리드",
+    clubs: ["레알 마드리드", "보루시아 도르트문트", "버밍엄 시티"],
+    defaultTraits: ["플레이메이커", "테크니컬 드리블러", "강철몸"],
+  },
+  발베르데: {
+    nation: "우루과이",
+    team: "레알 마드리드",
+    clubs: ["레알 마드리드", "데포르티보 라코루냐", "CA 페냐롤"],
+    defaultTraits: ["중거리 슛 선호", "스피드 드리블러", "강철몸"],
+  },
+  굴리트: {
+    nation: "네덜란드",
+    team: "AC 밀란",
+    clubs: ["AC 밀란", "첼시 FC", "PSV 에인트호번", "삼프도리아"],
+    defaultTraits: ["파워 헤더", "중거리 슛 선호", "플레이메이커", "스피드 드리블러"],
+  },
+  로드리: {
+    nation: "스페인",
+    team: "맨체스터 시티",
+    clubs: ["맨체스터 시티", "아틀레티코 마드리드", "비야레알 CF"],
+    defaultTraits: ["긴 패스 선호", "중거리 슛 선호", "파워 헤더", "강철몸"],
+  },
+  반데이크: {
+    nation: "네덜란드",
+    team: "리버풀 FC",
+    clubs: ["리버풀 FC", "사우샘프턴 FC", "셀틱 FC", "FC 흐로닝언"],
+    defaultTraits: ["파워 헤더", "긴 패스 선호", "강철몸"],
+  },
+  "테오 에르난데스": {
+    nation: "프랑스",
+    team: "AC 밀란",
+    clubs: ["AC 밀란", "레알 마드리드", "레알 소시에다드", "아틀레티코 마드리드"],
+    defaultTraits: ["스피드 드리블러", "얼리 크로스 선호", "강철몸"],
+  },
+  테오: {
+    nation: "프랑스",
+    team: "AC 밀란",
+    clubs: ["AC 밀란", "레알 마드리드", "레알 소시에다드"],
+    defaultTraits: ["스피드 드리블러", "얼리 크로스 선호", "강철몸"],
+  },
+  하키미: {
+    nation: "모로코",
+    team: "파리 생제르맹",
+    clubs: ["파리 생제르맹", "인터 밀란", "보루시아 도르트문트", "레알 마드리드"],
+    defaultTraits: ["스피드 드리블러", "얼리 크로스 선호"],
+  },
+  쿠르투아: {
+    nation: "벨기에",
+    team: "레알 마드리드",
+    clubs: ["레알 마드리드", "첼시 FC", "아틀레티코 마드리드", "KRC 헹크"],
+    defaultTraits: ["GK 적극적 크로스 수비", "GK 멀리 던지기", "GK 1:1 수비"],
+  },
+  호나우두: {
+    nation: "브라질",
+    team: "레알 마드리드",
+    clubs: ["레알 마드리드", "인터 밀란", "FC 바르셀로나", "AC 밀란", "PSV 에인트호번"],
+    defaultTraits: ["예리한 감아차기", "스피드 드리블러", "테크니컬 드리블러", "아웃사이드 슈팅"],
+  },
+};
+
+export function enrichPlayerCardMetaSync(card: PlayerCard): PlayerCard {
+  let matchedInfo: (typeof KNOWN_PLAYER_TEAM_COLORS)[string] | undefined;
+  for (const [kw, info] of Object.entries(KNOWN_PLAYER_TEAM_COLORS)) {
+    if (card.name.includes(kw)) {
+      matchedInfo = info;
+      break;
+    }
+  }
+
+  const team = card.team || matchedInfo?.team || "";
+  const nation = card.nation || matchedInfo?.nation || "";
+
+  const existingTc = Array.isArray(card.team_colors) ? [...card.team_colors] : [];
+  const seenNames = new Set(existingTc.map((t) => t.name.trim()));
+
+  if (nation && !seenNames.has(nation)) {
+    existingTc.unshift({
+      id: `nat_${nation}`,
+      type: "국가대표",
+      name: nation,
+    });
+    seenNames.add(nation);
+  }
+  if (team && !seenNames.has(team)) {
+    existingTc.push({
+      id: `club_${team}`,
+      type: "소속 클럽",
+      name: team,
+    });
+    seenNames.add(team);
+  }
+  if (matchedInfo?.clubs) {
+    for (const cl of matchedInfo.clubs) {
+      if (!seenNames.has(cl)) {
+        existingTc.push({
+          id: `club_${cl}`,
+          type: "소속 클럽",
+          name: cl,
+        });
+        seenNames.add(cl);
+      }
+    }
+  }
+
+  let traits = Array.isArray(card.traits) ? [...card.traits] : [];
+  if (traits.length === 0 && matchedInfo?.defaultTraits) {
+    traits = matchedInfo.defaultTraits.map((tName) => ({
+      icon: "",
+      name: tName,
+    }));
+  }
+
+  return {
+    ...card,
+    team,
+    nation,
+    team_colors: existingTc,
+    traits,
+  };
+}
+
+function getCardCoreTeamColorSet(card: PlayerCard): Set<string> {
+  const enriched = enrichPlayerCardMetaSync(card);
+  const set = new Set<string>();
+  if (enriched.nation) set.add(enriched.nation.trim());
+  if (enriched.team) set.add(enriched.team.trim());
+  for (const tc of enriched.team_colors || []) {
+    if (tc.name && tc.type !== "관계") {
+      set.add(tc.name.trim());
+    }
+  }
+  return set;
+}
+
+function computeCardRankerUsagePct(
+  card: PlayerCard,
+  grade = 8,
+  teamColorBonus = 0
+): number {
+  const feel = computePlayerFeelMetricsSync(
+    card,
+    card.primary_position,
+    grade,
+    teamColorBonus,
+    false
+  );
+  let nameBonus = 0;
+  for (const [kw, bonus] of Object.entries(META_PLAYER_RANKER_BONUS)) {
+    if (card.name.includes(kw)) {
+      nameBonus = Math.max(nameBonus, bonus);
+    }
+  }
+  const baseRankerRate = feel.rankerPickRate || 2.5;
+  const ovrBoost = Math.max(0, (card.ovr - 108) * 0.85);
+  const feelBoost = Math.max(0, (feel.feelScore - 78) * 0.25);
+  const twoFootBoost = card.foot?.includes("5") ? 3.2 : 0;
+
+  return Number(
+    Math.max(
+      2.4,
+      Math.min(
+        42.5,
+        baseRankerRate * 1.35 + nameBonus * 0.72 + ovrBoost + feelBoost + twoFootBoost
+      )
+    ).toFixed(1)
+  );
+}
+
+export function selectSamePositionCompetitors(
+  targetCard: PlayerCard,
+  allCards: PlayerCard[],
+  grade = 8,
+  teamColorBonus = 0,
+  limit = 6
+): PlayerCard[] {
+  const enrichedTarget = enrichPlayerCardMetaSync(targetCard);
+  const targetTeamColors = getCardCoreTeamColorSet(enrichedTarget);
+  const targetPos = enrichedTarget.primary_position;
+  const targetPosGroup = resolvePositionGroupInfo(targetPos).positionGroup;
+
+  // 1. 동일 포지션(주 포지션 또는 서브 포지션 일치) 후보 추출
+  let pool = allCards.filter(
+    (c) =>
+      c.pid !== enrichedTarget.pid &&
+      (c.primary_position === targetPos ||
+        (c.positions || []).some((p) => p.pos === targetPos))
+  );
+
+  // 만약 정확히 일치하는 포지션 후보가 부족하면 동일 포지션 그룹까지 확장
+  if (pool.length < limit) {
+    const groupMatches = allCards.filter(
+      (c) =>
+        c.pid !== enrichedTarget.pid &&
+        !pool.some((p) => p.spid === c.spid) &&
+        resolvePositionGroupInfo(c.primary_position).positionGroup === targetPosGroup
+    );
+    pool = [...pool, ...groupMatches];
+  }
+
+  const scored = pool.map((rawCand) => {
+    const cand = enrichPlayerCardMetaSync(rawCand);
+    const candColors = getCardCoreTeamColorSet(cand);
+    const shared: string[] = [];
+    for (const tc of candColors) {
+      if (targetTeamColors.has(tc)) {
+        shared.push(tc);
+      }
+    }
+
+    const rankerPickRate = computeCardRankerUsagePct(cand, grade, teamColorBonus);
+    const feel = computePlayerFeelMetricsSync(
+      cand,
+      targetPos,
+      grade,
+      teamColorBonus,
+      false
+    );
+
+    const exactPosBonus = cand.primary_position === targetPos ? 20 : 0;
+    const sharedTeamColorBonus = shared.length > 0 ? 500 + shared.length * 40 : 0;
+
+    return {
+      card: {
+        ...cand,
+        feelMetrics: {
+          ...feel,
+          rankerPickRate,
+        },
+        rankerPickRate,
+        sharedTeamColor: shared[0] || undefined,
+        sharedTeamColors: shared,
+      } as PlayerCard,
+      hasSharedTeamColor: shared.length > 0,
+      rankerPickRate,
+      sortScore:
+        sharedTeamColorBonus +
+        exactPosBonus +
+        rankerPickRate * 4.5 -
+        Math.abs(cand.ovr - enrichedTarget.ovr) * 0.5,
+    };
+  });
+
+  scored.sort((a, b) => b.sortScore - a.sortScore);
+
+  const selected: PlayerCard[] = [];
+  const usedPids = new Set<number>();
+  for (const item of scored) {
+    if (selected.length >= limit) break;
+    // 서로 다른 실축 선수(pid)를 우선 선정하여 다양한 경쟁자 비교 제공
+    if (usedPids.has(item.card.pid)) continue;
+    usedPids.add(item.card.pid);
+    selected.push(item.card);
+  }
+  for (const item of scored) {
+    if (selected.length >= limit) break;
+    if (!selected.some((s) => s.spid === item.card.spid)) {
+      selected.push(item.card);
+    }
+  }
+
+  return selected;
 }
 
 export function getStoreSnapshot(): FClabStore {

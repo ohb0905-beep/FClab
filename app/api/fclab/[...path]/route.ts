@@ -12,10 +12,15 @@ import {
   crawlPriceHistory,
   evaluateCardEfficiencySync,
   analyzePlayerProfileSync,
+  computePlayerFeelMetricsSync,
+  buildDashboardRecommendationsSync,
+  enrichPlayerCardMetaSync,
+  selectSamePositionCompetitors,
   analyzeSquadAsync,
   saveSquadToStore,
   deleteSquadFromStore,
   POSITION_WEIGHTS,
+  POSITION_CORE_STATS,
   ARCHETYPES,
 } from "@/lib/server/fclab-engine";
 import {
@@ -60,18 +65,8 @@ export async function GET(
     if (subPath === "v1/dashboard") {
       const allCards = Object.values(store.cards);
       const fullCards = allCards.filter((c) => c.has_full_ability);
-      const topCards = [...fullCards]
-        .sort((a, b) => b.ovr - a.ovr || b.bp_1 - a.bp_1)
-        .slice(0, 8);
-
-      const effPicks = fullCards
-        .filter((c) => c.bp_1 > 0)
-        .slice(0, 24)
-        .map((c) =>
-          evaluateCardEfficiencySync(c, c.primary_position, 5, 3)
-        )
-        .sort((a, b) => b.efficiency_index - a.efficiency_index)
-        .slice(0, 6);
+      const { popularCards: topCards, efficiencyPicks: effPicks } =
+        buildDashboardRecommendationsSync();
 
       const seasonSet = new Map<
         string,
@@ -102,6 +97,7 @@ export async function GET(
         nexon_key_configured: hasNexonKey,
         nexon_key_preview: keyPreview,
         position_weights: POSITION_WEIGHTS,
+        position_core_stats: POSITION_CORE_STATS,
         systemRules,
         rules: systemRules,
         stats: {
@@ -121,6 +117,7 @@ export async function GET(
         savedSquads: store.savedSquads,
         availableSeasons: Array.from(seasonSet.values()),
         positionWeights: POSITION_WEIGHTS,
+        positionCoreStats: POSITION_CORE_STATS,
         archetypes: ARCHETYPES,
       });
     }
@@ -159,35 +156,74 @@ export async function GET(
         filtered = filtered.filter((c) => c.season_code === season);
       }
 
+      const trapBadgeFilter = (sp.get("trap_badge") || "ALL").trim().toUpperCase();
+      let enriched = filtered.map((rawCard) => {
+        const c = enrichPlayerCardMetaSync(rawCard);
+        return {
+          ...c,
+          feelMetrics: computePlayerFeelMetricsSync(
+            c,
+            pos && pos !== "ALL" ? pos : c.primary_position,
+            8,
+            0,
+            false
+          ),
+        };
+      });
+
+      if (trapBadgeFilter !== "ALL") {
+        enriched = enriched.filter(
+          (c) => c.feelMetrics?.statTrapBadge === trapBadgeFilter
+        );
+      }
+
       if (sortBy === "bp_desc") {
-        filtered.sort((a, b) => b.bp_1 - a.bp_1 || b.ovr - a.ovr);
+        enriched.sort((a, b) => b.bp_1 - a.bp_1 || b.ovr - a.ovr);
       } else if (sortBy === "bp_asc") {
-        filtered.sort((a, b) => {
+        enriched.sort((a, b) => {
           const aBp = a.bp_1 > 0 ? a.bp_1 : Number.MAX_SAFE_INTEGER;
           const bBp = b.bp_1 > 0 ? b.bp_1 : Number.MAX_SAFE_INTEGER;
           return aBp - bBp || b.ovr - a.ovr;
         });
       } else if (sortBy === "salary_asc") {
-        filtered.sort((a, b) => a.salary - b.salary || b.ovr - a.ovr);
+        enriched.sort((a, b) => a.salary - b.salary || b.ovr - a.ovr);
       } else if (sortBy === "salary_desc") {
-        filtered.sort((a, b) => b.salary - a.salary || b.ovr - a.ovr);
+        enriched.sort((a, b) => b.salary - a.salary || b.ovr - a.ovr);
+      } else if (sortBy === "feel_desc") {
+        enriched.sort(
+          (a, b) =>
+            (b.feelMetrics?.feelScore || 0) - (a.feelMetrics?.feelScore || 0) ||
+            b.ovr - a.ovr
+        );
+      } else if (sortBy === "salary_eff_desc") {
+        enriched.sort(
+          (a, b) =>
+            (b.feelMetrics?.positionSalaryEfficiency || 0) -
+              (a.feelMetrics?.positionSalaryEfficiency || 0) || b.ovr - a.ovr
+        );
+      } else if (sortBy === "ranker_desc") {
+        enriched.sort(
+          (a, b) =>
+            (b.feelMetrics?.rankerPickRate || 0) -
+              (a.feelMetrics?.rankerPickRate || 0) || b.ovr - a.ovr
+        );
       } else if (sortBy === "ovr_asc") {
-        filtered.sort((a, b) => a.ovr - b.ovr || a.bp_1 - b.bp_1);
+        enriched.sort((a, b) => a.ovr - b.ovr || a.bp_1 - b.bp_1);
       } else if (sortBy === "season_desc") {
-        filtered.sort(
+        enriched.sort(
           (a, b) =>
             b.season_code.localeCompare(a.season_code) || b.ovr - a.ovr
         );
       } else if (sortBy === "rating_desc") {
-        filtered.sort(
+        enriched.sort(
           (a, b) =>
             b.rating_score - a.rating_score || b.rating_count - a.rating_count
         );
       } else {
-        filtered.sort((a, b) => b.ovr - a.ovr || b.bp_1 - a.bp_1);
+        enriched.sort((a, b) => b.ovr - a.ovr || b.bp_1 - a.bp_1);
       }
 
-      const cards = filtered.slice(0, 60);
+      const cards = enriched.slice(0, 60);
       return NextResponse.json({
         ok: true,
         cards,
@@ -205,9 +241,9 @@ export async function GET(
       const spid = Number(sp.get("spid") || 0);
       const grade = Math.max(
         1,
-        Math.min(rules.maxEnhanceLevel, Number(sp.get("grade") || 1))
+        Math.min(rules.maxEnhanceLevel, Number(sp.get("grade") || 8))
       );
-      const teamColor = Number(sp.get("team_color") || 0);
+      const teamColor = Number(sp.get("team_color") ?? 0);
       const targetPos = (sp.get("pos") || "").trim().toUpperCase();
       const refresh = sp.get("refresh") === "1";
 
@@ -218,13 +254,14 @@ export async function GET(
         );
       }
 
-      const card = await crawlPlayerAbility(spid, refresh);
-      if (!card) {
+      const rawCard = await crawlPlayerAbility(spid, refresh);
+      if (!rawCard) {
         return NextResponse.json(
           { ok: false, error: `선수 카드(${spid}) 정보를 불러올 수 없습니다.` },
           { status: 404 }
         );
       }
+      const card = enrichPlayerCardMetaSync(rawCard);
 
       const posToUse = targetPos || card.primary_position || "ST";
       const efficiency = evaluateCardEfficiencySync(
@@ -242,22 +279,18 @@ export async function GET(
       const allCards = Object.values(store.cards);
       const otherSeasons = allCards
         .filter((c) => c.pid === card.pid && c.spid !== spid)
+        .map(enrichPlayerCardMetaSync)
         .sort((a, b) => b.ovr - a.ovr)
         .slice(0, 12);
 
-      const competitors = allCards
-        .filter(
-          (c) =>
-            c.primary_position === card.primary_position &&
-            c.pid !== card.pid &&
-            c.has_full_ability
-        )
-        .sort(
-          (a, b) =>
-            Math.abs(a.ovr - card.ovr) - Math.abs(b.ovr - card.ovr) ||
-            b.bp_1 - a.bp_1
-        )
-        .slice(0, 6);
+      // 동일 포지션 경쟁 카드: 동일 핵심 팀컬러(소속 클럽/국가) 공유 + 해당 포지션 랭커 픽률 상위 기준 우선 선정
+      const competitors = selectSamePositionCompetitors(
+        card,
+        allCards,
+        grade,
+        teamColor,
+        6
+      );
 
       return NextResponse.json({
         ok: true,
@@ -279,17 +312,18 @@ export async function GET(
       const compareSpid = Number(sp.get("compare_spid") || 0);
       const grade = Math.max(
         1,
-        Math.min(rules.maxEnhanceLevel, Number(sp.get("grade") || 5))
+        Math.min(rules.maxEnhanceLevel, Number(sp.get("grade") || 8))
       );
-      const teamColor = Number(sp.get("team_color") ?? 3);
+      const teamColor = Number(sp.get("team_color") ?? 0);
 
-      const card = await crawlPlayerAbility(spid);
-      if (!card) {
+      const rawCard = await crawlPlayerAbility(spid);
+      if (!rawCard) {
         return NextResponse.json(
           { ok: false, error: "분석할 선수 카드를 찾을 수 없습니다." },
           { status: 404 }
         );
       }
+      const card = enrichPlayerCardMetaSync(rawCard);
 
       const targetPos = (sp.get("pos") || sp.get("position") || "").trim().toUpperCase();
       const primaryProfile = analyzePlayerProfileSync(
@@ -302,8 +336,9 @@ export async function GET(
       let compareProfile = null;
 
       if (compareSpid > 0 && compareSpid !== spid) {
-        compareCard = await crawlPlayerAbility(compareSpid);
-        if (compareCard) {
+        const rawCompare = await crawlPlayerAbility(compareSpid);
+        if (rawCompare) {
+          compareCard = enrichPlayerCardMetaSync(rawCompare);
           compareProfile = analyzePlayerProfileSync(
             compareCard,
             grade,
@@ -497,9 +532,9 @@ export async function POST(
       const targetPos = String(body.position || "ST").trim().toUpperCase();
       const grade = Math.max(
         1,
-        Math.min(rules.maxEnhanceLevel, Number(body.grade || 5))
+        Math.min(rules.maxEnhanceLevel, Number(body.grade || 8))
       );
-      const teamColor = Number(body.team_color ?? 3);
+      const teamColor = Number(body.team_color ?? 0);
       const maxBp = Number(body.max_bp || 0);
       const customWeights = body.custom_weights as
         | Record<string, number>
@@ -580,17 +615,18 @@ export async function POST(
       const compareSpid = Number(body.compare_spid || 0);
       const grade = Math.max(
         1,
-        Math.min(rules.maxEnhanceLevel, Number(body.grade || 5))
+        Math.min(rules.maxEnhanceLevel, Number(body.grade || 8))
       );
-      const teamColor = Number(body.team_color ?? 3);
+      const teamColor = Number(body.team_color ?? 0);
 
-      const card = await crawlPlayerAbility(spid);
-      if (!card) {
+      const rawCard = await crawlPlayerAbility(spid);
+      if (!rawCard) {
         return NextResponse.json(
           { ok: false, error: "분석할 선수 카드를 찾을 수 없습니다." },
           { status: 404 }
         );
       }
+      const card = enrichPlayerCardMetaSync(rawCard);
 
       const targetPos = String(body.pos || body.position || "")
         .trim()
@@ -605,8 +641,9 @@ export async function POST(
       let compareProfile = null;
 
       if (compareSpid > 0 && compareSpid !== spid) {
-        compareCard = await crawlPlayerAbility(compareSpid);
-        if (compareCard) {
+        const rawCompare = await crawlPlayerAbility(compareSpid);
+        if (rawCompare) {
+          compareCard = enrichPlayerCardMetaSync(rawCompare);
           compareProfile = analyzePlayerProfileSync(
             compareCard,
             grade,

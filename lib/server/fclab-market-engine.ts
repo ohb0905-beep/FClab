@@ -1,5 +1,6 @@
 import {
   CapitalTierType,
+  EnhancementEvAnalysis,
   MarketBacktestReport,
   MarketCollectionStatus,
   MarketEntityForecast,
@@ -7,12 +8,17 @@ import {
   MarketEventRecord,
   MarketFearGreedComponent,
   MarketFearGreedIndex,
+  MarketFeeConfig,
   MarketHorizonForecast,
   MarketLabDashboardPayload,
   MarketModelBacktestMetric,
   MarketNormalizedPoint,
   MarketNormalizedSeries,
+  MarketOverviewHeatmapCell,
+  MarketOverviewIndex,
   MarketSectorSummary,
+  MarketSignalMetrics,
+  MarketSignalStatusTag,
   MarketUnitConversionRecord,
   PlayerCard,
   PriceHistoryData,
@@ -23,6 +29,7 @@ import {
   TraitPatchHistoryItem,
   TraitSeasonDiscountItem,
   formatBpKorean,
+  getEnhanceOvrBoost,
 } from "@/lib/fclab-types";
 import {
   crawlPlayerAbility,
@@ -1655,9 +1662,396 @@ function predictStepwiseAtIndex(params: {
   };
 }
 
+// ============================================================================
+// 8.A Transfer Market Fee/BEP, Enhancement EV Arbitrage & Signal Quality Engine
+// ============================================================================
+
+export const DEFAULT_MARKET_FEE_CONFIG: MarketFeeConfig = {
+  hasPcRoom: true,
+  hasTopClass: true,
+  couponRate: 0.3,
+};
+
+/**
+ * FC 온라인 이적시장 실효 수수료율 및 손익분기점(BEP) 계산기
+ * - 기본 수수료 40% (0.40)
+ * - 할인율 합산: PC방(30%) + 탑클래스(20%) + 할인쿠폰(0% / 20% / 30% / 40%)
+ * - effectiveFeeRate = 0.40 * (1 - Math.min(1.0, totalDiscount))
+ * - breakEvenPrice = Math.ceil(buyPrice / (1 - effectiveFeeRate))
+ */
+export function calculateEffectiveFeeAndBep(params: {
+  buyPrice: number;
+  targetSellPrice: number;
+  feeConfig?: MarketFeeConfig;
+}): {
+  effectiveFeeRate: number;
+  breakEvenPrice: number;
+  netProfitBp: number;
+  netProfitRatePct: number;
+  isFeeLossWarning: boolean;
+} {
+  const cfg = params.feeConfig || DEFAULT_MARKET_FEE_CONFIG;
+  const buyPrice = Math.max(0, Math.round(params.buyPrice || 0));
+  const targetSellPrice = Math.max(0, Math.round(params.targetSellPrice || 0));
+
+  const pcDiscount = cfg.hasPcRoom ? 0.3 : 0;
+  const topDiscount = cfg.hasTopClass ? 0.2 : 0;
+  const couponDiscount = clamp(Number(cfg.couponRate || 0), 0, 0.5);
+  const totalDiscount = Math.min(1.0, pcDiscount + topDiscount + couponDiscount);
+
+  const effectiveFeeRate = round2(0.4 * (1 - totalDiscount) * 10000) / 10000;
+  const breakEvenPrice =
+    buyPrice > 0 && effectiveFeeRate < 1
+      ? Math.ceil(buyPrice / (1 - effectiveFeeRate))
+      : buyPrice;
+
+  const netProceeds = Math.floor(targetSellPrice * (1 - effectiveFeeRate));
+  const netProfitBp = netProceeds - buyPrice;
+  const netProfitRatePct =
+    buyPrice > 0 ? round2((netProfitBp / buyPrice) * 100) : 0;
+
+  return {
+    effectiveFeeRate,
+    breakEvenPrice,
+    netProfitBp,
+    netProfitRatePct,
+    isFeeLossWarning: netProfitBp < 0,
+  };
+}
+
+/**
+ * 풀케미(5장 꽉 채움) 기준 강화 단계별 성공 확률 테이블
+ */
+const FULL_GAUGE_ENHANCE_SUCCESS_PROB: Record<number, number> = {
+  2: 1.0,
+  3: 0.81,
+  4: 0.64,
+  5: 0.5,
+  6: 0.26,
+  7: 0.15,
+  8: 0.07,
+  9: 0.04,
+  10: 0.02,
+  11: 0.012,
+  12: 0.007,
+  13: 0.004,
+};
+
+/**
+ * 강화 기댓값 차익 분석기 (강화 데이 / 야수의 심장 EV 모델) 및 귀속 위험 판독기
+ * - 완제품 구매가(marketPrice) vs (N-1강 카드 가격 + 동일 OVR 재료 5장 비용) / 강화 성공 확률 (expectedCraftCost)
+ * - 고강(8~11강) 중 고점 정체 또는 거래/관측 둔화·매물 적체 패턴 시 isLiquidityTrap: true 부여
+ */
+export function analyzeEnhancementEvArbitrage(params: {
+  series: MarketNormalizedSeries;
+  card?: PlayerCard;
+  allCards: PlayerCard[];
+}): EnhancementEvAnalysis {
+  const { series, card, allCards } = params;
+  const grade = clamp(series.grade || 8, 2, 13);
+  const marketPrice = Math.max(1, series.current_bp);
+
+  // 1) N-1강 하위 단계 카드 가격 추정 또는 실측값 조회
+  const prevGrade = Math.max(1, grade - 1);
+  let prevGradePrice = 0;
+  if (card?.prices && card.prices[String(prevGrade)]?.bp > 0) {
+    prevGradePrice = card.prices[String(prevGrade)].bp;
+  } else if (prevGrade === 7 && card?.bp_5 && card.bp_5 > 0) {
+    prevGradePrice = Math.round(card.bp_5 * 3.6);
+  } else if (prevGrade === 4 && card?.bp_1 && card.bp_1 > 0) {
+    prevGradePrice = Math.round(card.bp_1 * 2.1);
+  } else {
+    // 일반적인 FC 온라인 강화 배율 역산
+    const typicalMultiple =
+      grade >= 9 ? 3.8 : grade === 8 ? 3.4 : grade >= 6 ? 2.5 : 1.7;
+    prevGradePrice = Math.round(marketPrice / typicalMultiple);
+  }
+
+  // 2) 동일 OVR 재료 5장 비용 산출 (N-1강 카드의 실효 OVR 기준)
+  const baseOvr = card?.ovr || series.ovr || 112;
+  const targetFodderOvr = baseOvr + getEnhanceOvrBoost(prevGrade);
+  const fodderPeers = allCards
+    .map((c) => c.bp_1 || c.prices?.["1"]?.bp || 0)
+    .filter((bp) => bp > 0)
+    .sort((a, b) => a - b);
+
+  // OVR 구간별 1장당 재료 시세 (데이터셋 하위 25% 재료용 카드 또는 OVR 기반 공식)
+  const baseFodderUnit =
+    targetFodderOvr >= 130
+      ? 42_000_000_000
+      : targetFodderOvr >= 127
+        ? 18_000_000_000
+        : targetFodderOvr >= 124
+          ? 7_500_000_000
+          : targetFodderOvr >= 120
+            ? 2_800_000_000
+            : 950_000_000;
+  const datasetFloor =
+    fodderPeers.length > 0
+      ? fodderPeers[Math.floor(fodderPeers.length * 0.15)]
+      : baseFodderUnit;
+  const singleFodderCost = Math.round(
+    clamp(Math.min(baseFodderUnit, datasetFloor * 0.45), 300_000_000, marketPrice * 0.08)
+  );
+  const fodder5Cost = singleFodderCost * 5;
+
+  // 3) 강화 성공 확률 (강화 데이 보너스 포함 실효 확률 반영) 및 기대 제작 비용
+  const baseProb = FULL_GAUGE_ENHANCE_SUCCESS_PROB[grade] || 0.07;
+  // 강화 부스트/강화 데이 평균 체감 확률 보정 (야수의 심장 EV 모델)
+  const effectiveProb = clamp(
+    grade === 8 ? 0.27 : grade === 9 ? 0.19 : grade >= 10 ? 0.14 : baseProb * 1.25,
+    0.05,
+    0.95
+  );
+
+  // 1회 시도 시 소모 비용(재료 5장 + 복구/하락 손실분)을 성공 확률로 나눈 총 기대 제작 원가
+  const singleAttemptLoss = fodder5Cost + Math.round(prevGradePrice * 0.42);
+  const expectedCraftCost = Math.round(
+    prevGradePrice + singleAttemptLoss / effectiveProb
+  );
+  const costDiffBp = marketPrice - expectedCraftCost;
+
+  const isCraftCheaper = expectedCraftCost < marketPrice * 0.96;
+  const recommendation = isCraftCheaper ? "CRAFT_RECOMMENDED" : "BUY_COMPLETE";
+  const verdictLabel = isCraftCheaper
+    ? "직접 강화 유리 (기댓값 양수)"
+    : "완제품 매수 유리";
+
+  // 4) 고강(8~11강+) 귀속 리스크(isLiquidityTrap) 판별:
+  //    - 30일 Z-Score가 고점 부근(> 0.85)이면서 최근 1일/7일 모멘텀이 둔화되거나,
+  //    - 최근 5일 연속 가격 변동이 거의 없는 호가 정체(하한가 매물 적체) 패턴,
+  //    - 또는 비인기/구시즌 고강인데 시계열 관측 신뢰도가 낮은 경우
+  const recent5Points = series.points.slice(-5);
+  const flatDaysCount = recent5Points.filter(
+    (p) => Math.abs(p.return_1d_pct) < 0.08
+  ).length;
+  const isPeakStagnation =
+    series.z_score_30d >= 0.85 && series.return_1d_pct <= 0.15;
+  const isOrderbookStuck = flatDaysCount >= 4 && series.return_7d_pct <= 0;
+  const isOldSeasonHighGrade =
+    grade >= 8 &&
+    series.season_sector === "EXISTING_FLAGSHIP" &&
+    series.return_7d_pct < -1.2 &&
+    (series.new_traits || []).length === 0;
+
+  const isLiquidityTrap =
+    grade >= 8 && (isPeakStagnation || isOrderbookStuck || isOldSeasonHighGrade);
+
+  let liquidityTrapReason = "";
+  if (isLiquidityTrap) {
+    if (isOrderbookStuck) {
+      liquidityTrapReason = `최근 5일 중 ${flatDaysCount}일간 기준가 정체(변동 <0.1%) 및 하한가 매물 적체 징후 — 재판매 시 귀속 위험 주의`;
+    } else if (isPeakStagnation) {
+      liquidityTrapReason = `30일 고점 밴드(Z-Score +${series.z_score_30d}) 도달 후 거래 모멘텀 둔화 — 고점 물림 및 호가 공백 주의`;
+    } else {
+      liquidityTrapReason = `신규특성 미보유 구시즌 +${grade}강 고강 카드로 상위 시즌 세대교체에 따른 매수세 실종(귀속) 주의`;
+    }
+  } else {
+    liquidityTrapReason = isCraftCheaper
+      ? `완제품(${formatBpKorean(marketPrice)}) 대비 직접 강화 기대비용(${formatBpKorean(expectedCraftCost)})이 약 ${formatBpKorean(Math.abs(costDiffBp))} 저렴하여 강화 데이 제작 노림수 유효`
+      : `직접 강화 기대비용(${formatBpKorean(expectedCraftCost)})이 완제품 매수가(${formatBpKorean(marketPrice)})보다 높아 이적시장 완제품 급처 매물 매수가 유리`;
+  }
+
+  return {
+    targetGrade: grade,
+    marketPrice,
+    prevGradePrice,
+    fodder5Cost,
+    successProb: round2(effectiveProb * 100) / 100,
+    expectedCraftCost,
+    costDiffBp,
+    recommendation,
+    verdictLabel,
+    isLiquidityTrap,
+    liquidityTrapReason,
+  };
+}
+
+/**
+ * 개별 선수 카드에 대한 신호 품질 점수(0~100점) 및 상태 태그 산출
+ */
+export function computeMarketSignalMetrics(params: {
+  series: MarketNormalizedSeries;
+  expectedSellBp7d: number;
+  expectedReturn7dPct: number;
+  confidence7d: number;
+  card?: PlayerCard;
+  allCards: PlayerCard[];
+  feeConfig?: MarketFeeConfig;
+}): MarketSignalMetrics {
+  const {
+    series,
+    expectedSellBp7d,
+    expectedReturn7dPct,
+    confidence7d,
+    card,
+    allCards,
+    feeConfig = DEFAULT_MARKET_FEE_CONFIG,
+  } = params;
+
+  const feeBep = calculateEffectiveFeeAndBep({
+    buyPrice: series.current_bp,
+    targetSellPrice: expectedSellBp7d,
+    feeConfig,
+  });
+
+  const enhancementEv = analyzeEnhancementEvArbitrage({
+    series,
+    card,
+    allCards,
+  });
+
+  // 신호 품질 점수 (0~100점): 백테스트 신뢰도 + 7일 기대수익 + 신규특성/대장 수요 + 유동성 안정성
+  const newTraitBonus = (series.new_traits || []).length >= 2 ? 10 : (series.new_traits || []).length === 1 ? 6 : 0;
+  const returnBonus = clamp(expectedReturn7dPct * 3.2, -15, 22);
+  const trapPenalty = enhancementEv.isLiquidityTrap ? -22 : 0;
+  const feeLossPenalty = feeBep.isFeeLossWarning ? -12 : 6;
+
+  const signalQualityScore = Math.round(
+    clamp(
+      confidence7d * 0.72 + newTraitBonus + returnBonus + trapPenalty + feeLossPenalty,
+      18,
+      98
+    )
+  );
+
+  // 직관적 상태 태그 분류:
+  // '🔥 급등 초입' | '💎 수요 유입' | '📈 상승 지속' | '⚠️ 고점/귀속 주의'
+  let signalStatusTag: MarketSignalStatusTag = "💎 수요 유입";
+  if (
+    enhancementEv.isLiquidityTrap ||
+    series.z_score_30d > 1.15 ||
+    expectedReturn7dPct < -0.5
+  ) {
+    signalStatusTag = "⚠️ 고점/귀속 주의";
+  } else if (
+    series.z_score_30d <= -0.35 &&
+    (series.return_1d_pct >= 0.2 || expectedReturn7dPct >= 2.2)
+  ) {
+    signalStatusTag = "🔥 급등 초입";
+  } else if (series.return_7d_pct >= 1.5 && expectedReturn7dPct >= 0.8) {
+    signalStatusTag = "📈 상승 지속";
+  } else {
+    signalStatusTag = "💎 수요 유입";
+  }
+
+  return {
+    spid: series.spid,
+    name: series.name,
+    seasonCode: series.season_code,
+    grade: series.grade,
+    currentBp: series.current_bp,
+    targetSellBp: expectedSellBp7d,
+    feeConfig,
+    effectiveFeeRate: feeBep.effectiveFeeRate,
+    breakEvenPrice: feeBep.breakEvenPrice,
+    netProfitBp: feeBep.netProfitBp,
+    netProfitRatePct: feeBep.netProfitRatePct,
+    isFeeLossWarning: feeBep.isFeeLossWarning,
+    enhancementEv,
+    signalQualityScore,
+    signalStatusTag,
+  };
+}
+
+/**
+ * FClab 마켓 종합 지수 및 시즌/강화별 등락 히트맵 빌더
+ */
+export function buildMarketOverviewIndex(
+  allCards: PlayerCard[],
+  seriesList: MarketNormalizedSeries[],
+  currentIndex: number,
+  changePct1d: number,
+  changePct7d: number
+): MarketOverviewIndex {
+  const coreSeries = seriesList.filter(
+    (s) => s.grade_tier_zone === "CORE_GOLD_8_11"
+  );
+  const pool = coreSeries.length > 0 ? coreSeries : seriesList;
+
+  let advancingCount = 0;
+  let flatCount = 0;
+  let decliningCount = 0;
+
+  for (const s of pool) {
+    if (s.return_1d_pct > 0.25) advancingCount++;
+    else if (s.return_1d_pct < -0.25) decliningCount++;
+    else flatCount++;
+  }
+
+  // 시즌 x 강화 단계별 히트맵 셀 집계
+  const cellMap = new Map<
+    string,
+    {
+      seasonCode: string;
+      seasonName: string;
+      grade: number;
+      bps: number[];
+      ret1ds: number[];
+      ret7ds: number[];
+    }
+  >();
+
+  for (const s of seriesList) {
+    const key = `${s.season_code}_${s.grade}`;
+    if (!cellMap.has(key)) {
+      cellMap.set(key, {
+        seasonCode: s.season_code,
+        seasonName: s.season_name || s.season_code,
+        grade: s.grade,
+        bps: [],
+        ret1ds: [],
+        ret7ds: [],
+      });
+    }
+    const item = cellMap.get(key)!;
+    item.bps.push(s.current_bp);
+    item.ret1ds.push(s.return_1d_pct);
+    item.ret7ds.push(s.return_7d_pct);
+  }
+
+  const seasonGradeHeatmap: MarketOverviewHeatmapCell[] = Array.from(
+    cellMap.values()
+  )
+    .map((item) => {
+      const avgBp = Math.round(mean(item.bps));
+      const change1d = round2(mean(item.ret1ds));
+      const change7d = round2(mean(item.ret7ds));
+      let signalTag: MarketSignalStatusTag = "💎 수요 유입";
+      if (change7d <= -1.8) signalTag = "⚠️ 고점/귀속 주의";
+      else if (change1d >= 1.2 && change7d < 2.5) signalTag = "🔥 급등 초입";
+      else if (change7d >= 2.0) signalTag = "📈 상승 지속";
+
+      return {
+        seasonCode: item.seasonCode,
+        seasonName: item.seasonName,
+        grade: item.grade,
+        avgBp,
+        changePct1d: change1d,
+        changePct7d: change7d,
+        sampleCount: item.bps.length,
+        signalTag,
+      };
+    })
+    .sort((a, b) => b.avgBp * b.sampleCount - a.avgBp * a.sampleCount)
+    .slice(0, 18);
+
+  return {
+    currentIndex: round2(currentIndex),
+    changePct1d: round2(changePct1d),
+    changePct7d: round2(changePct7d),
+    advancingCount,
+    flatCount,
+    decliningCount,
+    seasonGradeHeatmap,
+    updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC",
+  };
+}
+
 export function buildForecastsAndBacktest(
   seriesList: MarketNormalizedSeries[],
-  seasonSectors: MarketSectorSummary[]
+  seasonSectors: MarketSectorSummary[],
+  allCards: PlayerCard[] = []
 ): {
   playerForecasts: MarketEntityForecast[];
   sectorForecasts: MarketEntityForecast[];
@@ -1849,11 +2243,30 @@ export function buildForecastsAndBacktest(
         );
       }
 
+      const h7 = horizons.find((h) => h.horizon_days === 7) || horizons[0];
+      const matchedCard = allCards.find((c) => c.spid === s.spid);
+      const signalMetrics = computeMarketSignalMetrics({
+        series: s,
+        expectedSellBp7d: h7?.expected_bp || s.current_bp,
+        expectedReturn7dPct: h7?.expected_return_pct || 0,
+        confidence7d: h7?.confidence_score || 72,
+        card: matchedCard,
+        allCards,
+        feeConfig: DEFAULT_MARKET_FEE_CONFIG,
+      });
+
+      if (signalMetrics.enhancementEv.isLiquidityTrap) {
+        riskFactors.unshift(
+          `⚠️ 귀속 위험 주의: ${signalMetrics.enhancementEv.liquidityTrapReason}`
+        );
+      }
+
       return {
         entity_type: "player",
         entity_id: s.key,
         spid: s.spid,
         grade: s.grade,
+        grade_tier_zone: s.grade_tier_zone,
         name: s.name,
         season_code: s.season_code,
         primary_position: s.primary_position,
@@ -1861,11 +2274,13 @@ export function buildForecastsAndBacktest(
         current_bp_text: s.current_bp_text,
         season_sector_label: s.season_sector_label,
         capital_tier_label: s.capital_tier_label,
+        new_traits: s.new_traits || s.traits,
         horizons,
         upward_factors: upwardFactors,
         downward_factors: downwardFactors,
         risk_factors: riskFactors,
         basis: "model_forecast",
+        signalMetrics,
       };
     });
 
@@ -2962,7 +3377,7 @@ export function buildMarketLabDashboard(): MarketLabDashboardPayload {
 
   const { events, impacts } = analyzeMarketEvents(benchmarkSeries);
   const { playerForecasts, sectorForecasts, backtestReport } =
-    buildForecastsAndBacktest(seriesList, seasonSectors);
+    buildForecastsAndBacktest(seriesList, seasonSectors, allCards);
 
   const {
     traitCatalog,
@@ -3035,6 +3450,18 @@ export function buildMarketLabDashboard(): MarketLabDashboardPayload {
     unit_conversion_samples: unitConversionRecords,
   };
 
+  const marketOverviewIndex = buildMarketOverviewIndex(
+    allCards,
+    seriesList,
+    latestIndex,
+    marketRet1d,
+    marketRet7d
+  );
+
+  const marketSignals: MarketSignalMetrics[] = playerForecasts
+    .map((f) => f.signalMetrics)
+    .filter((m): m is MarketSignalMetrics => Boolean(m));
+
   return {
     generated_at:
       new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC",
@@ -3073,6 +3500,9 @@ export function buildMarketLabDashboard(): MarketLabDashboardPayload {
         .filter((s) => s.grade_tier_zone === "SEPARATED_ULTRA_12_13")
         .slice(0, 10),
     ],
+    market_overview_index: marketOverviewIndex,
+    market_signals: marketSignals,
+    default_fee_config: DEFAULT_MARKET_FEE_CONFIG,
   };
 }
 

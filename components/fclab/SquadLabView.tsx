@@ -178,12 +178,21 @@ export default function SquadLabView({
 }: SquadLabViewProps) {
   const [squadId, setSquadId] = useState<string>("default-meta-4231");
   const [squadName, setSquadName] = useState<string>(
-    "FClab 추천 메타 스쿼드 (4-2-3-1)"
+    "나만의 커스텀 스쿼드"
   );
   const [formation, setFormation] = useState<string>("4-2-3-1");
   const [budgetBp, setBudgetBp] = useState<number>(50_000_000_000);
   const [teamColorBonus, setTeamColorBonus] = useState<number>(3);
-  const [slots, setSlots] = useState<SquadSlot[]>([]);
+  const [slots, setSlots] = useState<SquadSlot[]>(() =>
+    (FORMATION_LAYOUTS["4-2-3-1"] || []).map((l) => ({
+      slot_id: l.slot_id,
+      slot_position: l.slot_position,
+      spid: 0,
+      grade: 5,
+      x: l.x,
+      y: l.y,
+    }))
+  );
 
   // 포메이션 변경 또는 슬롯 해제로 인해 미배치된 선수 임시 보관함
   const [unassignedPlayers, setUnassignedPlayers] = useState<
@@ -233,7 +242,7 @@ export default function SquadLabView({
     [rules.maxEnhanceLevel]
   );
 
-  // 초기 스쿼드 로드 (savedSquads 또는 externalSlots)
+  // 외부 연동 스쿼드(externalSlots) 전달 시에만 로드 (기본 상태는 빈 슬롯 Empty State 유지)
   useEffect(() => {
     if (externalSlots && externalSlots.length > 0) {
       const baseLayout =
@@ -261,33 +270,8 @@ export default function SquadLabView({
         setSquadName("전적 분석실 연동 스쿼드");
         setUnassignedPlayers([]);
       });
-      return;
     }
-    if (slots.length === 0 && savedSquads.length > 0) {
-      const first = savedSquads[0];
-      const fmt = first.formation || "4-2-3-1";
-      const layout = FORMATION_LAYOUTS[fmt] || FORMATION_LAYOUTS["4-2-3-1"];
-      const hydratedSlots = layout.map((l) => {
-        const match = (first.slots || []).find((s) => s.slot_id === l.slot_id);
-        return {
-          slot_id: l.slot_id,
-          slot_position: match?.slot_position || l.slot_position,
-          spid: match?.spid || 0,
-          grade: match?.grade || 5,
-          x: match?.x ?? l.x,
-          y: match?.y ?? l.y,
-        };
-      });
-      queueMicrotask(() => {
-        setSquadId(first.id);
-        setSquadName(first.name);
-        setFormation(fmt);
-        setBudgetBp(first.budget_bp || 50_000_000_000);
-        setTeamColorBonus(first.team_color_bonus ?? 3);
-        setSlots(hydratedSlots);
-      });
-    }
-  }, [savedSquads, externalSlots, slots.length, formation]);
+  }, [externalSlots, formation]);
 
   // 스쿼드 평가 API 호출 (드래그 중에는 불필요한 반복 호출 방지)
   const evaluateCurrentSquad = useCallback(
@@ -1713,8 +1697,386 @@ export default function SquadLabView({
           </div>
         </div>
 
-        {/* 우측: 스쿼드 밸런스, 약점 진단, 교체 추천 */}
+        {/* 우측: 스쿼드 구매 점검 리포트, 밸런스, 약점 진단, 교체 추천 */}
         <div className="lg:col-span-5 space-y-6">
+          {/* [신규 고도화] 🔍 이 스쿼드, 지금 사도 될까? (스쿼드 구매 시점 & 급여 진단 리포트) */}
+          {analysis?.purchaseAudit && (
+            <div className="bg-gradient-to-br from-[#131B2E] via-[#111827] to-[#0E1726] border border-emerald-500/40 rounded-xl p-5 space-y-4 shadow-lg">
+              <div className="flex flex-wrap items-start justify-between gap-2 pb-3 border-b border-slate-800/90">
+                <div>
+                  <div className="text-[11px] font-mono uppercase tracking-wider text-emerald-400">
+                    SQUAD PURCHASE TIMING &amp; SALARY AUDIT
+                  </div>
+                  <h3 className="text-sm sm:text-base font-extrabold text-slate-100 mt-0.5">
+                    🔍 이 스쿼드, 지금 사도 될까? (스쿼드 구매 시점 &amp; 급여 진단 리포트)
+                  </h3>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-[10px] font-mono text-slate-400">
+                    매수 타이밍 종합 점수
+                  </div>
+                  <div className="text-lg font-mono font-extrabold text-emerald-400 tabular-nums">
+                    {analysis.purchaseAudit.overallBuyTimingScore}
+                    <span className="text-xs font-normal text-slate-400">
+                      {" "}
+                      / 100점
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {analysis.purchaseAudit.buyTimingSummaryLabel && (
+                <div className="px-3 py-2 rounded-lg bg-[#0B0F17] border border-slate-800 text-xs font-semibold text-slate-200 flex items-center justify-between gap-2">
+                  <span>{analysis.purchaseAudit.buyTimingSummaryLabel}</span>
+                  <span className="text-[11px] font-mono text-slate-400 shrink-0">
+                    🟢{" "}
+                    {
+                      analysis.purchaseAudit.playerPricePercentiles.filter(
+                        (p) => p.buyTimingVerdict === "저점 매수 적기"
+                      ).length
+                    }
+                    명 · 🟡{" "}
+                    {
+                      analysis.purchaseAudit.playerPricePercentiles.filter(
+                        (p) => p.buyTimingVerdict === "적정 구간"
+                      ).length
+                    }
+                    명 · 🔴{" "}
+                    {
+                      analysis.purchaseAudit.playerPricePercentiles.filter(
+                        (p) => p.buyTimingVerdict === "단기 고점 주의"
+                      ).length
+                    }
+                    명
+                  </span>
+                </div>
+              )}
+
+              {/* 1) 총 스쿼드 가치(BP) 및 재판매 시 예상 수수료 손실액 비교 */}
+              <div className="bg-[#0B0F17] border border-slate-800/90 rounded-lg p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-200">
+                    1) 총 스쿼드 가치 &amp; 재판매 예상 수수료 손실 비교
+                  </span>
+                  <span className="text-xs font-mono font-bold text-amber-300 tabular-nums">
+                    총 {formatBpKorean(analysis.purchaseAudit.totalBp)} BP
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                  {/* PC방 + 탑클 기본 (수수료 20%) */}
+                  <div className="p-2.5 rounded-lg bg-[#111827] border border-slate-800 space-y-1">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-slate-300 font-medium">
+                        PC방 + 탑클 (수수료 20%)
+                      </span>
+                      <span className="font-mono text-rose-400 font-semibold">
+                        -20% 차감
+                      </span>
+                    </div>
+                    <div className="text-xs font-mono font-bold text-rose-300 tabular-nums">
+                      손실: -
+                      {formatBpKorean(
+                        analysis.purchaseAudit.resaleLossPcTopBp ??
+                          analysis.purchaseAudit.estimatedResaleLossBp
+                      )}{" "}
+                      BP
+                    </div>
+                    <div className="text-[11px] font-mono text-slate-400 tabular-nums">
+                      실수령:{" "}
+                      {formatBpKorean(
+                        Math.max(
+                          0,
+                          analysis.purchaseAudit.totalBp -
+                            (analysis.purchaseAudit.resaleLossPcTopBp ??
+                              analysis.purchaseAudit.estimatedResaleLossBp)
+                        )
+                      )}{" "}
+                      BP
+                    </div>
+                  </div>
+
+                  {/* PC방 + 탑클 + 40% 할인 쿠폰 적용 시 (수수료 4%) */}
+                  <div className="p-2.5 rounded-lg bg-emerald-950/20 border border-emerald-500/40 space-y-1">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-emerald-300 font-semibold">
+                        PC방+탑클+40% 쿠폰 (4%)
+                      </span>
+                      <span className="font-mono text-emerald-400 font-semibold">
+                        90% 할인
+                      </span>
+                    </div>
+                    <div className="text-xs font-mono font-bold text-emerald-300 tabular-nums">
+                      손실: -
+                      {formatBpKorean(
+                        analysis.purchaseAudit.resaleLossWith40CouponBp ??
+                          Math.round(analysis.purchaseAudit.totalBp * 0.04)
+                      )}{" "}
+                      BP
+                    </div>
+                    <div className="text-[11px] font-mono text-emerald-400/90 tabular-nums">
+                      쿠폰 적용 시 +
+                      {formatBpKorean(
+                        Math.max(
+                          0,
+                          (analysis.purchaseAudit.resaleLossPcTopBp ??
+                            analysis.purchaseAudit.estimatedResaleLossBp) -
+                            (analysis.purchaseAudit.resaleLossWith40CouponBp ??
+                              Math.round(analysis.purchaseAudit.totalBp * 0.04))
+                        )
+                      )}{" "}
+                      BP 절감
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px] font-mono text-slate-400 border-t border-slate-800/80">
+                  <span>
+                    · 30% 쿠폰 병행 시(수수료 8%): 손실 -
+                    {formatBpKorean(
+                      analysis.purchaseAudit.resaleLossWith30CouponBp ??
+                        Math.round(analysis.purchaseAudit.totalBp * 0.08)
+                    )}{" "}
+                    BP
+                  </span>
+                  <span>
+                    · 40% 쿠폰 단독(수수료 24%): 손실 -
+                    {formatBpKorean(
+                      analysis.purchaseAudit.resaleLossCouponOnly40Bp ??
+                        Math.round(analysis.purchaseAudit.totalBp * 0.24)
+                    )}{" "}
+                    BP
+                  </span>
+                </div>
+              </div>
+
+              {/* 2) 선수별 30일 시세 위치 진단 (0~100% 백분위 바) */}
+              <div className="bg-[#0B0F17] border border-slate-800/90 rounded-lg p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-200">
+                    2) 선발 {analysis.purchaseAudit.playerPricePercentiles.length}명 30일 시세 위치 진단 (0~100%)
+                  </span>
+                  <span className="text-[11px] font-mono text-slate-400">
+                    0% 바닥권 · 100% 고점권
+                  </span>
+                </div>
+
+                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                  {analysis.purchaseAudit.playerPricePercentiles.map((item) => {
+                    const isLow = item.buyTimingVerdict === "저점 매수 적기";
+                    const isHigh = item.buyTimingVerdict === "단기 고점 주의";
+                    const barColorClass = isLow
+                      ? "bg-emerald-500"
+                      : isHigh
+                      ? "bg-rose-500"
+                      : "bg-amber-400";
+                    const verdictBadgeText = isLow
+                      ? "매수 적기 🟢"
+                      : isHigh
+                      ? "매수 주의 🔴"
+                      : "중립 🟡";
+                    const verdictTextClass = isLow
+                      ? "text-emerald-400"
+                      : isHigh
+                      ? "text-rose-400"
+                      : "text-amber-300";
+
+                    return (
+                      <div
+                        key={`${item.slotId}-${item.spid}`}
+                        className="p-2 rounded-lg bg-[#111827] border border-slate-800/80 space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span
+                              className={`font-mono font-bold text-[11px] shrink-0 ${getPositionToneClass(
+                                item.slotPosition
+                              )}`}
+                            >
+                              {item.slotPosition}
+                            </span>
+                            <SeasonBadge
+                              seasonCode={item.seasonCode}
+                              seasonImg={item.seasonImg}
+                            />
+                            <span className="font-semibold text-slate-100 truncate">
+                              {item.name}
+                            </span>
+                            <span className="text-[10px] font-mono text-slate-400 shrink-0">
+                              +{item.grade}강
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0 font-mono text-[11px] tabular-nums">
+                            <span className="text-slate-300">
+                              {formatBpKorean(item.currentBp)}
+                            </span>
+                            <span className={`font-bold ${verdictTextClass}`}>
+                              {verdictBadgeText} ({item.pricePercentile30d}%)
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* 백분위 프로그레스 바 (0~100%) */}
+                        <div className="space-y-1">
+                          <div className="h-1.5 w-full rounded-full bg-slate-900 overflow-hidden relative">
+                            <div
+                              style={{
+                                width: `${Math.max(
+                                  4,
+                                  Math.min(100, item.pricePercentile30d)
+                                )}%`,
+                              }}
+                              className={`h-full rounded-full transition-all ${barColorClass}`}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between text-[10px] font-mono text-slate-500 tabular-nums">
+                            <span>
+                              30일 저점 {formatBpKorean(item.min30dBp)}
+                            </span>
+                            <span>
+                              30일 고점 {formatBpKorean(item.max30dBp)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 3) 급여(Salary) 과투자 포지션 경고 및 대체재 제안 */}
+              <div className="bg-[#0B0F17] border border-slate-800/90 rounded-lg p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-200">
+                    3) 급여(Salary) 과투자 포지션 경고 &amp; 체감 유지 대체재 제안
+                  </span>
+                  <span className="text-[11px] font-mono text-amber-300">
+                    {analysis.purchaseAudit.overinvestedPositions.length}건 감지
+                  </span>
+                </div>
+
+                {analysis.purchaseAudit.overinvestedPositions.length === 0 ? (
+                  <div className="p-3 rounded-lg bg-[#111827] border border-slate-800 text-xs text-slate-400">
+                    현재 스쿼드에 급여 과투자(풀백 25+ 등) 또는 스탯 대비 둔중한 포지션이 감지되지 않았습니다.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {analysis.purchaseAudit.overinvestedPositions.map((warn) => (
+                      <div
+                        key={`${warn.slotId}-${warn.currentPlayer.spid}`}
+                        className="p-3 rounded-lg bg-[#111827] border border-amber-500/40 space-y-2.5"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                              <span
+                                className={`font-mono font-bold ${getPositionToneClass(
+                                  warn.slotPosition
+                                )}`}
+                              >
+                                [{warn.slotPosition}]
+                              </span>
+                              <SeasonBadge
+                                seasonCode={warn.currentPlayer.seasonCode}
+                                seasonImg={warn.currentPlayer.seasonImg}
+                              />
+                              <span className="font-bold text-slate-100">
+                                {warn.currentPlayer.name} (+
+                                {warn.currentPlayer.grade}강)
+                              </span>
+                              <span className="text-[11px] font-mono text-amber-300">
+                                급여 {warn.currentPlayer.salary} FP · 체감{" "}
+                                {warn.currentPlayer.feelScore}점
+                              </span>
+                            </div>
+                            <p className="text-xs text-amber-200/90 leading-relaxed">
+                              {warn.warningReason}
+                            </p>
+                          </div>
+                          {warn.savedSalary > 0 && (
+                            <span className="text-[11px] font-mono font-bold text-emerald-400 whitespace-nowrap shrink-0">
+                              최대 -{warn.savedSalary} FP 절감
+                            </span>
+                          )}
+                        </div>
+
+                        {/* 대체 추천 선수 리스트 + 스쿼드 즉시 교체 버튼 */}
+                        <div className="space-y-1.5 pt-1.5 border-t border-slate-800">
+                          <div className="text-[11px] font-mono text-slate-400">
+                            추천 가성비 대체 선수 (인게임 체감 지수 유지·개선):
+                          </div>
+                          {warn.recommendedAlternatives.map((alt) => {
+                            const altGrade =
+                              alt.grade || warn.currentPlayer.grade || 5;
+                            const feelDiff =
+                              alt.feelScore - warn.currentPlayer.feelScore;
+                            return (
+                              <div
+                                key={`${warn.slotId}-alt-${alt.spid}`}
+                                className="p-2 rounded bg-[#0B0F17] border border-slate-800 flex items-center justify-between gap-2"
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <PlayerAvatar
+                                    src={alt.thumbUrl}
+                                    spid={alt.spid}
+                                    name={alt.name}
+                                    className="w-8 h-8 shrink-0"
+                                  />
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                      <SeasonBadge
+                                        seasonCode={alt.season}
+                                        seasonImg={alt.seasonImg}
+                                      />
+                                      <span className="text-xs font-bold text-slate-100 truncate">
+                                        {alt.name}
+                                      </span>
+                                      <span className="text-[10px] font-mono text-slate-400">
+                                        +{altGrade}강
+                                      </span>
+                                    </div>
+                                    <div className="text-[11px] font-mono text-slate-400 tabular-nums truncate">
+                                      체감{" "}
+                                      <span className="text-emerald-400 font-semibold">
+                                        {alt.feelScore}점
+                                      </span>
+                                      {feelDiff >= 0
+                                        ? ` (+${feelDiff})`
+                                        : ` (${feelDiff})`}{" "}
+                                      · 유사도 {alt.similarity}% ·{" "}
+                                      {alt.bpText ||
+                                        formatBpKorean(alt.bp || 0)}{" "}
+                                      BP
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    commitAssignCardToSlot(
+                                      warn.slotId,
+                                      alt.spid,
+                                      altGrade
+                                    )
+                                  }
+                                  className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold whitespace-nowrap shrink-0 flex items-center gap-1 transition-colors"
+                                >
+                                  스쿼드 교체
+                                  <ArrowUpRight className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Team Balance Radar & Synergies */}
           <div className="bg-[#111827] border border-slate-800 rounded-xl p-5 space-y-4">
             <h3 className="text-sm font-semibold text-slate-100">

@@ -39,6 +39,11 @@ import {
   PlayerCard,
   formatBpKorean,
 } from "@/lib/fclab-types";
+import {
+  ChartEventMarker,
+  MarketOverviewIndexCard,
+  MarketSeasonGradeHeatmap,
+} from "@/components/fclab/VisualCharts";
 
 interface ChartSeriesConfig {
   key: string;
@@ -49,16 +54,24 @@ interface ChartSeriesConfig {
   formatValue?: (v: number) => string;
 }
 
+const DEFAULT_MARKET_CHART_EVENTS: ChartEventMarker[] = [
+  { date: "10.03", label: "패키지 출시", type: "PACK_RELEASE" },
+  { date: "10.10", label: "강화 데이", type: "ENHANCE_DAY" },
+  { date: "10.16", label: "수수료 쿠폰 만료", type: "COUPON_EXPIRY" },
+];
+
 function MarketMultiLineChart({
   data,
   xKey,
   series,
   height = 220,
+  eventMarkers = DEFAULT_MARKET_CHART_EVENTS,
 }: {
   data: Record<string, unknown>[];
   xKey: string;
   series: ChartSeriesConfig[];
   height?: number;
+  eventMarkers?: ChartEventMarker[];
 }) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
@@ -72,7 +85,7 @@ function MarketMultiLineChart({
 
   const width = 680;
   const padX = 28;
-  const padY = 22;
+  const padY = 24;
 
   const allValues: number[] = [];
   for (const row of data) {
@@ -92,6 +105,34 @@ function MarketMultiLineChart({
       height - padY - ((val - minVal) / span) * (height - padY * 2);
     return { x, y };
   };
+
+  // Resolve event marker positions along the x-axis
+  const resolvedMarkers = (eventMarkers || [])
+    .map((ev, mIdx) => {
+      let idx = data.findIndex((r) => String(r[xKey] || "") === ev.date);
+      if (idx === -1 && data.length >= 6) {
+        const fallbackRatios = [0.22, 0.52, 0.78];
+        idx = Math.min(
+          data.length - 2,
+          Math.max(
+            1,
+            Math.floor(
+              data.length * (fallbackRatios[mIdx % fallbackRatios.length] || 0.5)
+            )
+          )
+        );
+      }
+      if (idx < 0 || !data[idx]) return null;
+      const primaryVal = Number(data[idx][series[0].key] || 0);
+      const coord = getCoord(idx, primaryVal);
+      return {
+        ...ev,
+        idx,
+        dateText: String(data[idx][xKey] || ev.date),
+        coord,
+      };
+    })
+    .filter((x): x is NonNullable<typeof x> => Boolean(x));
 
   const activeIdx =
     hoverIdx !== null && data[hoverIdx] ? hoverIdx : data.length - 1;
@@ -122,6 +163,30 @@ function MarketMultiLineChart({
           })}
         </div>
       </div>
+
+      {/* Market Event Badges Strip */}
+      {resolvedMarkers.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 text-[10px]">
+          <span className="text-slate-500 font-semibold">차트 이벤트 마커:</span>
+          {resolvedMarkers.map((m, i) => {
+            const cls =
+              m.type === "PACK_RELEASE"
+                ? "bg-sky-500/15 text-sky-300 border-sky-500/40"
+                : m.type === "ENHANCE_DAY"
+                  ? "bg-amber-500/15 text-amber-300 border-amber-500/40"
+                  : "bg-rose-500/15 text-rose-300 border-rose-500/40";
+            return (
+              <span
+                key={`${m.label}_${i}`}
+                onMouseEnter={() => setHoverIdx(m.idx)}
+                className={`px-2 py-0.5 border font-mono cursor-pointer transition ${cls}`}
+              >
+                [{m.dateText}] {m.label}
+              </span>
+            );
+          })}
+        </div>
+      )}
 
       <svg
         viewBox={`0 0 ${width} ${height}`}
@@ -179,6 +244,47 @@ function MarketMultiLineChart({
                   strokeWidth="1.5"
                 />
               )}
+            </g>
+          );
+        })}
+
+        {/* Render Event Vertical Lines & Labels on Chart */}
+        {resolvedMarkers.map((m, i) => {
+          const strokeColor =
+            m.type === "PACK_RELEASE"
+              ? "#38bdf8"
+              : m.type === "ENHANCE_DAY"
+                ? "#f59e0b"
+                : "#f43f5e";
+          return (
+            <g key={`marker_${i}`}>
+              <line
+                x1={m.coord.x}
+                y1={16}
+                x2={m.coord.x}
+                y2={height - padY}
+                stroke={strokeColor}
+                strokeDasharray="3 3"
+                strokeWidth="1.2"
+                opacity="0.75"
+              />
+              <circle
+                cx={m.coord.x}
+                cy={m.coord.y}
+                r="3.5"
+                fill={strokeColor}
+                stroke="#0b0f17"
+                strokeWidth="1.2"
+              />
+              <text
+                x={m.coord.x}
+                y={12}
+                textAnchor="middle"
+                fill={strokeColor}
+                className="text-[9px] font-mono font-bold"
+              >
+                {m.label}
+              </text>
             </g>
           );
         })}
@@ -594,15 +700,52 @@ export default function MarketLabView({
       .slice(0, 10);
   }, [initialCards, playerQuery]);
 
-  // Fee simulator calculation
+  // Fee simulator & real-time BEP calculation across all player cards
+  const [excludeFeeLossCards, setExcludeFeeLossCards] = useState<boolean>(false);
+
+  const activeEffectiveFeeRate = useMemo(() => {
+    const baseTaxRate = 0.4; // 40% base market fee
+    const totalDiscount = Math.min(
+      1.0,
+      (simHasPcRoom ? 0.3 : 0) +
+        (simHasTopClass ? 0.2 : 0) +
+        Math.max(0, Math.min(40, simCouponPct)) / 100
+    );
+    return +(baseTaxRate * (1 - totalDiscount)).toFixed(4);
+  }, [simHasPcRoom, simHasTopClass, simCouponPct]);
+
+  const computeCardDynamicBepAndProfit = React.useCallback(
+    (buyPrice: number, targetSellPrice: number) => {
+      const safeBuy = Math.max(0, Math.round(buyPrice || 0));
+      const safeTarget = Math.max(0, Math.round(targetSellPrice || 0));
+      const breakEvenPrice =
+        safeBuy > 0 && activeEffectiveFeeRate < 1
+          ? Math.ceil(safeBuy / (1 - activeEffectiveFeeRate))
+          : safeBuy;
+      const netProceeds = Math.floor(safeTarget * (1 - activeEffectiveFeeRate));
+      const netProfitBp = netProceeds - safeBuy;
+      const netProfitPct =
+        safeBuy > 0 ? +((netProfitBp / safeBuy) * 100).toFixed(2) : 0;
+      return {
+        effectiveFeeRate: activeEffectiveFeeRate,
+        effectiveFeePct: +(activeEffectiveFeeRate * 100).toFixed(1),
+        breakEvenPrice,
+        netProfitBp,
+        netProfitPct,
+        isFeeLossWarning: netProfitBp < 0,
+      };
+    },
+    [activeEffectiveFeeRate]
+  );
+
   const feeSimResult = useMemo(() => {
     const saleBp = Math.max(1, simSalePriceEok) * 100_000_000;
     const baseTaxRate = 0.4; // 40% base market fee
     const discountRate = Math.min(
-      0.95,
+      1.0,
       (simHasTopClass ? 0.2 : 0) +
         (simHasPcRoom ? 0.3 : 0) +
-        Math.max(0, Math.min(50, simCouponPct)) / 100
+        Math.max(0, Math.min(40, simCouponPct)) / 100
     );
     const effectiveTaxRate = baseTaxRate * (1 - discountRate);
     const taxBp = Math.round(saleBp * effectiveTaxRate);
@@ -810,6 +953,100 @@ export default function MarketLabView({
         </div>
       </div>
 
+      {/* =====================================================================
+          TOP PERSISTENT BAR: 내 수수료 혜택 설정 바 (PC방 30% + TOP CLASS 20% + 쿠폰 0~40%)
+      ===================================================================== */}
+      <div className="bg-slate-900/95 border border-emerald-500/40 p-4 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <DollarSign className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="text-xs sm:text-sm font-bold text-white">
+              내 수수료 혜택 설정 바
+            </span>
+            <span className="text-[11px] text-slate-400 hidden sm:inline">
+              (기본 수수료 40% 기준 · 변경 시 전 종목 BEP 및 순수익 실시간 재계산)
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSimHasPcRoom((prev) => !prev)}
+              className={`px-3 py-1.5 text-xs font-semibold border transition flex items-center gap-1.5 ${
+                simHasPcRoom
+                  ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/50 font-bold"
+                  : "bg-slate-950 text-slate-400 border-slate-800 hover:text-white"
+              }`}
+            >
+              <span>{simHasPcRoom ? "[✓]" : "[ ]"}</span>
+              <span>프리미엄 PC방 (30%)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSimHasTopClass((prev) => !prev)}
+              className={`px-3 py-1.5 text-xs font-semibold border transition flex items-center gap-1.5 ${
+                simHasTopClass
+                  ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/50 font-bold"
+                  : "bg-slate-950 text-slate-400 border-slate-800 hover:text-white"
+              }`}
+            >
+              <span>{simHasTopClass ? "[✓]" : "[ ]"}</span>
+              <span>TOP CLASS (20%)</span>
+            </button>
+
+            <div className="flex items-center bg-slate-950 border border-slate-800 p-0.5">
+              <span className="px-2 text-[11px] text-slate-400">할인쿠폰:</span>
+              {[0, 20, 30, 40].map((cp) => (
+                <button
+                  key={cp}
+                  type="button"
+                  onClick={() => setSimCouponPct(cp)}
+                  className={`px-2.5 py-1 text-xs font-mono font-semibold transition ${
+                    simCouponPct === cp
+                      ? "bg-amber-500 text-slate-950 font-bold"
+                      : "text-slate-300 hover:text-white"
+                  }`}
+                >
+                  {cp === 0 ? "없음" : `${cp}%`}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between xl:justify-end gap-3 border-t xl:border-t-0 border-slate-800 pt-2.5 xl:pt-0">
+          <button
+            type="button"
+            onClick={() => setExcludeFeeLossCards((prev) => !prev)}
+            className={`px-2.5 py-1 text-[11px] font-semibold border transition ${
+              excludeFeeLossCards
+                ? "bg-rose-500/20 text-rose-300 border-rose-500/50"
+                : "bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200"
+            }`}
+          >
+            {excludeFeeLossCards
+              ? "[✓] 수수료 손실 종목 숨김 중"
+              : "[ ] 수수료 손실 주의 종목 제외"}
+          </button>
+
+          <div className="flex items-center gap-2 bg-slate-950 border border-emerald-500/40 px-3.5 py-1.5">
+            <span className="text-xs text-slate-300">현재 적용 실효 수수료:</span>
+            <span className="text-base font-mono font-bold text-emerald-400 tabular-nums">
+              {(activeEffectiveFeeRate * 100).toFixed(1)}%
+            </span>
+            <span className="text-[11px] text-slate-400 font-mono">
+              (손익분기 상승폭 +
+              {(
+                (1 / Math.max(0.01, 1 - activeEffectiveFeeRate) - 1) *
+                100
+              ).toFixed(1)}
+              %)
+            </span>
+          </div>
+        </div>
+      </div>
+
       {/* Sub-navigation bar */}
       <div className="flex flex-wrap gap-1.5 bg-slate-900/80 border border-slate-800 p-1.5">
         {[
@@ -868,6 +1105,197 @@ export default function MarketLabView({
       ===================================================================== */}
       {subTab === "overview" && (
         <div className="space-y-6">
+          {/* FClab Market Overview Index Card & Season/Grade Treemap Heatmap */}
+          {dashboard.market_overview_index && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <MarketOverviewIndexCard
+                overviewIndex={dashboard.market_overview_index}
+              />
+              <div className="lg:col-span-2">
+                <MarketSeasonGradeHeatmap
+                  cells={dashboard.market_overview_index.seasonGradeHeatmap}
+                  onSelectCell={(seasonCode, grade) => {
+                    const matched = dashboard.player_forecasts.find(
+                      (f) => f.season_code === seasonCode && f.grade === grade
+                    );
+                    if (matched) {
+                      setSelectedForecastEntityId(matched.entity_id);
+                      setSubTab("forecast_backtest");
+                    } else {
+                      setSubTab("sectors");
+                    }
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Actionable Market Signal & Enhancement EV Arbitrage Player Cards */}
+          <div className="bg-slate-900/85 border border-slate-800 p-5 space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Zap className="w-4 h-4 text-emerald-400" />
+                  <h3 className="text-base font-bold text-white">
+                    수수료 손익분기(BEP) · 강화 기댓값(EV) · 신호 품질 통합 실전 시그널 카드
+                  </h3>
+                  <span className="px-2 py-0.5 text-[11px] font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                    실효 수수료 {(activeEffectiveFeeRate * 100).toFixed(1)}% 실시간 반영
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-1">
+                  내 수수료 혜택 설정에 따른 손익분기 매도가(BEP)와 7일 목표가 매도 시 수수료 차감 후 순수익, 강화 데이 기대 제작 비용(N-1강+동일 OVR 재료 5장), 고강 귀속 위험을 한눈에 판독합니다.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {dashboard.player_forecasts
+                .filter((f) => {
+                  if (!excludeFeeLossCards) return true;
+                  const h7 = f.horizons.find((h) => h.horizon_days === 7) || f.horizons[0];
+                  const dyn = computeCardDynamicBepAndProfit(
+                    f.current_bp,
+                    h7?.expected_bp || f.current_bp
+                  );
+                  return !dyn.isFeeLossWarning;
+                })
+                .slice(0, 9)
+                .map((f) => {
+                  const h7 =
+                    f.horizons.find((h) => h.horizon_days === 7) ||
+                    f.horizons[0];
+                  const dyn = computeCardDynamicBepAndProfit(
+                    f.current_bp,
+                    h7?.expected_bp || f.current_bp
+                  );
+                  const sig = f.signalMetrics;
+                  const ev = sig?.enhancementEv;
+                  const statusTag = sig?.signalStatusTag || "💎 수요 유입";
+                  const qualityScore = sig?.signalQualityScore ?? 78;
+                  const isTrap = Boolean(ev?.isLiquidityTrap);
+
+                  const tagStyle =
+                    statusTag === "🔥 급등 초입"
+                      ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
+                      : statusTag === "📈 상승 지속"
+                        ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                        : statusTag === "⚠️ 고점/귀속 주의"
+                          ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                          : "bg-cyan-500/20 text-cyan-300 border-cyan-500/40";
+
+                  return (
+                    <div
+                      key={f.entity_id}
+                      onClick={() => {
+                        setSelectedForecastEntityId(f.entity_id);
+                        setSubTab("forecast_backtest");
+                      }}
+                      className="bg-slate-950/90 border border-slate-800 hover:border-emerald-500/50 p-4 space-y-3 cursor-pointer transition flex flex-col justify-between"
+                    >
+                      <div className="space-y-2">
+                        {/* Top Badges: Signal Quality Score + Status Tag + Liquidity Trap Warning */}
+                        <div className="flex flex-wrap items-center justify-between gap-1.5">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="px-2 py-0.5 text-[10px] font-mono font-bold bg-slate-800 text-emerald-300 border border-slate-700">
+                              신호 품질 {qualityScore}점
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 text-[10px] font-bold border ${tagStyle}`}
+                            >
+                              {statusTag}
+                            </span>
+                          </div>
+                          {isTrap && (
+                            <span className="px-2 py-0.5 text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/50">
+                              ⚠️ 귀속 위험 주의
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Player Name & Current Price */}
+                        <div className="flex items-start justify-between gap-2 pt-1">
+                          <div>
+                            <div className="text-sm font-bold text-white">
+                              [{f.season_code}] {f.name}{" "}
+                              <span className="text-amber-300 font-mono">
+                                +{f.grade}강
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-400">
+                              {f.primary_position} · {f.season_sector_label}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-[10px] text-slate-400">현재 매수가</div>
+                            <div className="text-sm font-mono font-bold text-white">
+                              {f.current_bp_text} BP
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* BEP & Net Profit Box (Real-time updated by Top Fee Bar) */}
+                        <div className="bg-slate-900/90 border border-slate-800 p-2.5 text-xs space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-400">
+                              손익분기 매도가 (BEP):
+                            </span>
+                            <span className="font-mono font-bold text-amber-300">
+                              {formatBpKorean(dyn.breakEvenPrice)} BP
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-400">
+                              7일 목표가 ({h7?.expected_bp_text || f.current_bp_text}) 순수익:
+                            </span>
+                            <span
+                              className={`font-mono font-bold ${
+                                dyn.netProfitBp >= 0
+                                  ? "text-emerald-400"
+                                  : "text-rose-400"
+                              }`}
+                            >
+                              {dyn.netProfitBp >= 0 ? "+" : "-"}
+                              {formatBpKorean(Math.abs(dyn.netProfitBp))} BP (
+                              {dyn.netProfitPct >= 0 ? "+" : ""}
+                              {dyn.netProfitPct}%)
+                            </span>
+                          </div>
+                          {dyn.isFeeLossWarning && (
+                            <div className="text-[10px] text-rose-300 font-semibold pt-0.5 flex items-center justify-between">
+                              <span>⚠️ 수수료 손실 주의 (상승폭이 실효 수수료율 미달)</span>
+                              <span className="font-mono">쿠폰 추가 필요</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Enhancement EV Arbitrage Strip */}
+                      {ev && (
+                        <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2 text-[11px]">
+                          <span
+                            className={`px-2 py-0.5 font-bold border ${
+                              ev.recommendation === "CRAFT_RECOMMENDED"
+                                ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                                : "bg-sky-500/15 text-sky-300 border-sky-500/30"
+                            }`}
+                          >
+                            {ev.verdictLabel ||
+                              (ev.recommendation === "CRAFT_RECOMMENDED"
+                                ? "직접 강화 유리 (기댓값 양수)"
+                                : "완제품 매수 유리")}
+                          </span>
+                          <span className="font-mono text-slate-400 truncate">
+                            기대제작: {formatBpKorean(ev.expectedCraftCost)} BP
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+
           {/* Commentary & Unobservable Disclosure */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 bg-slate-900/80 border border-slate-800 p-5 space-y-4">
@@ -1695,15 +2123,27 @@ export default function MarketLabView({
                     <button
                       key={f.entity_id}
                       onClick={() => setSelectedForecastEntityId(f.entity_id)}
-                      className={`w-full p-2.5 text-left border transition flex items-center justify-between ${
+                      className={`w-full p-2.5 text-left border transition flex items-center justify-between gap-2 ${
                         isSelected
                           ? "bg-emerald-500/15 border-emerald-500/50 text-white"
                           : "bg-slate-950/70 border-slate-800/90 text-slate-300 hover:bg-slate-900"
                       }`}
                     >
-                      <div className="min-w-0">
-                        <div className="text-xs font-bold truncate">
-                          [{f.season_code}] {f.name} +{f.grade}강
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className="text-xs font-bold truncate">
+                            [{f.season_code}] {f.name} +{f.grade}강
+                          </span>
+                          {f.signalMetrics && (
+                            <span className="px-1.5 py-0.5 text-[9px] font-mono bg-slate-800 text-emerald-300">
+                              품질 {f.signalMetrics.signalQualityScore}점
+                            </span>
+                          )}
+                          {f.signalMetrics?.enhancementEv.isLiquidityTrap && (
+                            <span className="px-1.5 py-0.5 text-[9px] font-bold bg-rose-500/20 text-rose-300">
+                              ⚠️ 귀속주의
+                            </span>
+                          )}
                         </div>
                         <div className="text-[11px] font-mono text-slate-400">
                           현재가: {f.current_bp_text} BP
@@ -1712,7 +2152,7 @@ export default function MarketLabView({
                       {h7 && (
                         <div className="text-right shrink-0">
                           <div className="text-[10px] text-slate-400">
-                            7일 기대수익
+                            {f.signalMetrics?.signalStatusTag || "7일 기대수익"}
                           </div>
                           <ReturnBadge val={h7.expected_return_pct} />
                         </div>
@@ -1733,7 +2173,7 @@ export default function MarketLabView({
                 <>
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="px-2 py-0.5 text-xs font-mono font-bold bg-slate-800 text-emerald-300">
                           {activeForecast.season_code}
                         </span>
@@ -1743,6 +2183,21 @@ export default function MarketLabView({
                         <span className="text-xs text-slate-400">
                           {activeForecast.primary_position}
                         </span>
+                        {activeForecast.signalMetrics && (
+                          <>
+                            <span className="px-2 py-0.5 text-[11px] font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                              신호 품질 {activeForecast.signalMetrics.signalQualityScore}점
+                            </span>
+                            <span className="px-2 py-0.5 text-[11px] font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+                              {activeForecast.signalMetrics.signalStatusTag}
+                            </span>
+                          </>
+                        )}
+                        {activeForecast.signalMetrics?.enhancementEv.isLiquidityTrap && (
+                          <span className="px-2 py-0.5 text-[11px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                            ⚠️ 귀속 위험 주의
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-slate-400 mt-1">
                         {activeForecast.season_sector_label} ·{" "}
@@ -1758,6 +2213,86 @@ export default function MarketLabView({
                       </div>
                     </div>
                   </div>
+
+                  {/* Real-time Fee BEP & Enhancement EV Arbitrage Panel for Selected Player */}
+                  {(() => {
+                    const h7 =
+                      activeForecast.horizons.find((h) => h.horizon_days === 7) ||
+                      activeForecast.horizons[0];
+                    const dyn = computeCardDynamicBepAndProfit(
+                      activeForecast.current_bp,
+                      h7?.expected_bp || activeForecast.current_bp
+                    );
+                    const ev = activeForecast.signalMetrics?.enhancementEv;
+                    return (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-950/90 border border-slate-800 p-4 text-xs">
+                        <div className="space-y-1.5">
+                          <div className="font-bold text-emerald-300 flex items-center justify-between">
+                            <span>
+                              내 수수료({dyn.effectiveFeePct}%) 반영 손익분기점(BEP) 분석
+                            </span>
+                            {dyn.isFeeLossWarning && (
+                              <span className="px-1.5 py-0.5 text-[10px] bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                                ⚠️ 수수료 손실 주의
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex justify-between text-slate-300">
+                            <span>손익분기 매도가 (BEP):</span>
+                            <span className="font-mono font-bold text-amber-300">
+                              {formatBpKorean(dyn.breakEvenPrice)} BP
+                            </span>
+                          </div>
+                          <div className="flex justify-between text-slate-300">
+                            <span>7일 예측가 매도 시 순수익:</span>
+                            <span
+                              className={`font-mono font-bold ${
+                                dyn.netProfitBp >= 0
+                                  ? "text-emerald-400"
+                                  : "text-rose-400"
+                              }`}
+                            >
+                              {dyn.netProfitBp >= 0 ? "+" : "-"}
+                              {formatBpKorean(Math.abs(dyn.netProfitBp))} BP (
+                              {dyn.netProfitPct >= 0 ? "+" : ""}
+                              {dyn.netProfitPct}%)
+                            </span>
+                          </div>
+                        </div>
+
+                        {ev && (
+                          <div className="space-y-1.5 border-t md:border-t-0 md:border-l border-slate-800 pt-3 md:pt-0 md:pl-4">
+                            <div className="font-bold text-cyan-300 flex items-center justify-between">
+                              <span>강화 데이 / 야수의 심장 기대 제작 비용 (EV)</span>
+                              <span
+                                className={`px-1.5 py-0.5 text-[10px] border ${
+                                  ev.recommendation === "CRAFT_RECOMMENDED"
+                                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                                    : "bg-sky-500/20 text-sky-300 border-sky-500/40"
+                                }`}
+                              >
+                                {ev.verdictLabel ||
+                                  (ev.recommendation === "CRAFT_RECOMMENDED"
+                                    ? "직접 강화 유리 (기댓값 양수)"
+                                    : "완제품 매수 유리")}
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-slate-300">
+                              <span>
+                                하위(+{(activeForecast.grade || 8) - 1}강) + 재료 5장 기대비용:
+                              </span>
+                              <span className="font-mono font-bold text-white">
+                                {formatBpKorean(ev.expectedCraftCost)} BP
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-400 leading-snug">
+                              {ev.liquidityTrapReason}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Horizon Cards (1d, 7d, 30d) */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

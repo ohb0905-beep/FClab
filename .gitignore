@@ -5,3 +5,7 @@ coverage/
 *.log
 .env*
 !.env.example
+.fclab-store.json
+backend/*.db
+backend/__pycache__/
+.aistudio/

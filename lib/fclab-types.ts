@@ -66,7 +66,7 @@ export function getEnhanceBadgeStyle(grade: number): {
       label: `+${grade}강`,
       tierName: "초월 고강",
       className:
-        "bg-gradient-to-r from-fuchsia-500/25 via-cyan-400/25 to-emerald-400/25 text-cyan-200 border-cyan-400/60 font-bold shadow-sm",
+        "bg-gradient-to-r from-fuchsia-500/20 via-cyan-500/20 to-emerald-500/20 text-cyan-700 dark:text-cyan-200 border-cyan-500/50 font-bold shadow-sm",
     };
   }
   if (grade >= 8) {
@@ -74,7 +74,7 @@ export function getEnhanceBadgeStyle(grade: number): {
       label: `+${grade}강`,
       tierName: "금카",
       className:
-        "bg-amber-500/25 text-amber-300 border-amber-400/60 font-bold",
+        "bg-amber-500/20 text-amber-700 dark:text-amber-300 border-amber-500/50 font-bold",
     };
   }
   if (grade >= 5) {
@@ -82,7 +82,7 @@ export function getEnhanceBadgeStyle(grade: number): {
       label: `+${grade}강`,
       tierName: "은카",
       className:
-        "bg-slate-300/20 text-slate-100 border-slate-300/50 font-semibold",
+        "bg-slate-400/20 text-slate-700 dark:text-slate-100 border-slate-400/50 font-semibold",
     };
   }
   if (grade >= 2) {
@@ -90,13 +90,13 @@ export function getEnhanceBadgeStyle(grade: number): {
       label: `+${grade}강`,
       tierName: "동카",
       className:
-        "bg-orange-700/25 text-orange-300 border-orange-600/50 font-medium",
+        "bg-orange-700/20 text-orange-700 dark:text-orange-300 border-orange-600/50 font-medium",
     };
   }
   return {
     label: "+1강",
     tierName: "기본",
-    className: "bg-slate-800/90 text-slate-400 border-slate-700",
+    className: "bg-slate-200 dark:bg-slate-800/90 text-slate-600 dark:text-slate-400 border-slate-300 dark:border-slate-700",
   };
 }
 
@@ -153,6 +153,13 @@ export interface PlayerCard {
   rating_score: number;
   rating_count: number;
   has_full_ability: boolean;
+  feelMetrics?: PlayerFeelMetrics;
+  rankerPickRate?: number;
+  metaTier?: string;
+  oneLineSummary?: string;
+  recommendedGrade?: number;
+  sharedTeamColor?: string;
+  sharedTeamColors?: string[];
   crawled_at: string;
 }
 
@@ -190,6 +197,7 @@ export interface CardEfficiencyResult {
   bp: number;
   bp_text: string;
   core_score: number;
+  core_stat_count?: number;
   ovr_to_core_gap: number;
   efficiency_index: number;
   score_per_log_bp: number;
@@ -199,6 +207,11 @@ export interface CardEfficiencyResult {
   grade_curve: GradeCurvePoint[];
   best_sweetspot_grade: GradeCurvePoint | null;
   traits: TraitItem[];
+  feelMetrics?: PlayerFeelMetrics;
+  priceBracketId?: string;
+  priceBracketLabel?: string;
+  userPickRate?: number;
+  oneLineSummary?: string;
   crawled_at: string;
 }
 
@@ -279,6 +292,7 @@ export interface PlayerProfileResult {
   strengths: { stat: string; value: number }[];
   weaknesses: { stat: string; value: number }[];
   six_face: Record<string, number>;
+  feelMetrics?: PlayerFeelMetrics;
   methodology_note: string;
   analyzed_at: string;
 }
@@ -379,7 +393,11 @@ export interface SquadAnalysisResult {
     bp: number;
     bp_text: string;
     primary_archetype: string;
+    feelScore?: number;
+    positionSalaryEfficiency?: number;
+    statTrapBadge?: StatTrapBadgeType;
   }[];
+  purchaseAudit?: SquadPurchaseAudit;
   systemRules?: SystemRules;
   analyzed_at: string;
 }
@@ -835,6 +853,7 @@ export interface MarketEntityForecast {
   downward_factors: string[];
   risk_factors: string[];
   basis: MarketDataBasis;
+  signalMetrics?: MarketSignalMetrics;
 }
 
 export interface MarketModelBacktestMetric {
@@ -1249,6 +1268,261 @@ export interface MarketLabDashboardPayload {
   code_audit_findings?: CodeAuditFindingItem[];
   collection_status: MarketCollectionStatus;
   normalized_series_preview: MarketNormalizedSeries[];
+  market_overview_index?: MarketOverviewIndex;
+  market_signals?: MarketSignalMetrics[];
+  default_fee_config?: MarketFeeConfig;
 }
+
+// ============================================================================
+// FC Online Domain Advanced Schemas:
+// 1. Player Feel & Real Performance Metrics (PlayerFeelMetrics)
+// 2. Transfer Market Fee, BEP, Enhancement EV & Signal Quality (MarketFeeConfig, MarketSignalMetrics, MarketOverviewIndex)
+// 3. Squad Purchase Audit & Timing Report (SquadPurchaseAudit)
+// ============================================================================
+
+export type StatTrapBadgeType = "CHEAT_KEY" | "NORMAL" | "STAT_TRAP";
+
+export interface PlayerRadarFiveMetrics {
+  /** 체감 부드러움 (0~100): 민첩성·밸런스·볼컨트롤·드리블 및 체형/신장 물리 보정 */
+  smoothness: number;
+  /** 초기 가속 (0~100): 가속력·반응속도·순간 스피드 시너지 */
+  burst: number;
+  /** 경합 버티기 (0~100): 몸싸움·밸런스·신장/몸무게 모멘텀 */
+  physicalHold: number;
+  /** 양발/결정력 (0~100): 골결정력·슛파워·약발 보정 및 슈팅 신규특성 */
+  finishing: number;
+  /** 급여 가성비 (0~100): 급여 대비 포지션 유효 코어 스탯 효율 */
+  salaryValue: number;
+}
+
+export type FeelGradeLabelType = "좋은 체감" | "보통 체감" | "무거운 체감";
+
+export interface SimilarAlternativePlayerItem {
+  spid: number;
+  name: string;
+  season: string;
+  seasonImg?: string;
+  thumbUrl?: string;
+  position?: string;
+  grade?: number;
+  bp?: number;
+  bpText?: string;
+  /** 공유하는 핵심 팀컬러(소속 클럽 또는 국가대표) */
+  sharedTeamColor?: string;
+  sharedTeamColors?: string[];
+  /** 코사인 유사도 (0~1 또는 0~100 스케일 호환) */
+  similarity: number;
+  /** 기준 카드 대비 가격 차이 비율 (예: -0.62 -> 62% 저렴) */
+  priceDiffRatio: number;
+  /** 대체 선수의 인게임 체감 지수 (0~100) */
+  feelScore: number;
+  /** 대체 선수의 3단계 체감 배지 */
+  feelBadgeLabel?: FeelGradeLabelType;
+}
+
+export interface PlayerFeelMetrics {
+  /** 표기 스탯 점수 (0~100) */
+  statScore: number;
+  /** 인게임 체감 지수 (0~100: 반응속도-밸런스-민첩성 연쇄 및 체형/신장/몸무게 물리 페널티 반영) */
+  feelScore: number;
+  /** 뻥스탯 지수: 표기 OVR/스탯 대비 실제 체감·핵심 스탯 괴리도 (양수일수록 표기 대비 체감 우수, 음수일수록 스탯 함정) */
+  statTrapIndex: number;
+  /** 좋은 체감 ('CHEAT_KEY') | 보통 체감 ('NORMAL') | 무거운 체감 ('STAT_TRAP') */
+  statTrapBadge: StatTrapBadgeType;
+  /** 체감 배지 한글 라벨 (3단계: '좋은 체감' | '보통 체감' | '무거운 체감') */
+  statTrapLabel?: "좋은 체감" | "보통 체감" | "무거운 체감" | "💎 체감 괴물" | "일반" | "⚠️ 스탯 대비 둔중함";
+  /** 3단계 체감 등급 라벨 ('좋은 체감' | '보통 체감' | '무거운 체감') */
+  feelGradeLabel?: FeelGradeLabelType;
+  /** 8강(적응도 0) 기준 체감 5대 핵심 스탯(민첩성·밸런스·드리블·볼 컨트롤·반응 속도) 가중 평균 */
+  feel5Avg8?: number;
+  /** 8강(적응도 0) 기준 민첩성 스탯 */
+  agility8?: number;
+  /** 8강(적응도 0) 기준 밸런스 스탯 */
+  balance8?: number;
+  /** 체형/신장/몸무게 조건으로 인해 '좋은 체감'에서 원천 제외되었는지 여부 */
+  isPhysicalExcludedFromGoodFeel?: boolean;
+  /** 체감 3단계 판정 사유 요약 */
+  feelVerdictReason?: string;
+  /** 포지션 핵심 유효 스탯을 급여(Salary)로 나눈 실효 급여 효율 점수 */
+  positionSalaryEfficiency: number;
+  /** 실전 체감 5각형 데이터 */
+  radarFive: PlayerRadarFiveMetrics;
+  /** 자동 생성 플레이스타일 태그 배열 (예: ['#양발잡이', '#고유체형급체감', '#침투특화', '#중거리포', '#역동작주의']) */
+  playstyleTags: string[];
+  /** 동일 팀컬러 + 동일 포지션 기반 가성비 대체 선수 TOP 3 리스트 */
+  similarAlternatives: SimilarAlternativePlayerItem[];
+  /** 상위 랭커 포지션별 실사용 픽률(%) */
+  rankerPickRate: number;
+}
+
+export type MarketCouponDiscountRate = 0 | 0.2 | 0.3 | 0.4;
+
+export interface MarketFeeConfig {
+  /** PC방 기본 수수료 할인 (30% = 0.30) 적용 여부 */
+  hasPcRoom: boolean;
+  /** TOP CLASS 수수료 할인 (20% = 0.20) 적용 여부 */
+  hasTopClass: boolean;
+  /** 수수료 할인 쿠폰 할인율 (0 | 0.2 | 0.3 | 0.4) */
+  couponRate: MarketCouponDiscountRate;
+}
+
+export type EnhancementRecommendationType =
+  | "BUY_COMPLETE"
+  | "CRAFT_RECOMMENDED";
+
+export interface EnhancementEvAnalysis {
+  /** 분석 대상 강화 단계 (예: 8, 9, 10) */
+  targetGrade?: number;
+  /** 이적시장 완제품 현재 매수가 (BP) */
+  marketPrice: number;
+  /** N-1강 하위 단계 카드 가격 (BP) */
+  prevGradePrice?: number;
+  /** 동일 OVR 풀케미 재료 5장 합산 비용 (BP) */
+  fodder5Cost?: number;
+  /** 풀케미 기준 강화 성공 확률 (0~1, 예: 8강 0.25) */
+  successProb?: number;
+  /** 하위 강화 단계 카드 + 강화 재료 5장 비용을 성공 확률로 나눈 기대 제작 비용 (BP) */
+  expectedCraftCost: number;
+  /** 기대 절감액 또는 손실액 (marketPrice - expectedCraftCost) */
+  costDiffBp?: number;
+  /** 완제품 구매 추천 ('BUY_COMPLETE') vs 직접 강화 제작 추천 ('CRAFT_RECOMMENDED') */
+  recommendation: EnhancementRecommendationType;
+  /** 한글 판정 라벨 ('완제품 매수 유리' | '직접 강화 유리 (기댓값 양수)') */
+  verdictLabel?: "완제품 매수 유리" | "직접 강화 유리 (기댓값 양수)";
+  /** 고강 귀속 위험 여부 (호가 공백·거래 절벽·고점 정체·매물 적체 위험) */
+  isLiquidityTrap: boolean;
+  /** 귀속 및 강화 기댓값 진단 코멘트 */
+  liquidityTrapReason?: string;
+}
+
+export type MarketSignalStatusTag =
+  | "🔥 급등 초입"
+  | "💎 수요 유입"
+  | "📈 상승 지속"
+  | "⚠️ 고점/귀속 주의";
+
+export interface MarketSignalMetrics {
+  spid?: number;
+  name?: string;
+  seasonCode?: string;
+  grade?: number;
+  currentBp?: number;
+  targetSellBp?: number;
+  feeConfig: MarketFeeConfig;
+  /** 실효 수수료율: 0.40 * (1 - Math.min(1.0, totalDiscountRate)) */
+  effectiveFeeRate: number;
+  /** 수수료 반영 손익분기 매도가 (BEP = Math.ceil(buyPrice / (1 - effectiveFeeRate))) */
+  breakEvenPrice: number;
+  /** 목표 매도가(또는 7일 기대 예측가) 매도 시 수수료 차감 후 순수익 (BP) */
+  netProfitBp: number;
+  /** 순수익률 (%) */
+  netProfitRatePct?: number;
+  /** 수수료 차감 후 순수익이 음수인지 여부 ('수수료 손실 주의') */
+  isFeeLossWarning?: boolean;
+  /** 강화 제작 기댓값 분석 */
+  enhancementEv: EnhancementEvAnalysis;
+  /** 신호 품질 점수 (0~100점) */
+  signalQualityScore: number;
+  /** 신호 상태 태그 */
+  signalStatusTag: MarketSignalStatusTag;
+}
+
+export interface MarketOverviewHeatmapCell {
+  seasonCode: string;
+  seasonName: string;
+  grade: number;
+  avgBp: number;
+  changePct1d: number;
+  changePct7d: number;
+  sampleCount: number;
+  signalTag?: MarketSignalStatusTag;
+}
+
+export interface MarketOverviewIndex {
+  /** FClab 마켓 종합 지수 (기준 = 100.0) */
+  currentIndex: number;
+  /** 전일 대비 등락률 (%) */
+  changePct1d: number;
+  /** 7일 대비 등락률 (%) */
+  changePct7d?: number;
+  /** 상승 종목 수 */
+  advancingCount: number;
+  /** 보합 종목 수 */
+  flatCount: number;
+  /** 하락 종목 수 */
+  decliningCount: number;
+  /** 시즌별·강화별 등락 히트맵 데이터 배열 */
+  seasonGradeHeatmap: MarketOverviewHeatmapCell[];
+  /** 산출 시각 */
+  updatedAt?: string;
+}
+
+export interface SquadPlayerPricePercentileItem {
+  slotId: string;
+  slotPosition: string;
+  spid: number;
+  name: string;
+  seasonCode: string;
+  seasonImg?: string;
+  thumbUrl?: string;
+  grade: number;
+  currentBp: number;
+  min30dBp: number;
+  max30dBp: number;
+  /** 30일 시세 백분위 위치 (0 = 30일 최저가 바닥권, 100 = 30일 최고가 고점권) */
+  pricePercentile30d: number;
+  /** 선수별 매수 타이밍 판정 ('저점 매수 적기' | '적정 구간' | '단기 고점 주의') */
+  buyTimingVerdict: "저점 매수 적기" | "적정 구간" | "단기 고점 주의";
+}
+
+export interface SquadOverinvestedPositionWarning {
+  slotId: string;
+  slotPosition: string;
+  currentPlayer: {
+    spid: number;
+    name: string;
+    seasonCode: string;
+    seasonImg?: string;
+    thumbUrl?: string;
+    grade: number;
+    salary: number;
+    bp: number;
+    feelScore: number;
+    positionSalaryEfficiency: number;
+    statTrapBadge?: StatTrapBadgeType;
+  };
+  warningReason: string;
+  savedSalary: number;
+  savedBp: number;
+  recommendedAlternatives: SimilarAlternativePlayerItem[];
+}
+
+export interface SquadPurchaseAudit {
+  /** 스쿼드 총 구단가치 (BP) */
+  totalBp: number;
+  /** 스쿼드 전체 재판매 시 예상 수수료 손실액 (BP, 기본 PC방+탑클 20% 기준) */
+  estimatedResaleLossBp: number;
+  /** PC방(30%)+탑클(20%) 기본 20% 실효 수수료 기준 재판매 손실액 (BP) */
+  resaleLossPcTopBp?: number;
+  /** PC방(30%)+탑클(20%)+30% 할인쿠폰(실효 수수료 8%) 적용 시 재판매 손실액 (BP) */
+  resaleLossWith30CouponBp?: number;
+  /** PC방(30%)+탑클(20%)+40% 할인쿠폰(실효 수수료 4%) 적용 시 재판매 손실액 (BP) */
+  resaleLossWith40CouponBp?: number;
+  /** 40% 할인쿠폰 단독(PC방/탑클 미적용, 실효 수수료 24%) 적용 시 재판매 손실액 (BP) */
+  resaleLossCouponOnly40Bp?: number;
+  /** 적용된 수수료 설정 */
+  appliedFeeConfig: MarketFeeConfig;
+  /** 실효 수수료율 */
+  effectiveFeeRate: number;
+  /** 스쿼드 전체 매수 타이밍 종합 점수 (0~100, 높을수록 저점·안전 매수 구간) */
+  overallBuyTimingScore: number;
+  /** 매수 타이밍 한줄 요약 라벨 */
+  buyTimingSummaryLabel?: string;
+  /** 선수별 30일 시세 백분위 위치 리스트 */
+  playerPricePercentiles: SquadPlayerPricePercentileItem[];
+  /** 급여 과투자 포지션 경고 및 가성비 대체 카드 추천 리스트 */
+  overinvestedPositions: SquadOverinvestedPositionWarning[];
+}
+
 
 

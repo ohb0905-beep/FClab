@@ -1,1155 +1,1472 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
-import {
-  Search,
-  RefreshCw,
-  Scale,
-  ArrowRight,
-  Compass,
-  Info,
-  CheckCircle2,
-  XCircle,
-  ShieldCheck,
-  Sparkles,
-  ChevronDown,
-  ChevronUp,
-  SlidersHorizontal,
-} from "lucide-react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   PlayerCard,
   PlayerProfileResult,
   ArchetypeFitItem,
+  SimilarAlternativePlayerItem,
   SystemRules,
   DEFAULT_SYSTEM_RULES,
+  FeelGradeLabelType,
   getEnhanceOvrBoost,
   getEnhanceBadgeStyle,
-  getPositionToneClass,
-  getStatColorClass,
+  formatBpKorean,
 } from "@/lib/fclab-types";
 import {
+  HexRadarChart,
   PlayerAvatar,
   SeasonBadge,
-  HexRadarChart,
 } from "./VisualCharts";
+import {
+  UserCheck,
+  Compass,
+  ShieldAlert,
+  CheckCircle2,
+  XCircle,
+  ArrowLeftRight,
+  ChevronDown,
+  ChevronUp,
+  Layers,
+  Feather,
+  Search,
+  RefreshCw,
+  Info,
+  Users,
+} from "lucide-react";
 
 interface PlayerProfileLabViewProps {
+  rules?: SystemRules;
+  systemRules?: SystemRules;
+  initialCards?: PlayerCard[];
   initialSpid?: number | null;
   initialCompareSpid?: number | null;
-  rules?: SystemRules;
-  onInspectInPlayerLab: (spid: number) => void;
-  onSendToEfficiencyLab: (name: string, position: string) => void;
+  onInspectPlayer?: (spid: number) => void;
+  onInspectInPlayerLab?: (spid: number) => void;
+  onSendToEfficiencyLab?: (playerName: string, position: string) => void;
 }
 
-const ALL_ANALYSIS_POSITIONS = [
-  "ST",
-  "CF",
-  "LW",
-  "RW",
-  "LM",
-  "RM",
-  "CAM",
-  "CM",
-  "CDM",
-  "CB",
-  "LB",
-  "RB",
-  "LWB",
-  "RWB",
-  "GK",
+const POS_LINE_STYLES: Record<
+  string,
+  { badge: string; text: string; bar: string }
+> = {
+  FW: {
+    badge:
+      "bg-rose-500/15 text-rose-600 dark:text-rose-300 border-rose-500/30",
+    text: "text-rose-600 dark:text-rose-400",
+    bar: "bg-rose-500",
+  },
+  MF: {
+    badge:
+      "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border-emerald-500/30",
+    text: "text-emerald-600 dark:text-emerald-400",
+    bar: "bg-emerald-500",
+  },
+  DF: {
+    badge: "bg-sky-500/15 text-sky-600 dark:text-sky-300 border-sky-500/30",
+    text: "text-sky-600 dark:text-sky-400",
+    bar: "bg-sky-500",
+  },
+  GK: {
+    badge:
+      "bg-amber-500/15 text-amber-600 dark:text-amber-300 border-amber-500/30",
+    text: "text-amber-600 dark:text-amber-400",
+    bar: "bg-amber-500",
+  },
+};
+
+const QUICK_POPULAR_KEYWORDS = [
+  { label: "로드리 (수비형 MF 검증)", query: "로드리" },
+  { label: "굴리트 (육각형 MF 검증)", query: "굴리트" },
+  { label: "벨링엄 (중앙 MF 검증)", query: "벨링엄" },
+  { label: "외데고르 (공격형 MF 검증)", query: "외데고르" },
+  { label: "손흥민 (좋은 체감 검증)", query: "손흥민" },
+  { label: "음바페", query: "음바페" },
+  { label: "호날두", query: "호날두" },
 ];
 
+function getPosLine(pos: string): "FW" | "MF" | "DF" | "GK" {
+  const p = (pos || "").toUpperCase();
+  if (["ST", "CF", "LW", "RW"].includes(p)) return "FW";
+  if (["CAM", "CM", "CDM", "LM", "RM"].includes(p)) return "MF";
+  if (["CB", "LB", "RB", "LWB", "RWB"].includes(p)) return "DF";
+  return "GK";
+}
+
+function getFeelBadgeInfo(
+  feelGradeLabel?: FeelGradeLabelType,
+  fallbackLabel?: string
+): {
+  label: FeelGradeLabelType;
+  style: string;
+  dotColor: string;
+  desc: string;
+} {
+  const resolved: FeelGradeLabelType =
+    feelGradeLabel ||
+    (fallbackLabel === "좋은 체감" || fallbackLabel === "CHEAT_KEY"
+      ? "좋은 체감"
+      : fallbackLabel === "무거운 체감" || fallbackLabel === "STAT_TRAP"
+      ? "무거운 체감"
+      : "보통 체감");
+
+  if (resolved === "좋은 체감") {
+    return {
+      label: "좋은 체감",
+      style:
+        "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/35",
+      dotColor: "bg-emerald-500",
+      desc: "체형(비건장)·피지컬(<186cm·<80kg) 통과 + 8강 5대 체감 평균 128 이상 & 민·밸 124 이상",
+    };
+  }
+  if (resolved === "보통 체감") {
+    return {
+      label: "보통 체감",
+      style:
+        "bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/35",
+      dotColor: "bg-sky-500",
+      desc: "준수한 방향 전환 반응성 (신장 186cm↑·몸무게 80kg↑·건장 체형은 최대 보통 체감 제한)",
+    };
+  }
+  return {
+    label: "무거운 체감",
+    style:
+      "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/35",
+    dotColor: "bg-rose-500",
+    desc: "역동작 및 선회 반경이 큰 피지컬/체형 또는 체감 스탯 하위 구간",
+  };
+}
+
+function computeCardQuickFeelLabel(
+  c: PlayerCard,
+  boost8: number
+): FeelGradeLabelType {
+  if (c.feelMetrics?.feelGradeLabel) {
+    return c.feelMetrics.feelGradeLabel;
+  }
+  const isExcluded =
+    (c.body_type || "").includes("건장") || c.height >= 186 || c.weight >= 80;
+  const agi8 = (c.stats?.["민첩성"] || 80) + boost8;
+  const bal8 = (c.stats?.["밸런스"] || 80) + boost8;
+  const drb8 = (c.stats?.["드리블"] || 80) + boost8;
+  const bc8 = (c.stats?.["볼 컨트롤"] || 80) + boost8;
+  const rea8 = (c.stats?.["반응 속도"] || 80) + boost8;
+  const avg8 =
+    agi8 * 0.28 + bal8 * 0.22 + drb8 * 0.22 + bc8 * 0.16 + rea8 * 0.12;
+  if (!isExcluded && avg8 >= 128 && agi8 >= 124 && bal8 >= 124) {
+    return "좋은 체감";
+  }
+  if (avg8 >= 115 && !(c.height >= 190 && c.weight >= 84 && avg8 < 123)) {
+    return "보통 체감";
+  }
+  return "무거운 체감";
+}
+
 export default function PlayerProfileLabView({
+  rules,
+  systemRules: systemRulesProp,
+  initialCards = [],
   initialSpid,
   initialCompareSpid,
-  rules = DEFAULT_SYSTEM_RULES,
+  onInspectPlayer,
   onInspectInPlayerLab,
   onSendToEfficiencyLab,
 }: PlayerProfileLabViewProps) {
-  const maxEnhanceLevel = rules.maxEnhanceLevel || 13;
-  const [searchQuery, setSearchQuery] = useState("손흥민");
-  const [searchResults, setSearchResults] = useState<PlayerCard[]>([]);
-  const [searching, setSearching] = useState(false);
+  const systemRules = systemRulesProp || rules || DEFAULT_SYSTEM_RULES;
+  const handleInspect = onInspectPlayer || onInspectInPlayerLab;
 
-  const [selectedSpid, setSelectedSpid] = useState<number>(
-    initialSpid || 280200104
+  const [cardsPool, setCardsPool] = useState<PlayerCard[]>(initialCards);
+  // 요구사항 1: 강화 단계 기본값 8강, 적응도 기본값 0, 초기 진입 시 검색 선수 비워둠
+  const [selectedSpid, setSelectedSpid] = useState<number>(initialSpid || 0);
+  const [compareSpid, setCompareSpid] = useState<number>(
+    initialCompareSpid || 0
   );
-  const [compareSpid, setCompareSpid] = useState<number | null>(
-    initialCompareSpid || null
-  );
-  const [grade, setGrade] = useState<number>(5);
-  const [teamColorBonus, setTeamColorBonus] = useState<number>(3);
+  const [grade, setGrade] = useState<number>(8);
+  const [teamColorBonus, setTeamColorBonus] = useState<number>(0);
   const [targetPosition, setTargetPosition] = useState<string>("");
-  const [showOtherPositions, setShowOtherPositions] = useState<boolean>(false);
-  const [showCriteriaDetail, setShowCriteriaDetail] = useState<boolean>(true);
 
-  const [profileData, setProfileData] = useState<{
-    card: PlayerCard;
-    profile: PlayerProfileResult;
-    compareProfile: PlayerProfileResult | null;
-  } | null>(null);
-  const [loadingProfile, setLoadingProfile] = useState(false);
-  const [selectedArchetype, setSelectedArchetype] =
-    useState<ArchetypeFitItem | null>(null);
+  // 초기 검색창 비워둠
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [searchingCards, setSearchingCards] = useState<boolean>(false);
+  const [feelFilter, setFeelFilter] = useState<
+    "ALL" | "좋은 체감" | "보통 체감" | "무거운 체감"
+  >("ALL");
 
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [primaryCard, setPrimaryCard] = useState<PlayerCard | null>(null);
+  const [primaryProfile, setPrimaryProfile] =
+    useState<PlayerProfileResult | null>(null);
+
+  const [compareCard, setCompareCard] = useState<PlayerCard | null>(null);
+  const [compareProfile, setCompareProfile] =
+    useState<PlayerProfileResult | null>(null);
+
+  // 접기/펴기 토글 상태
+  const [showFeelDetail, setShowFeelDetail] = useState<boolean>(false);
+  const [showArchetypeDetail, setShowArchetypeDetail] = useState<boolean>(false);
+
+  // 초기 카드 풀 로드 (자동 선수 선택은 하지 않음)
   useEffect(() => {
-    let active = true;
-    Promise.resolve().then(() => {
-      if (!active) return;
-      if (initialSpid) {
-        setSelectedSpid(initialSpid);
-        setTargetPosition("");
-      }
-      if (initialCompareSpid !== undefined) {
-        setCompareSpid(initialCompareSpid);
-      }
-    });
-    return () => {
-      active = false;
-    };
-  }, [initialSpid, initialCompareSpid]);
-
-  const runSearch = useCallback(async (q: string) => {
-    setSearching(true);
-    try {
-      const params = new URLSearchParams();
-      if (q.trim()) params.set("q", q.trim());
-      params.set("sort", "ovr_desc");
-      const res = await fetch(`/api/fclab/v1/players/search?${params.toString()}`);
-      const json = await res.json();
-      if (json.ok && Array.isArray(json.items)) {
-        setSearchResults(json.items);
-      }
-    } catch {
-      // ignore transient error
-    } finally {
-      setSearching(false);
+    if (initialCards && initialCards.length > 0) {
+      setCardsPool((prev) => {
+        const map = new Map<number, PlayerCard>();
+        for (const c of prev) map.set(c.spid, c);
+        for (const c of initialCards) map.set(c.spid, c);
+        return Array.from(map.values());
+      });
+      return;
     }
-  }, []);
+    let mounted = true;
+    fetch("/api/fclab/v1/players/search?q=")
+      .then((r) => r.json())
+      .then((data) => {
+        if (mounted && data.ok && Array.isArray(data.cards)) {
+          setCardsPool((prev) => {
+            const map = new Map<number, PlayerCard>();
+            for (const c of prev) map.set(c.spid, c);
+            for (const c of data.cards) map.set(c.spid, c);
+            return Array.from(map.values());
+          });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, [initialCards]);
+
+  // 외부에서 initialSpid가 전달된 경우에만 선택
+  useEffect(() => {
+    if (initialSpid && initialSpid > 0) {
+      setSelectedSpid(initialSpid);
+    }
+  }, [initialSpid]);
 
   useEffect(() => {
-    let active = true;
-    Promise.resolve().then(() => {
-      if (active) runSearch(searchQuery);
-    });
-    return () => {
-      active = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (initialCompareSpid && initialCompareSpid > 0) {
+      setCompareSpid(initialCompareSpid);
+    }
+  }, [initialCompareSpid]);
 
-  const loadProfileAnalysis = useCallback(
-    async (
-      spid: number,
-      g: number,
-      tc: number,
-      compSpid: number | null,
-      posOverride: string
-    ) => {
-      if (!spid) return;
-      setLoadingProfile(true);
+  // 선수 키워드 검색 핸들러
+  const handleSearchPlayers = useCallback(
+    async (overrideKeyword?: string) => {
+      const q = (
+        overrideKeyword !== undefined ? overrideKeyword : searchQuery
+      ).trim();
+      if (!q) return;
+      setSearchingCards(true);
+      setError(null);
       try {
-        const params = new URLSearchParams({
-          spid: String(spid),
-          grade: String(g),
-          team_color: String(tc),
-        });
-        if (compSpid) {
-          params.set("compare_spid", String(compSpid));
-        }
-        if (posOverride) {
-          params.set("pos", posOverride);
-        }
         const res = await fetch(
-          `/api/fclab/v1/profile/analyze?${params.toString()}`
+          `/api/fclab/v1/players/search?q=${encodeURIComponent(q)}`
         );
-        const json = await res.json();
-        if (json.ok && json.profile) {
-          setProfileData({
-            card: json.card,
-            profile: json.profile,
-            compareProfile: json.compare_profile || null,
+        const data = await res.json();
+        if (data.ok && Array.isArray(data.cards) && data.cards.length > 0) {
+          setCardsPool((prev) => {
+            const map = new Map<number, PlayerCard>();
+            for (const c of data.cards) map.set(c.spid, c);
+            for (const c of prev) {
+              if (!map.has(c.spid)) map.set(c.spid, c);
+            }
+            return Array.from(map.values());
           });
-          setSelectedArchetype(
-            json.profile.primary_archetype ||
-              json.profile.position_archetypes?.[0] ||
-              null
-          );
+          setSelectedSpid(data.cards[0].spid);
+          setTargetPosition("");
+        } else {
+          setError(`'${q}' 검색 결과가 없습니다. 다른 선수명을 입력해보세요.`);
         }
-      } catch {
-        // ignore error
+      } catch (err: any) {
+        setError(err.message || "선수 검색 중 오류가 발생했습니다.");
       } finally {
-        setLoadingProfile(false);
+        setSearchingCards(false);
       }
     },
-    []
+    [searchQuery]
   );
+
+  // 프로필 분석 API 호출
+  const fetchProfileAnalysis = useCallback(async () => {
+    if (!selectedSpid) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        spid: String(selectedSpid),
+        grade: String(grade),
+        team_color: String(teamColorBonus),
+      });
+      if (compareSpid > 0 && compareSpid !== selectedSpid) {
+        params.set("compare_spid", String(compareSpid));
+      }
+      if (targetPosition) {
+        params.set("pos", targetPosition);
+      }
+
+      const res = await fetch(
+        `/api/fclab/v1/profile/analyze?${params.toString()}`
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "선수 유형 분석에 실패했습니다.");
+      }
+
+      setPrimaryCard(data.card || null);
+      setPrimaryProfile(data.profile || null);
+      setCompareCard(data.compareCard || null);
+      setCompareProfile(data.compareProfile || null);
+    } catch (err: any) {
+      setError(err.message || "네트워크 오류가 발생했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedSpid, compareSpid, grade, teamColorBonus, targetPosition]);
 
   useEffect(() => {
-    let active = true;
-    Promise.resolve().then(() => {
-      if (active) {
-        loadProfileAnalysis(
-          selectedSpid,
-          grade,
-          teamColorBonus,
-          compareSpid,
-          targetPosition
-        );
-      }
+    if (selectedSpid > 0) {
+      fetchProfileAnalysis();
+    }
+  }, [fetchProfileAnalysis, selectedSpid]);
+
+  // 드롭다운에 표시할 카드 목록 필터링
+  const filteredCardsPool = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return cardsPool.filter((c) => {
+      if (!q) return true;
+      return (
+        c.name.toLowerCase().includes(q) ||
+        c.season_code.toLowerCase().includes(q) ||
+        c.primary_position.toLowerCase().includes(q)
+      );
     });
-    return () => {
-      active = false;
-    };
-  }, [
-    selectedSpid,
-    grade,
-    teamColorBonus,
-    compareSpid,
-    targetPosition,
-    loadProfileAnalysis,
-  ]);
+  }, [cardsPool, searchQuery]);
 
-  const profile = profileData?.profile;
-  const card = profileData?.card;
-  const compareProfile = profileData?.compareProfile;
+  const topArchetype: ArchetypeFitItem | null =
+    primaryProfile?.primary_archetype ||
+    primaryProfile?.position_archetypes?.[0] ||
+    null;
 
-  const positionArchetypes =
-    profile?.position_archetypes && profile.position_archetypes.length > 0
-      ? profile.position_archetypes
-      : (profile?.all_archetypes || []).slice(0, 4);
+  const feelMetrics =
+    primaryProfile?.feelMetrics || primaryCard?.feelMetrics || null;
 
-  const crossPositionArchetypes = (profile?.all_archetypes || []).filter(
-    (item) => !positionArchetypes.some((pa) => pa.id === item.id)
+  const feelBadge = getFeelBadgeInfo(
+    feelMetrics?.feelGradeLabel,
+    feelMetrics?.statTrapLabel || feelMetrics?.statTrapBadge
   );
 
-  const completeEval = profile?.complete_evaluation;
-  const physFoot = profile?.physical_foot_analysis;
+  // 미드필더(CAM/CM/CDM) 여부 확인
+  const isCentralMidfielder = useMemo(() => {
+    const pos = (
+      targetPosition ||
+      primaryProfile?.analyzed_position ||
+      primaryCard?.primary_position ||
+      ""
+    ).toUpperCase();
+    return ["CAM", "CM", "CDM"].includes(pos);
+  }, [targetPosition, primaryProfile, primaryCard]);
+
+  const boost8 = getEnhanceOvrBoost(8, systemRules.enhanceOvrBoosts);
+  const currentGradeBadge = getEnhanceBadgeStyle(grade);
 
   return (
     <div className="space-y-6">
-      {/* Header & Search Controls */}
-      <div className="bg-[#131B2E] border border-slate-800/80 rounded-xl p-5">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+      {/* 상단 컨트롤 바 */}
+      <div className="bg-white dark:bg-[#131B2E] border border-slate-200 dark:border-slate-800/90 rounded-2xl p-5 shadow-sm">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800/80">
           <div>
-            <span className="text-xs font-mono uppercase tracking-wider text-emerald-400">
-              PLAYER PROFILE LAB · POSITION-SPECIFIC ARCHETYPE &amp; COMPLETE GATE
-            </span>
-            <h2 className="text-xl font-bold text-slate-100 mt-0.5">
-              포지션별 선수 유형 특화도 &amp; 완성형 5대 기준 정밀 분석
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-500/15 text-indigo-600 dark:text-indigo-300 border border-indigo-500/30 flex items-center gap-1">
+                <Compass className="w-3.5 h-3.5" />
+                실사용 체감 3단계 & 미드필더 4분류 정밀 진단
+              </span>
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-300 border border-emerald-500/25">
+                기본 +8강 · 적응도 0 기준
+              </span>
+            </div>
+            <h2 className="text-xl font-extrabold text-slate-900 dark:text-white mt-1.5 tracking-tight">
+              체형·선회반경 기반 3단계 체감 판정 & 포지션별 유형 분류
             </h2>
-            <p className="text-sm text-slate-400 mt-1">
-              단순 OVR 비례 점수를 배제하고 <strong className="text-slate-200">역할 수행 능력(절대 수준)</strong>과{" "}
-              <strong className="text-emerald-300">유형 특화도(상대적 플레이 성향)</strong>를 분리 산출하며,{" "}
-              <strong className="text-amber-300">완성형</strong>은 5대 엄격 기준을 모두 통과한 경우에만 부여합니다.
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              건장·186cm↑·80kg↑ 피지컬 필터와 8강 5대 체감 컷오프(평균 128·민밸 124)를 적용해 실제 인게임 체감과 선수 유형을 정확히 판별합니다.
             </p>
           </div>
 
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              runSearch(searchQuery);
-            }}
-            className="flex flex-wrap items-center gap-2.5"
-          >
-            <div className="relative w-56">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="선수명 검색 (예: 홀란, 굴리트, 호날두)"
-                className="w-full bg-[#0B0F17] border border-slate-700/80 focus:border-emerald-500 rounded-lg pl-9 pr-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none"
-              />
-            </div>
-
-            <div className="flex items-center gap-1.5 bg-[#0B0F17] border border-slate-800 rounded-lg px-2.5 py-1.5">
-              <span className="text-xs text-slate-400 whitespace-nowrap">
-                강화
+          {/* 우측 강화 단계 & 적응도(팀컬러) 설정 */}
+          <div className="flex flex-wrap items-center gap-3">
+            {/* 강화 단계 (기본 8강) */}
+            <div className="flex items-center gap-2 bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-1.5">
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">
+                강화 단계
               </span>
               <select
                 value={grade}
                 onChange={(e) => setGrade(Number(e.target.value))}
-                className="bg-transparent text-xs font-mono font-semibold text-emerald-400 outline-none"
+                className="bg-transparent text-xs font-extrabold text-amber-600 dark:text-amber-400 focus:outline-none cursor-pointer"
               >
-                {Array.from({ length: maxEnhanceLevel }, (_, idx) => idx + 1).map(
-                  (g) => (
-                    <option key={g} value={g} className="bg-[#0B0F17]">
-                      +{g}강 (+
-                      {getEnhanceOvrBoost(g, rules.enhanceOvrBoosts)})
-                    </option>
-                  )
-                )}
-              </select>
-            </div>
-
-            <div className="flex items-center gap-1.5 bg-[#0B0F17] border border-slate-800 rounded-lg px-2.5 py-1.5">
-              <span className="text-xs text-slate-400 whitespace-nowrap">
-                팀컬러
-              </span>
-              <select
-                value={teamColorBonus}
-                onChange={(e) => setTeamColorBonus(Number(e.target.value))}
-                className="bg-transparent text-xs font-mono font-semibold text-sky-400 outline-none"
-              >
-                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((tc) => (
-                  <option key={tc} value={tc} className="bg-[#0B0F17]">
-                    +{tc}
+                {Array.from(
+                  { length: systemRules.maxEnhanceLevel },
+                  (_, i) => i + 1
+                ).map((g) => (
+                  <option
+                    key={g}
+                    value={g}
+                    className="bg-white dark:bg-[#0B0F17] text-slate-900 dark:text-slate-200"
+                  >
+                    +{g}강 (+{getEnhanceOvrBoost(g, systemRules.enhanceOvrBoosts)}{" "}
+                    OVR)
                   </option>
                 ))}
               </select>
             </div>
 
-            <button
-              type="submit"
-              disabled={searching}
-              className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-sm flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
-            >
-              {searching ? (
-                <RefreshCw className="w-4 h-4 animate-spin" />
-              ) : (
-                <Search className="w-4 h-4" />
-              )}
-              선수 검색
-            </button>
-          </form>
+            {/* 적응도 / 팀컬러 보너스 (기본 0) */}
+            <div className="flex items-center gap-2 bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-1.5">
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">
+                적응도/팀컬러
+              </span>
+              <select
+                value={teamColorBonus}
+                onChange={(e) => setTeamColorBonus(Number(e.target.value))}
+                className="bg-transparent text-xs font-extrabold text-emerald-600 dark:text-emerald-400 focus:outline-none cursor-pointer"
+              >
+                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((tc) => (
+                  <option
+                    key={tc}
+                    value={tc}
+                    className="bg-white dark:bg-[#0B0F17] text-slate-900 dark:text-slate-200"
+                  >
+                    {tc === 0 ? "0 (적응도 없음 · 순수 스탯)" : `+${tc} 보너스`}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 포지션 기준 오버라이드 */}
+            <div className="flex items-center gap-2 bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-1.5">
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">
+                기준 포지션
+              </span>
+              <select
+                value={targetPosition}
+                onChange={(e) => setTargetPosition(e.target.value)}
+                className="bg-transparent text-xs font-extrabold text-indigo-600 dark:text-indigo-400 focus:outline-none cursor-pointer"
+              >
+                <option
+                  value=""
+                  className="bg-white dark:bg-[#0B0F17] text-slate-900 dark:text-slate-200"
+                >
+                  주포지션 자동 ({primaryCard?.primary_position || "기본"})
+                </option>
+                {[
+                  "ST",
+                  "CF",
+                  "LW",
+                  "RW",
+                  "CAM",
+                  "CM",
+                  "CDM",
+                  "LM",
+                  "RM",
+                  "CB",
+                  "LB",
+                  "RB",
+                  "GK",
+                ].map((pos) => (
+                  <option
+                    key={pos}
+                    value={pos}
+                    className="bg-white dark:bg-[#0B0F17] text-slate-900 dark:text-slate-200"
+                  >
+                    {pos} 기준 평가
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
         </div>
 
-        {/* Horizontal Quick Candidate Picker */}
-        <div className="mt-4 pt-4 border-t border-slate-800/80">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-slate-400">
-              검색 결과 ({searchResults.length}장) — 클릭하여 분석 대상 지정 / 우측 저울 아이콘으로 비교 선수 지정
-            </span>
-            {compareSpid && (
+        {/* 선수 실시간 검색 + 메인/비교 선수 선택 */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 pt-4">
+          {/* 선수 검색창 (초기 비워둠) */}
+          <div className="lg:col-span-4 space-y-1.5">
+            <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+              <Search className="w-3.5 h-3.5 text-emerald-500" />
+              선수 검색 (이름 · 시즌 입력)
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSearchPlayers();
+                }}
+                placeholder="예: 로드리, 굴리트, 손흥민, 벨링엄..."
+                className="flex-1 bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-emerald-500/60"
+              />
               <button
                 type="button"
-                onClick={() => setCompareSpid(null)}
-                className="text-xs text-amber-400 hover:underline whitespace-nowrap shrink-0"
+                onClick={() => handleSearchPlayers()}
+                disabled={searchingCards}
+                className="px-3.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center gap-1.5 shrink-0 disabled:opacity-50 cursor-pointer"
               >
-                비교 선수 해제
+                {searchingCards ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Search className="w-3.5 h-3.5" />
+                )}
+                검색
               </button>
-            )}
+            </div>
           </div>
-          <div className="flex items-center gap-2 overflow-x-auto pb-1.5">
-            {searchResults.slice(0, 14).map((item) => {
-              const isMain = item.spid === selectedSpid;
-              const isComp = item.spid === compareSpid;
-              return (
-                <div
-                  key={item.spid}
-                  className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border transition-colors shrink-0 ${
-                    isMain
-                      ? "bg-emerald-500/15 border-emerald-500/60"
-                      : isComp
-                      ? "bg-amber-500/15 border-amber-500/60"
-                      : "bg-[#0B0F17]/80 border-slate-800 hover:border-slate-700"
-                  }`}
+
+          {/* 분석 대상 메인 선수 */}
+          <div className="lg:col-span-4 space-y-1.5">
+            <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+              <UserCheck className="w-3.5 h-3.5 text-indigo-500" />
+              분석 대상 선수 선택 ({filteredCardsPool.length}장)
+            </label>
+            <select
+              value={selectedSpid}
+              onChange={(e) => {
+                setSelectedSpid(Number(e.target.value));
+                setTargetPosition("");
+              }}
+              className="w-full bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500/60"
+            >
+              <option value={0}>-- 분석할 선수를 선택하거나 검색하세요 --</option>
+              {filteredCardsPool.map((c) => (
+                <option key={c.spid} value={c.spid}>
+                  [{c.season_code}] {c.name} ({c.primary_position} · 기본 OVR{" "}
+                  {c.ovr} · 급여 {c.salary})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* 1:1 비교 선수 선택 */}
+          <div className="lg:col-span-4 space-y-1.5">
+            <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <ArrowLeftRight className="w-3.5 h-3.5 text-amber-500" />
+                1:1 비교 대상 카드 (선택사항)
+              </span>
+              {compareSpid > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setCompareSpid(0)}
+                  className="text-[11px] text-rose-500 hover:underline font-semibold cursor-pointer"
                 >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedSpid(item.spid);
-                      setTargetPosition("");
-                    }}
-                    className="flex items-center gap-2 text-left"
-                  >
-                    <PlayerAvatar
-                      spid={item.spid}
-                      pid={item.pid}
-                      name={item.name}
-                      thumbUrl={item.thumb_url}
-                      size={32}
-                    />
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <SeasonBadge
-                          seasonCode={item.season_code}
-                          seasonImg={item.season_img}
-                        />
-                        <span className="text-xs font-semibold text-slate-100 whitespace-nowrap">
-                          {item.name}
-                        </span>
-                      </div>
-                      <div className="text-[11px] font-mono tabular-nums text-slate-400 mt-0.5">
-                        <span className={getPositionToneClass(item.primary_position)}>
-                          {item.primary_position}
-                        </span>{" "}
-                        · OVR {item.ovr} · 급여 {item.salary}
-                      </div>
-                    </div>
-                  </button>
-                  {!isMain && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setCompareSpid(isComp ? null : item.spid)
-                      }
-                      title="비교 대상으로 설정"
-                      className={`p-1.5 rounded border text-xs transition-colors whitespace-nowrap shrink-0 ${
-                        isComp
-                          ? "bg-amber-500 text-slate-950 border-amber-400 font-semibold"
-                          : "border-slate-700 text-slate-400 hover:text-slate-200"
-                      }`}
-                    >
-                      <Scale className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+                  비교 해제
+                </button>
+              )}
+            </label>
+            <select
+              value={compareSpid}
+              onChange={(e) => setCompareSpid(Number(e.target.value))}
+              disabled={!selectedSpid}
+              className="w-full bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-amber-500/60 disabled:opacity-50"
+            >
+              <option value={0}>-- 비교 선수 없음 (단독 정밀 진단) --</option>
+              {cardsPool
+                .filter((c) => c.spid !== selectedSpid)
+                .map((c) => (
+                  <option key={c.spid} value={c.spid}>
+                    [{c.season_code}] {c.name} ({c.primary_position} · 기본 OVR{" "}
+                    {c.ovr} · 급여 {c.salary})
+                  </option>
+                ))}
+            </select>
           </div>
+        </div>
+
+        {/* 빠른 검증용 추천 선수 칩 */}
+        <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-slate-100 dark:border-slate-800/60">
+          <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+            빠른 선수 불러오기:
+          </span>
+          {QUICK_POPULAR_KEYWORDS.map((item) => (
+            <button
+              key={item.query}
+              type="button"
+              onClick={() => {
+                setSearchQuery(item.query);
+                handleSearchPlayers(item.query);
+              }}
+              className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-indigo-500/15 text-slate-700 hover:text-indigo-600 dark:bg-slate-800/80 dark:text-slate-300 dark:hover:text-indigo-300 border border-slate-200/80 dark:border-slate-700/70 transition cursor-pointer"
+            >
+              {item.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {loadingProfile && !profile ? (
-        <div className="bg-[#131B2E] border border-slate-800/80 rounded-xl p-12 text-center">
-          <RefreshCw className="w-6 h-6 text-emerald-400 animate-spin mx-auto mb-2" />
-          <p className="text-sm text-slate-300">
-            포지션별 역할 수행 능력, 상대적 유형 특화도, 완성형 5대 기준을 정밀 검증 중입니다...
-          </p>
+      {/* 에러 배너 */}
+      {error && (
+        <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-4 text-sm text-rose-600 dark:text-rose-300 flex items-center gap-2.5">
+          <ShieldAlert className="w-5 h-5 text-rose-500 shrink-0" />
+          <span>{error}</span>
         </div>
-      ) : profile && card ? (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Left Column (5 cols): Core Identity, Primary/Secondary/Complete Verdict, Radar, Physical/Foot Transparency */}
-          <div className="lg:col-span-5 space-y-5">
-            {/* Player Summary & Core Verdict Card */}
-            <div className="bg-[#131B2E] border border-slate-800/80 rounded-xl p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex items-center gap-3.5">
-                  <PlayerAvatar
-                    spid={card.spid}
-                    pid={card.pid}
-                    name={card.name}
-                    thumbUrl={card.thumb_url}
-                    size={64}
-                  />
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <SeasonBadge
-                        seasonCode={card.season_code}
-                        seasonImg={card.season_img}
-                      />
-                      <span
-                        className={`text-sm font-mono font-bold ${getPositionToneClass(
-                          profile.analyzed_position || card.primary_position
-                        )}`}
-                      >
-                        {profile.analyzed_position || card.primary_position}
-                      </span>
-                      <span
-                        className={`text-xs font-mono px-2 py-0.5 rounded border ${
-                          getEnhanceBadgeStyle(profile.grade).className
-                        }`}
-                      >
-                        +{profile.grade}강
-                      </span>
-                      <span className="text-xs font-mono px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                        실효 OVR {profile.effective_ovr}
-                      </span>
-                    </div>
-                    <h3 className="text-xl font-bold text-slate-100 mt-1">
-                      {card.name}
-                    </h3>
-                    <p className="text-xs text-slate-400 mt-0.5 font-mono tabular-nums">
-                      {profile.height}cm · {profile.weight}kg · {profile.body_type} · 양발/주발({profile.foot}) · 개인기 {profile.skill_moves}
-                    </p>
-                  </div>
-                </div>
-              </div>
+      )}
 
-              {/* Analyzed Position Switcher */}
-              <div className="mt-4 pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 text-xs text-slate-300">
-                  <SlidersHorizontal className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>분석 포지션 기준:</span>
-                  <span className="font-semibold text-emerald-400">
-                    {profile.position_group_label}
-                  </span>
-                </div>
-                <div className="flex flex-wrap items-center gap-1">
-                  {(profile.available_positions || [card.primary_position]).map(
-                    (pos) => {
-                      const active =
-                        (targetPosition || card.primary_position) === pos;
-                      return (
-                        <button
-                          key={pos}
-                          type="button"
-                          onClick={() => setTargetPosition(pos)}
-                          className={`px-2 py-0.5 rounded text-xs font-mono transition-colors ${
-                            active
-                              ? "bg-emerald-500 text-slate-950 font-bold"
-                              : "bg-[#0B0F17] text-slate-400 border border-slate-800 hover:text-slate-200"
-                          }`}
-                        >
-                          {pos}
-                        </button>
-                      );
-                    }
-                  )}
-                  <select
-                    value={targetPosition || card.primary_position}
-                    onChange={(e) => setTargetPosition(e.target.value)}
-                    className="bg-[#0B0F17] border border-slate-800 rounded px-1.5 py-0.5 text-[11px] font-mono text-slate-300 outline-none"
-                    title="다른 포지션 기준으로 유형 테스트"
-                  >
-                    {ALL_ANALYSIS_POSITIONS.map((p) => (
-                      <option key={p} value={p} className="bg-[#0B0F17]">
-                        {p} 기준
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+      {/* 초기 빈 상태 (선수 미선택 시) */}
+      {selectedSpid === 0 && !loading && (
+        <div className="bg-white dark:bg-[#131B2E] border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center shadow-sm">
+          <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mx-auto mb-3">
+            <Compass className="w-6 h-6 text-indigo-500" />
+          </div>
+          <h3 className="text-lg font-extrabold text-slate-900 dark:text-white">
+            분석할 선수를 검색하거나 선택해주세요
+          </h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xl mx-auto mt-1.5 leading-relaxed">
+            초기 설정은 <strong>+8강 · 적응도 0</strong> 기준입니다. 상단 검색창에서{" "}
+            <strong>로드리, 굴리트, 손흥민, 벨링엄</strong> 등을 검색하거나 아래 카드를 클릭해 즉시 체감 등급과 포지션 유형을 확인하세요.
+          </p>
 
-              {/* Complete Status Banner */}
-              {completeEval && (
-                <div
-                  className={`mt-4 p-3 rounded-lg border flex items-start gap-2.5 ${
-                    completeEval.is_complete
-                      ? "bg-amber-500/15 border-amber-400/50 text-amber-200"
-                      : "bg-[#0B0F17]/90 border-slate-800 text-slate-300"
+          {/* 체감 등급 필터 & 빠른 카드 그리드 */}
+          <div className="flex flex-wrap items-center justify-center gap-2 mt-5">
+            {(["ALL", "좋은 체감", "보통 체감", "무거운 체감"] as const).map(
+              (f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setFeelFilter(f)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                    feelFilter === f
+                      ? "bg-indigo-600 text-white border-indigo-600"
+                      : "bg-slate-50 dark:bg-[#0B0F17] text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-indigo-400"
                   }`}
                 >
-                  {completeEval.is_complete ? (
-                    <Sparkles className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                  ) : (
-                    <ShieldCheck className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-                  )}
-                  <div className="text-xs leading-relaxed">
-                    <div className="flex items-center gap-2 font-bold">
-                      <span
-                        className={
-                          completeEval.is_complete
-                            ? "text-amber-300"
-                            : "text-slate-200"
-                        }
-                      >
-                        완성형 판정:{" "}
-                        {completeEval.is_complete
-                          ? "완성형 선정 (5/5 기준 통과)"
-                          : `일반 특화 유형 (${completeEval.passed_count}/5 기준 충족)`}
-                      </span>
+                  {f === "ALL" ? "전체 선수 보기" : f}
+                </button>
+              )
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-5 text-left">
+            {cardsPool
+              .filter((c) => {
+                if (feelFilter === "ALL") return true;
+                return computeCardQuickFeelLabel(c, boost8) === feelFilter;
+              })
+              .slice(0, 8)
+              .map((c) => {
+                const label = computeCardQuickFeelLabel(c, boost8);
+                const bInfo = getFeelBadgeInfo(label);
+
+                return (
+                  <button
+                    key={c.spid}
+                    type="button"
+                    onClick={() => setSelectedSpid(c.spid)}
+                    className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 hover:border-indigo-500/50 transition flex items-center justify-between gap-2 group cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <PlayerAvatar
+                        spid={c.spid}
+                        pid={c.pid}
+                        thumbUrl={c.thumb_url}
+                        name={c.name}
+                        size={38}
+                      />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <SeasonBadge
+                            seasonImg={c.season_img}
+                            seasonCode={c.season_code}
+                          />
+                          <span className="text-sm font-extrabold text-slate-900 dark:text-white truncate group-hover:text-indigo-500 transition">
+                            {c.name}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                          {c.primary_position} · {c.height}cm/{c.weight}kg (
+                          {c.body_type})
+                        </div>
+                      </div>
                     </div>
-                    <p className="text-slate-400 mt-0.5">
-                      {completeEval.summary_reason}
-                    </p>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 ${bInfo.style}`}
+                    >
+                      {bInfo.label}
+                    </span>
+                  </button>
+                );
+              })}
+          </div>
+        </div>
+      )}
+
+      {/* 로딩 스켈레톤 */}
+      {loading && (
+        <div className="bg-white dark:bg-[#131B2E] border border-slate-200 dark:border-slate-800 rounded-2xl p-10 text-center text-slate-500 dark:text-slate-400 text-sm animate-pulse">
+          선수의 8강 기준 체감 컷오프, 체형·선회반경 페널티, 미드필더 4분류 적합도를 정밀 계산하고 있습니다...
+        </div>
+      )}
+
+      {/* 메인 분석 결과 */}
+      {!loading && primaryCard && primaryProfile && (
+        <>
+          {/* 1. 핵심 요약 배너: 체감 3단계 배지 + 1순위 선수 유형 + 완성형 판정 */}
+          <div className="bg-white dark:bg-[#131B2E] border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+              {/* 좌측: 선수 기본 프로필 + 3단계 체감 배지 */}
+              <div className="flex items-start sm:items-center gap-4">
+                <div className="relative">
+                  <PlayerAvatar
+                    spid={primaryCard.spid}
+                    pid={primaryCard.pid}
+                    thumbUrl={primaryCard.thumb_url}
+                    name={primaryCard.name}
+                    size={68}
+                    className="rounded-2xl bg-slate-100 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 p-1"
+                  />
+                  <span
+                    className={`absolute -bottom-1.5 -right-1.5 px-1.5 py-0.5 rounded text-[10px] border ${currentGradeBadge.className}`}
+                  >
+                    {currentGradeBadge.label}
+                  </span>
+                </div>
+
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-md text-xs font-extrabold bg-indigo-600 text-white">
+                      {primaryProfile.analyzed_position}
+                    </span>
+                    <SeasonBadge
+                      seasonImg={primaryCard.season_img}
+                      seasonCode={primaryCard.season_code}
+                      className="h-5"
+                    />
+                    <h3 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+                      {primaryCard.name}
+                    </h3>
+                    <span className="text-base font-black text-indigo-600 dark:text-indigo-400">
+                      OVR {primaryProfile.effective_ovr}
+                    </span>
+                    {/* 3단계 체감 배지 (좋은 체감 / 보통 체감 / 무거운 체감) */}
+                    <span
+                      className={`px-3 py-1 rounded-full text-xs font-extrabold border flex items-center gap-1.5 ${feelBadge.style}`}
+                    >
+                      <span
+                        className={`w-2 h-2 rounded-full ${feelBadge.dotColor}`}
+                      />
+                      {feelBadge.label}
+                    </span>
+                    {/* 1순위 유형 배지 */}
+                    {topArchetype && (
+                      <span className="px-3 py-1 rounded-full text-xs font-extrabold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/35">
+                        1순위 유형: {topArchetype.name} ({topArchetype.fit_percent}
+                        %)
+                      </span>
+                    )}
+                  </div>
+
+                  {/* 신체 조건 & 양발 & 팀컬러 요약 */}
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600 dark:text-slate-400 mt-2">
+                    <span>
+                      신체:{" "}
+                      <strong className="text-slate-900 dark:text-slate-200">
+                        {primaryCard.height}cm · {primaryCard.weight}kg ·{" "}
+                        {primaryCard.body_type}
+                      </strong>
+                    </span>
+                    <span>
+                      양발:{" "}
+                      <strong className="text-slate-900 dark:text-slate-200">
+                        {primaryCard.foot}
+                      </strong>
+                    </span>
+                    <span>
+                      급여:{" "}
+                      <strong className="text-slate-900 dark:text-slate-200">
+                        {primaryCard.salary}
+                      </strong>
+                    </span>
+                    {primaryCard.team_colors &&
+                      primaryCard.team_colors.length > 0 && (
+                        <span>
+                          팀컬러:{" "}
+                          <strong className="text-indigo-600 dark:text-indigo-300">
+                            {primaryCard.team_colors
+                              .map((tc) => tc.name)
+                              .join(" · ")}
+                          </strong>
+                        </span>
+                      )}
                   </div>
                 </div>
-              )}
-
-              {/* Primary & Secondary Archetype Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
-                {profile.primary_archetype && (
-                  <div
-                    className={`bg-[#0B0F17] border rounded-lg p-3.5 ${
-                      profile.primary_archetype.is_complete_type
-                        ? "border-amber-400/60"
-                        : "border-emerald-500/50"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span
-                        className={`text-[11px] font-mono uppercase tracking-wider font-semibold ${
-                          profile.primary_archetype.is_complete_type
-                            ? "text-amber-400"
-                            : "text-emerald-400"
-                        }`}
-                      >
-                        주 유형 (Primary)
-                      </span>
-                      <span className="text-xs font-mono font-bold tabular-nums text-emerald-400">
-                        특화 {profile.primary_archetype.specialization_score}% · 수행{" "}
-                        {profile.primary_archetype.role_score}점
-                      </span>
-                    </div>
-                    <div className="text-base font-bold text-slate-100 mt-1">
-                      {profile.primary_archetype.name}
-                    </div>
-                    <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                      {profile.primary_archetype.desc}
-                    </p>
-                  </div>
-                )}
-
-                {profile.secondary_archetype ? (
-                  <div className="bg-[#0B0F17] border border-sky-500/40 rounded-lg p-3.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-mono uppercase tracking-wider font-semibold text-sky-400">
-                        {profile.primary_archetype?.is_complete_type
-                          ? "핵심 세부 성향"
-                          : "보조 유형 (Secondary)"}
-                      </span>
-                      <span className="text-xs font-mono font-bold tabular-nums text-sky-400">
-                        특화 {profile.secondary_archetype.specialization_score}% · 수행{" "}
-                        {profile.secondary_archetype.role_score}점
-                      </span>
-                    </div>
-                    <div className="text-base font-bold text-slate-100 mt-1">
-                      {profile.secondary_archetype.name}
-                    </div>
-                    <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                      {profile.secondary_archetype.desc}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="bg-[#0B0F17]/60 border border-slate-800/80 rounded-lg p-3.5 flex flex-col justify-between">
-                    <div>
-                      <span className="text-[11px] font-mono uppercase tracking-wider text-slate-500">
-                        보조 유형 (Secondary)
-                      </span>
-                      <div className="text-sm font-semibold text-slate-300 mt-1">
-                        단일 특화 성향 (보조 유형 미부여)
-                      </div>
-                      <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                        {profile.secondary_Null_reason ||
-                          "주 유형 성향이 뚜렷하게 집중되어 있어 보조 유형을 억지로 부여하지 않았습니다."}
-                      </p>
-                    </div>
-                  </div>
-                )}
               </div>
 
-              {/* Overall Judgment Summary */}
-              {profile.judgment_summary && (
-                <div className="mt-3 p-3 rounded-lg bg-[#0B0F17]/80 border border-slate-800/90 text-xs text-slate-300 leading-relaxed">
-                  <span className="font-semibold text-emerald-400 mr-1.5">
-                    [종합 판정 근거]
-                  </span>
-                  {profile.judgment_summary}
+              {/* 우측: 핵심 지표 3종 카드 */}
+              <div className="grid grid-cols-3 gap-3 shrink-0">
+                <div className="bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-center">
+                  <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                    인게임 체감 지수
+                  </div>
+                  <div className="text-xl font-black text-slate-900 dark:text-white mt-0.5">
+                    {feelMetrics?.feelScore ?? 0}
+                    <span className="text-xs font-bold text-slate-400 ml-0.5">
+                      점
+                    </span>
+                  </div>
+                  <div className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">
+                    {feelBadge.label}
+                  </div>
                 </div>
-              )}
 
-              {/* Cross-Lab Quick Actions */}
-              <div className="flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-slate-800/70">
-                <button
-                  type="button"
-                  onClick={() => onInspectInPlayerLab(card.spid)}
-                  className="px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-xs font-medium text-slate-200 flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
-                >
-                  선수 연구소 상세 스탯
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    onSendToEfficiencyLab(
-                      card.name,
-                      profile.analyzed_position || card.primary_position
-                    )
-                  }
-                  className="px-3 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-xs font-medium text-emerald-300 flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
-                >
-                  시즌별 가성비 비교
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
+                <div className="bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-center">
+                  <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                    1순위 유형 적합도
+                  </div>
+                  <div className="text-xl font-black text-indigo-600 dark:text-indigo-400 mt-0.5">
+                    {topArchetype?.fit_percent ?? 0}
+                    <span className="text-xs font-bold text-slate-400 ml-0.5">
+                      %
+                    </span>
+                  </div>
+                  <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300 mt-0.5 truncate max-w-[115px] mx-auto">
+                    {topArchetype?.name || "-"}
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-center">
+                  <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                    완성형(육각형) 판정
+                  </div>
+                  <div
+                    className={`text-sm font-black mt-1.5 ${
+                      primaryProfile.complete_evaluation.is_complete
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-amber-600 dark:text-amber-400"
+                    }`}
+                  >
+                    {primaryProfile.complete_evaluation.is_complete
+                      ? "완성형(육각형) 충족"
+                      : "특화형 선수"}
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    {primaryProfile.complete_evaluation.passed_count}/
+                    {primaryProfile.complete_evaluation.total_criteria} 기준 통과
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* Physical, Body Type & Two-Footedness Reflection Card */}
-            {physFoot && (
-              <div className="bg-[#131B2E] border border-slate-800/80 rounded-xl p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-semibold text-slate-200">
-                    신체 조건 · 체형 · 양발 반영 명세
-                  </h4>
-                  <span
-                    className={`text-[11px] font-mono px-2 py-0.5 rounded border ${
-                      physFoot.is_two_footed
-                        ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
-                        : "bg-slate-800 text-slate-300 border-slate-700"
-                    }`}
+            {/* 한줄 핵심 요약 */}
+            <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <p className="text-xs sm:text-sm font-medium text-slate-700 dark:text-slate-300 leading-relaxed">
+                💡{" "}
+                <strong className="text-slate-900 dark:text-white">
+                  한줄 진단:
+                </strong>{" "}
+                {feelMetrics?.feelVerdictReason ||
+                  primaryProfile.judgment_summary}
+              </p>
+              <div className="flex items-center gap-2 shrink-0">
+                {onSendToEfficiencyLab && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onSendToEfficiencyLab(
+                        primaryCard.name,
+                        primaryProfile.analyzed_position
+                      )
+                    }
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30 transition cursor-pointer"
                   >
-                    {physFoot.is_two_footed
-                      ? `양발잡이 (${physFoot.foot_raw})`
-                      : `주발/약발 (${physFoot.foot_raw})`}
-                  </span>
-                </div>
-
-                <div className="space-y-1.5 text-xs">
-                  <div className="text-emerald-400 font-medium">
-                    반영된 보조 요소
-                  </div>
-                  {physFoot.applied_factors.map((f, i) => (
-                    <div
-                      key={i}
-                      className="bg-[#0B0F17] border border-slate-800/80 rounded px-2.5 py-1.5 text-slate-300"
-                    >
-                      · {f}
-                    </div>
-                  ))}
-                </div>
-
-                {physFoot.excluded_factors.length > 0 && (
-                  <div className="space-y-1 text-xs pt-1">
-                    <div className="text-slate-400 font-medium">
-                      제외/비적용 항목 안내
-                    </div>
-                    {physFoot.excluded_factors.map((ex, i) => (
-                      <div key={i} className="text-slate-500">
-                        · {ex}
-                      </div>
-                    ))}
-                  </div>
+                    시즌·강화 효율 비교 →
+                  </button>
                 )}
+                {handleInspect && (
+                  <button
+                    type="button"
+                    onClick={() => handleInspect(primaryCard.spid)}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition cursor-pointer"
+                  >
+                    선수 탐색에서 시세·특성 보기 →
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* 2. 체감 3단계 판정 상세 & 미드필더 4분류 / 유형 순위 (2열 그리드) */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* 좌측 6칸: 체감 3단계 분류 검증 카드 */}
+            {feelMetrics && (
+              <div className="lg:col-span-6 bg-white dark:bg-[#131B2E] border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-4">
+                    <div>
+                      <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                        <Feather className="w-3.5 h-3.5" />
+                        인게임 체감 3단계 판정 (좋은 체감 / 보통 체감 / 무거운 체감)
+                      </span>
+                      <h3 className="text-lg font-extrabold text-slate-900 dark:text-white mt-0.5">
+                        체형·피지컬 필터 & 8강 5대 체감 컷오프 검증
+                      </h3>
+                    </div>
+                    <span
+                      className={`px-3 py-1.5 rounded-xl text-xs font-extrabold border ${feelBadge.style}`}
+                    >
+                      {feelBadge.label}
+                    </span>
+                  </div>
+
+                  {/* 좋은 체감 2대 필수 관문 통과 여부 */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                    {/* 관문 1: 체형 및 피지컬 필터 */}
+                    <div
+                      className={`p-3.5 rounded-xl border ${
+                        !feelMetrics.isPhysicalExcludedFromGoodFeel
+                          ? "bg-emerald-500/5 border-emerald-500/30"
+                          : "bg-amber-500/5 border-amber-500/30"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                          ① 체형·피지컬 필터
+                        </span>
+                        {!feelMetrics.isPhysicalExcludedFromGoodFeel ? (
+                          <span className="text-[11px] font-extrabold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> 통과
+                          </span>
+                        ) : (
+                          <span className="text-[11px] font-extrabold text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                            <XCircle className="w-3.5 h-3.5" /> 좋은 체감 제외
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs font-semibold text-slate-900 dark:text-white mt-1.5">
+                        {primaryCard.body_type} · {primaryCard.height}cm ·{" "}
+                        {primaryCard.weight}kg
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                        기준: 비건장 체형 & 신장 186cm 미만 & 몸무게 80kg 미만
+                      </p>
+                    </div>
+
+                    {/* 관문 2: 8강(적응도 0) 5대 체감 스탯 컷오프 */}
+                    <div
+                      className={`p-3.5 rounded-xl border ${
+                        (feelMetrics.feel5Avg8 ?? 0) >= 128 &&
+                        (feelMetrics.agility8 ?? 0) >= 124 &&
+                        (feelMetrics.balance8 ?? 0) >= 124
+                          ? "bg-emerald-500/5 border-emerald-500/30"
+                          : "bg-slate-50 dark:bg-[#0B0F17] border-slate-200 dark:border-slate-800"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                          ② 8강 체감 스탯 컷오프
+                        </span>
+                        {(feelMetrics.feel5Avg8 ?? 0) >= 128 &&
+                        (feelMetrics.agility8 ?? 0) >= 124 &&
+                        (feelMetrics.balance8 ?? 0) >= 124 ? (
+                          <span className="text-[11px] font-extrabold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> 통과
+                          </span>
+                        ) : (
+                          <span className="text-[11px] font-extrabold text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                            <XCircle className="w-3.5 h-3.5" /> 기준 미달
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs font-semibold text-slate-900 dark:text-white mt-1.5">
+                        5대 평균{" "}
+                        <span className="text-indigo-600 dark:text-indigo-400 font-extrabold">
+                          {feelMetrics.feel5Avg8 ?? "-"}
+                        </span>{" "}
+                        (민첩 {feelMetrics.agility8 ?? "-"} · 밸런스{" "}
+                        {feelMetrics.balance8 ?? "-"})
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                        기준: 8강 평균 128↑ & 민첩성 124↑ & 밸런스 124↑
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* 체감 세부 지표 3가지 바 */}
+                  <div className="space-y-3 bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 rounded-xl p-4">
+                    <div>
+                      <div className="flex justify-between text-xs font-bold mb-1">
+                        <span className="text-slate-600 dark:text-slate-300">
+                          체감 부드러움 & 방향 전환 반응성
+                        </span>
+                        <span className="text-emerald-600 dark:text-emerald-400">
+                          {feelMetrics.radarFive.smoothness}점
+                        </span>
+                      </div>
+                      <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                        <div
+                          className="h-full bg-emerald-500 rounded-full"
+                          style={{
+                            width: `${Math.min(100, Math.max(15, feelMetrics.radarFive.smoothness))}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-xs font-bold mb-1">
+                        <span className="text-slate-600 dark:text-slate-300">
+                          순간 가속 & 치달 탄력
+                        </span>
+                        <span className="text-sky-600 dark:text-sky-400">
+                          {feelMetrics.radarFive.burst}점
+                        </span>
+                      </div>
+                      <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                        <div
+                          className="h-full bg-sky-500 rounded-full"
+                          style={{
+                            width: `${Math.min(100, Math.max(15, feelMetrics.radarFive.burst))}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-xs font-bold mb-1">
+                        <span className="text-slate-600 dark:text-slate-300">
+                          경합 버티기 (피지컬 유지력)
+                        </span>
+                        <span className="text-amber-600 dark:text-amber-400">
+                          {feelMetrics.radarFive.physicalHold}점
+                        </span>
+                      </div>
+                      <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                        <div
+                          className="h-full bg-amber-500 rounded-full"
+                          style={{
+                            width: `${Math.min(100, Math.max(15, feelMetrics.radarFive.physicalHold))}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 자세히 보기 토글 */}
+                <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setShowFeelDetail((prev) => !prev)}
+                    className="text-xs font-bold text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-300 flex items-center gap-1 cursor-pointer"
+                  >
+                    <Info className="w-3.5 h-3.5" />
+                    체감 판정 기준 자세히 보기
+                    {showFeelDetail ? (
+                      <ChevronUp className="w-3.5 h-3.5" />
+                    ) : (
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                  {showFeelDetail && (
+                    <div className="mt-2.5 p-3 rounded-xl bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 space-y-1.5 leading-relaxed">
+                      <p>
+                        • <strong>좋은 체감:</strong> 체형이 마름/고유이거나 경량 보통(신장 186cm 미만 & 몸무게 80kg 미만)이면서, 8강 기준 5대 체감 스탯(민첩성·밸런스·드리블·볼컨트롤·반응속도) 가중 평균이 <strong>128 이상</strong>이고 민첩성·밸런스가 모두 <strong>124 이상</strong>일 때만 부여됩니다.
+                      </p>
+                      <p>
+                        • <strong>보통 체감:</strong> 건장 체형이거나 186cm 이상/80kg 이상인 선수는 스탯이 아무리 높아도 인게임 선회 반경 한계로 인해 최대 <strong>보통 체감</strong>까지만 부여됩니다.
+                      </p>
+                      <p>
+                        • <strong>무거운 체감:</strong> 장신·중량 피지컬에 민첩/밸런스가 낮아 방향 전환 시 역동작이 체감되는 유형입니다.
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
-            {/* 6-Axis Radar Comparison */}
-            <div className="bg-[#131B2E] border border-slate-800/80 rounded-xl p-5">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="text-sm font-semibold text-slate-200">
-                  6대 핵심 능력치 밸런스 레이더
-                </h4>
-                {compareProfile && (
-                  <span className="text-xs font-mono text-amber-400">
-                    비교: {compareProfile.name} ({compareProfile.season_code})
-                  </span>
-                )}
+            {/* 우측 6칸: 포지션 그룹별 선수 유형 진단 (미드필더 4분류 강조) */}
+            <div className="lg:col-span-6 bg-white dark:bg-[#131B2E] border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-4">
+                  <div>
+                    <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1">
+                      <Layers className="w-3.5 h-3.5" />
+                      {isCentralMidfielder
+                        ? "중앙 미드필더 4대 유형 정밀 분류 (CAM · CM · CDM)"
+                        : `${primaryProfile.position_group_label} 유형 적합도 순위`}
+                    </span>
+                    <h3 className="text-lg font-extrabold text-slate-900 dark:text-white mt-0.5">
+                      {isCentralMidfielder
+                        ? "공격형 / 중앙 / 수비형 / 육각형 미드필더 판정"
+                        : "주포지션·수비/피지컬·체감 기반 유형 판정"}
+                    </h3>
+                  </div>
+                  {topArchetype && (
+                    <span className="px-3 py-1.5 rounded-xl text-xs font-extrabold bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30">
+                      1위: {topArchetype.name}
+                    </span>
+                  )}
+                </div>
+
+                {/* 유형 순위 리스트 */}
+                <div className="space-y-2.5">
+                  {primaryProfile.position_archetypes.map((arch, idx) => {
+                    const isTop = idx === 0;
+                    const cmpArch = compareProfile?.position_archetypes?.find(
+                      (a) => a.id === arch.id
+                    );
+                    return (
+                      <div
+                        key={arch.id}
+                        className={`p-3.5 rounded-xl border transition ${
+                          isTop
+                            ? "bg-indigo-500/10 border-indigo-500/40 dark:bg-indigo-500/15"
+                            : "bg-slate-50 dark:bg-[#0B0F17] border-slate-200 dark:border-slate-800"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <span
+                              className={`w-6 h-6 rounded-lg text-xs font-black flex items-center justify-center shrink-0 ${
+                                isTop
+                                  ? "bg-indigo-600 text-white"
+                                  : "bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+                              }`}
+                            >
+                              {idx + 1}
+                            </span>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-extrabold text-slate-900 dark:text-white">
+                                  {arch.name}
+                                </span>
+                                {arch.is_complete_type && (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                                    민·밸 124↑ 필수
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                                {arch.desc}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="text-right shrink-0">
+                            <div className="text-base font-black text-indigo-600 dark:text-indigo-400">
+                              {arch.fit_percent}%
+                            </div>
+                            {cmpArch && (
+                              <div className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">
+                                비교: {cmpArch.fit_percent}%
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* 적합도 게이지 바 */}
+                        <div className="w-full h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 mt-2.5 overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${
+                              isTop
+                                ? "bg-indigo-500"
+                                : "bg-slate-400 dark:bg-slate-600"
+                            }`}
+                            style={{
+                              width: `${Math.min(100, Math.max(15, arch.fit_percent))}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-              <div className="flex justify-center">
+
+              {/* 미드필더 4분류 & 완성형 기준 자세히 보기 토글 */}
+              <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowArchetypeDetail((prev) => !prev)}
+                  className="text-xs font-bold text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-300 flex items-center gap-1 cursor-pointer"
+                >
+                  <Info className="w-3.5 h-3.5" />
+                  유형 판별 및 완성형(민·밸 124↑) 기준 자세히 보기
+                  {showArchetypeDetail ? (
+                    <ChevronUp className="w-3.5 h-3.5" />
+                  ) : (
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              </div>
+
+              {showArchetypeDetail && (
+                <div className="mt-2.5 p-3.5 rounded-xl bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 space-y-2 leading-relaxed">
+                  <p>
+                    • <strong>수비형 미드필더 (CDM 특화):</strong> 주포지션(CDM) 가중치 + 수비 핵심 스탯(가로채기·태클·대인수비·몸싸움) + 피지컬(신장·체중)을 종합 반영합니다. 로드리처럼 패스/중거리 스탯이 높아도 수비·피지컬 비중이 높고 체감이 묵직한 홀딩 MF는 공격형 미드필더로 오분류되지 않고 <strong>수비형 미드필더</strong>로 정확히 판정됩니다.
+                  </p>
+                  <p>
+                    • <strong>육각형 미드필더 / 완성형 판정:</strong> 공·수·패스·피지컬·스태미너 기준 통과뿐만 아니라 <strong>8강 기준 민첩성 ≥ 124 & 밸런스 ≥ 124</strong>를 동시에 충족해야 진정한 완성형(육각형)으로 인정됩니다.
+                  </p>
+                  <div className="pt-2 border-t border-slate-200 dark:border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {primaryProfile.complete_evaluation.criteria.map((c) => (
+                      <div
+                        key={c.id}
+                        className={`px-2.5 py-1.5 rounded-lg border text-[11px] flex items-center justify-between ${
+                          c.passed
+                            ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300"
+                            : "bg-rose-500/10 border-rose-500/30 text-rose-700 dark:text-rose-300"
+                        }`}
+                      >
+                        <span className="font-bold truncate">{c.label}</span>
+                        <span className="font-extrabold ml-1 shrink-0">
+                          {c.score_text}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 3. 동일 팀컬러 & 동일 포지션 가성비 대체재 TOP 3 */}
+          {feelMetrics && (
+            <div className="bg-white dark:bg-[#131B2E] border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+                <div>
+                  <span className="text-xs font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5" />
+                    스쿼드 즉시 투입 가능한 가성비 대체재 추천
+                  </span>
+                  <h3 className="text-lg font-extrabold text-slate-900 dark:text-white mt-0.5">
+                    동일 팀컬러 & 동일 포지션({primaryProfile.analyzed_position}) 가성비 대체재 TOP 3
+                  </h3>
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  기준 팀컬러:{" "}
+                  <strong className="text-indigo-600 dark:text-indigo-300">
+                    {primaryCard.team_colors?.map((tc) => tc.name).join(" · ") ||
+                      `${primaryCard.team} · ${primaryCard.nation}`}
+                  </strong>
+                </div>
+              </div>
+
+              {feelMetrics.similarAlternatives &&
+              feelMetrics.similarAlternatives.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {feelMetrics.similarAlternatives.map(
+                    (alt: SimilarAlternativePlayerItem, idx: number) => {
+                      const altFeel = getFeelBadgeInfo(alt.feelBadgeLabel);
+                      const simPct =
+                        alt.similarity <= 1
+                          ? Math.round(alt.similarity * 100)
+                          : Math.round(alt.similarity);
+                      const savingPct = Math.round(
+                        Math.abs(alt.priceDiffRatio) * 100
+                      );
+
+                      return (
+                        <div
+                          key={alt.spid}
+                          className="p-4 rounded-xl bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 hover:border-indigo-500/40 transition flex flex-col justify-between"
+                        >
+                          <div>
+                            <div className="flex items-center justify-between gap-2 mb-2">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="px-2 py-0.5 rounded text-[11px] font-extrabold bg-indigo-500/15 text-indigo-600 dark:text-indigo-300 border border-indigo-500/30">
+                                  대체 추천 #{idx + 1}
+                                </span>
+                                {alt.sharedTeamColor && (
+                                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                                    {alt.sharedTeamColor}
+                                  </span>
+                                )}
+                                <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                                  {alt.position || primaryProfile.analyzed_position}
+                                </span>
+                              </div>
+                              <span className="text-xs font-extrabold text-indigo-600 dark:text-indigo-400 shrink-0">
+                                유사도 {simPct}%
+                              </span>
+                            </div>
+
+                            <div className="flex items-center justify-between gap-2 mt-2.5">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <PlayerAvatar
+                                  spid={alt.spid}
+                                  thumbUrl={alt.thumbUrl}
+                                  name={alt.name}
+                                  size={40}
+                                />
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <SeasonBadge
+                                      seasonImg={alt.seasonImg}
+                                      seasonCode={alt.season}
+                                    />
+                                    <span className="text-base font-black text-slate-900 dark:text-white truncate">
+                                      {alt.name}
+                                    </span>
+                                  </div>
+                                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                                    체감 지수 {alt.feelScore}점 · +{alt.grade || 8}강
+                                  </div>
+                                </div>
+                              </div>
+
+                              <span
+                                className={`px-2.5 py-1 rounded-full text-[11px] font-bold border shrink-0 ${altFeel.style}`}
+                              >
+                                {altFeel.label}
+                              </span>
+                            </div>
+
+                            <div className="mt-3 pt-3 border-t border-slate-200/70 dark:border-slate-800 flex items-center justify-between text-xs">
+                              <div>
+                                <span className="text-slate-500 dark:text-slate-400">
+                                  예상 시세:
+                                </span>{" "}
+                                <strong className="text-slate-900 dark:text-white">
+                                  {alt.bpText ||
+                                    (alt.bp ? formatBpKorean(alt.bp) : "-")}
+                                </strong>
+                              </div>
+                              <span
+                                className={`font-extrabold ${
+                                  alt.priceDiffRatio < 0
+                                    ? "text-emerald-600 dark:text-emerald-400"
+                                    : "text-slate-500 dark:text-slate-400"
+                                }`}
+                              >
+                                {alt.priceDiffRatio < 0
+                                  ? `약 ${savingPct}% BP 절감`
+                                  : "동급 시세 경쟁자"}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 mt-3 pt-2">
+                            <button
+                              type="button"
+                              onClick={() => setCompareSpid(alt.spid)}
+                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 border border-amber-500/30 transition cursor-pointer"
+                            >
+                              1:1 비교하기
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedSpid(alt.spid)}
+                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition cursor-pointer"
+                            >
+                              이 카드 분석
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    }
+                  )}
+                </div>
+              ) : (
+                <div className="p-6 rounded-xl bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 text-center text-xs text-slate-500 dark:text-slate-400">
+                  현재 풀에서 동일 팀컬러 및 동일 포지션 조건을 만족하는 대체재 후보가 없습니다.
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 4. 6축 밸런스 레이더 차트 & 핵심 강점/약점 요약 */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* 6축 레이더 차트 */}
+            <div className="lg:col-span-6 bg-white dark:bg-[#131B2E] border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">
+                    6축 능력치 밸런스
+                  </span>
+                  <h3 className="text-base font-extrabold text-slate-900 dark:text-white mt-0.5">
+                    {primaryCard.name}{" "}
+                    {compareCard ? `vs ${compareCard.name}` : "역량 분포"}
+                  </h3>
+                </div>
+                <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                  기준 포지션: {primaryProfile.analyzed_position}
+                </span>
+              </div>
+
+              <div className="flex justify-center py-2">
                 <HexRadarChart
-                  primary={profile.six_face}
-                  secondary={compareProfile?.six_face}
-                  primaryLabel={`${profile.name} (${profile.season_code})`}
-                  secondaryLabel={
-                    compareProfile
-                      ? `${compareProfile.name} (${compareProfile.season_code})`
+                  primaryData={primaryProfile.six_face}
+                  compareData={compareProfile?.six_face || null}
+                  primaryLabel={`[${primaryCard.season_code}] ${primaryCard.name} (+${grade})`}
+                  compareLabel={
+                    compareCard
+                      ? `[${compareCard.season_code}] ${compareCard.name} (+${grade})`
                       : undefined
                   }
-                  size={240}
+                  size={250}
                 />
               </div>
             </div>
 
-            {/* Top 5 Strengths & Weaknesses */}
-            <div className="bg-[#131B2E] border border-slate-800/80 rounded-xl p-5">
-              <h4 className="text-sm font-semibold text-slate-200 mb-3">
-                실효 세부 능력치 상위 강점 vs 보완 필요 지표
-              </h4>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <span className="text-xs font-mono text-emerald-400 block mb-2">
-                    TOP 5 핵심 강점 스탯
-                  </span>
-                  <div className="space-y-1.5">
-                    {profile.strengths.map((st) => (
-                      <div
-                        key={st.stat}
-                        className="flex items-center justify-between bg-[#0B0F17] px-2.5 py-1.5 rounded border border-slate-800/80 text-xs"
-                      >
-                        <span className="text-slate-300">{st.stat}</span>
-                        <span
-                          className={`font-mono tabular-nums ${getStatColorClass(
-                            st.value
-                          )}`}
-                        >
-                          {st.value}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <span className="text-xs font-mono text-rose-400 block mb-2">
-                    상대적 약점 스탯
-                  </span>
-                  <div className="space-y-1.5">
-                    {profile.weaknesses.map((wk) => (
-                      <div
-                        key={wk.stat}
-                        className="flex items-center justify-between bg-[#0B0F17] px-2.5 py-1.5 rounded border border-slate-800/80 text-xs"
-                      >
-                        <span className="text-slate-400">{wk.stat}</span>
-                        <span
-                          className={`font-mono tabular-nums ${getStatColorClass(
-                            wk.value
-                          )}`}
-                        >
-                          {wk.value}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Right Column (7 cols): Position Archetypes Dual-Score Breakdown & Strict 5-Criteria Complete Gate */}
-          <div className="lg:col-span-7 space-y-5">
-            {/* Position-Specific Archetype Comparison */}
-            <div className="bg-[#131B2E] border border-slate-800/80 rounded-xl p-5">
-              <div className="pb-4 border-b border-slate-800/80">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
-                    <Compass className="w-4 h-4 text-emerald-400" />
-                    {profile.position_group_label} 유형별 정밀 판정
-                  </h3>
-                  <span className="text-xs font-mono text-slate-400">
-                    역할 수행 능력(절대 수준) vs 유형 특화도(OVR 독립 성향)
-                  </span>
-                </div>
-                {profile.role_nuance_note && (
-                  <p className="text-xs text-sky-300/90 mt-1.5 bg-sky-500/10 border border-sky-500/20 rounded px-2.5 py-1.5">
-                    {profile.role_nuance_note}
-                  </p>
-                )}
-              </div>
-
-              {/* Position Archetype Cards */}
-              <div className="space-y-3 mt-4">
-                {positionArchetypes.map((arch, idx) => {
-                  const isSelected = selectedArchetype?.id === arch.id;
-                  const compArch = compareProfile?.all_archetypes.find(
-                    (a) => a.id === arch.id
-                  );
-                  const roleScore = arch.role_score ?? arch.fit_percent;
-                  const specScore = arch.specialization_score ?? arch.fit_percent;
-
-                  return (
-                    <button
-                      key={arch.id}
-                      type="button"
-                      onClick={() => setSelectedArchetype(arch)}
-                      className={`w-full text-left p-4 rounded-xl border transition-all ${
-                        isSelected
-                          ? "bg-[#1A2540] border-emerald-500/60"
-                          : "bg-[#0B0F17]/90 border-slate-800/90 hover:border-slate-700"
-                      }`}
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-mono text-slate-500">
-                            #{idx + 1}
-                          </span>
-                          <span
-                            className={`text-xs font-mono px-2 py-0.5 rounded font-semibold ${
-                              arch.is_complete_type
-                                ? "bg-amber-500/20 text-amber-300 border border-amber-400/40"
-                                : "bg-slate-800 text-slate-200"
-                            }`}
-                          >
-                            {arch.is_complete_type ? "완성형 검증" : "포지션 주력 유형"}
-                          </span>
-                          <span className="text-base font-bold text-slate-100">
-                            {arch.name}
-                          </span>
-                        </div>
-
-                        <div className="flex items-center gap-3 font-mono tabular-nums text-xs">
-                          {compArch && (
-                            <span className="text-amber-400">
-                              비교선수 특화 {compArch.specialization_score ?? compArch.fit_percent}%
-                            </span>
-                          )}
-                          <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-semibold">
-                            유형 특화도 {specScore}%
-                          </span>
-                          <span className="px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30 font-semibold">
-                            역할 수행 {roleScore}점
-                          </span>
-                        </div>
-                      </div>
-
-                      <p className="text-xs text-slate-400 mt-1.5">
-                        {arch.desc}
-                      </p>
-
-                      {/* Dual Progress Bars: Specialization vs Role Capability */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
-                        <div>
-                          <div className="flex justify-between text-[11px] text-slate-400 mb-1">
-                            <span>유형 특화도 (OVR 독립 내재 성향)</span>
-                            <span className="font-mono font-semibold text-emerald-400">
-                              {specScore}%
-                            </span>
-                          </div>
-                          <div className="h-2 rounded-full bg-slate-900 overflow-hidden">
-                            <div
-                              className={`h-full rounded-full ${
-                                arch.is_complete_type
-                                  ? completeEval?.is_complete
-                                    ? "bg-amber-400"
-                                    : "bg-slate-600"
-                                  : specScore >= 85
-                                  ? "bg-emerald-500"
-                                  : specScore >= 73
-                                  ? "bg-teal-400"
-                                  : "bg-slate-600"
-                              }`}
-                              style={{
-                                width: `${Math.min(100, Math.max(10, specScore))}%`,
-                              }}
-                            />
-                          </div>
-                        </div>
-
-                        <div>
-                          <div className="flex justify-between text-[11px] text-slate-400 mb-1">
-                            <span>역할 수행 능력 (실효 스탯·체격 반영)</span>
-                            <span className="font-mono font-semibold text-sky-400">
-                              {roleScore}점
-                            </span>
-                          </div>
-                          <div className="h-2 rounded-full bg-slate-900 overflow-hidden">
-                            <div
-                              className={`h-full rounded-full ${
-                                roleScore >= 88
-                                  ? "bg-sky-400"
-                                  : roleScore >= 75
-                                  ? "bg-indigo-400"
-                                  : "bg-slate-600"
-                              }`}
-                              style={{
-                                width: `${Math.min(100, Math.max(10, roleScore))}%`,
-                              }}
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {arch.judgment_reason && (
-                        <div className="mt-2.5 text-[11px] text-slate-300 bg-[#131B2E]/90 px-2.5 py-1.5 rounded border border-slate-800/80">
-                          {arch.judgment_reason}
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Selected Archetype Key Stat Evidence */}
-            {selectedArchetype && (
-              <div className="bg-[#131B2E] border border-slate-800/80 rounded-xl p-5">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+            {/* 핵심 강점 스탯 TOP 5 & 보완 스탯 */}
+            <div className="lg:col-span-6 bg-white dark:bg-[#131B2E] border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-4">
                   <div>
-                    <span className="text-xs font-mono text-emerald-400">
-                      선택된 유형 산출 근거 스탯
+                    <span className="text-xs font-bold text-sky-600 dark:text-sky-400">
+                      포지션 핵심 강점 & 피지컬 적용 요인
                     </span>
-                    <h4 className="text-base font-bold text-slate-100 mt-0.5">
-                      {selectedArchetype.name} — 핵심 가중치 기여 능력치
-                    </h4>
-                  </div>
-                  <div className="text-right font-mono tabular-nums">
-                    <div className="text-xs text-slate-400">
-                      특화도 / 역할 수행력
-                    </div>
-                    <div className="text-sm font-bold text-emerald-400">
-                      {selectedArchetype.specialization_score ??
-                        selectedArchetype.fit_percent}
-                      % /{" "}
-                      <span className="text-sky-400">
-                        {selectedArchetype.role_score ??
-                          selectedArchetype.fit_percent}
-                        점
-                      </span>
-                    </div>
+                    <h3 className="text-base font-extrabold text-slate-900 dark:text-white mt-0.5">
+                      실사용 핵심 강점 스탯 & 체형 보정
+                    </h3>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 mt-4">
-                  {selectedArchetype.key_stats.map((ks) => (
-                    <div
-                      key={ks.stat}
-                      className="bg-[#0B0F17] border border-slate-800/90 rounded-lg p-3"
-                    >
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-slate-300 font-medium truncate">
-                          {ks.stat}
-                        </span>
-                        <span className="font-mono text-[11px] text-slate-500">
-                          {(ks.weight * 100).toFixed(0)}%
-                        </span>
-                      </div>
-                      <div
-                        className={`text-lg font-mono font-bold tabular-nums mt-1 ${getStatColorClass(
-                          ks.value
-                        )}`}
-                      >
-                        {ks.value}
-                      </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                  <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800">
+                    <div className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400 mb-2">
+                      주요 강점 스탯 TOP 5
                     </div>
-                  ))}
-                </div>
-
-                {selectedArchetype.modifier_notes &&
-                  selectedArchetype.modifier_notes.length > 0 && (
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      {selectedArchetype.modifier_notes.map((note, idx) => (
-                        <span
-                          key={idx}
-                          className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-800/90 text-slate-300 border border-slate-700"
+                    <div className="space-y-1.5">
+                      {primaryProfile.strengths.slice(0, 5).map((st) => (
+                        <div
+                          key={st.stat}
+                          className="flex items-center justify-between text-xs"
                         >
-                          {note}
-                        </span>
+                          <span className="text-slate-600 dark:text-slate-300 font-medium">
+                            {st.stat}
+                          </span>
+                          <span className="font-black text-slate-900 dark:text-white">
+                            {st.value}
+                          </span>
+                        </div>
                       ))}
                     </div>
-                  )}
-              </div>
-            )}
-
-            {/* Strict 5-Criteria Complete Evaluation Gate */}
-            {completeEval && (
-              <div className="bg-[#131B2E] border border-slate-800/80 rounded-xl p-5">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-800/80">
-                  <div>
-                    <span className="text-xs font-mono text-amber-400 uppercase">
-                      STRICT 5-CRITERIA COMPLETE PLAYER GATE
-                    </span>
-                    <h4 className="text-base font-bold text-slate-100 mt-0.5">
-                      완성형(Complete) 5대 필수 요건 엄격 검증표
-                    </h4>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowCriteriaDetail((v) => !v)}
-                    className="text-xs text-slate-400 hover:text-slate-200 flex items-center gap-1"
-                  >
-                    {showCriteriaDetail ? (
-                      <>
-                        접기 <ChevronUp className="w-4 h-4" />
-                      </>
-                    ) : (
-                      <>
-                        상세 보기 <ChevronDown className="w-4 h-4" />
-                      </>
-                    )}
-                  </button>
-                </div>
 
-                {/* Core Pillars Mini Grid */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 mt-4">
-                  {completeEval.pillars.map((pil) => (
-                    <div
-                      key={pil.name}
-                      className={`p-2.5 rounded-lg border text-xs ${
-                        pil.passed
-                          ? "bg-[#0B0F17] border-emerald-500/30"
-                          : "bg-rose-950/20 border-rose-500/40"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-slate-300 font-medium">
-                          {pil.name}
-                        </span>
-                        <span
-                          className={`font-mono font-bold ${
-                            pil.passed ? "text-emerald-400" : "text-rose-400"
-                          }`}
-                        >
-                          {pil.score}
-                        </span>
-                      </div>
-                      <div className="text-[11px] font-mono text-slate-500 mt-0.5">
-                        완성형 하한선: ≥{pil.threshold}{" "}
-                        {pil.passed ? "(통과)" : "(미달)"}
-                      </div>
+                  <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800">
+                    <div className="text-xs font-extrabold text-amber-600 dark:text-amber-400 mb-2">
+                      체형·피지컬·양발 반영 내역
                     </div>
-                  ))}
-                </div>
-
-                {showCriteriaDetail && (
-                  <div className="space-y-2.5 mt-4 pt-3 border-t border-slate-800/80">
-                    {completeEval.criteria.map((crit) => (
-                      <div
-                        key={crit.id}
-                        className={`p-3 rounded-lg border flex items-start justify-between gap-3 ${
-                          crit.passed
-                            ? "bg-[#0B0F17]/90 border-slate-800"
-                            : "bg-rose-950/15 border-rose-500/30"
-                        }`}
-                      >
-                        <div className="flex items-start gap-2.5">
-                          {crit.passed ? (
-                            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                          ) : (
-                            <XCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                          )}
-                          <div>
-                            <div className="text-xs font-bold text-slate-200">
-                              {crit.label}
-                            </div>
-                            <p className="text-xs text-slate-400 mt-0.5">
-                              {crit.detail}
-                            </p>
+                    <div className="space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
+                      {primaryProfile.physical_foot_analysis.applied_factors
+                        .slice(0, 4)
+                        .map((fac, i) => (
+                          <div key={i} className="leading-snug">
+                            • {fac}
                           </div>
-                        </div>
-                        <span
-                          className={`text-xs font-mono whitespace-nowrap px-2 py-0.5 rounded ${
-                            crit.passed
-                              ? "bg-emerald-500/15 text-emerald-300"
-                              : "bg-rose-500/15 text-rose-300"
-                          }`}
-                        >
-                          {crit.score_text}
-                        </span>
-                      </div>
-                    ))}
+                        ))}
+                    </div>
                   </div>
-                )}
-
-                <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-start gap-2 text-xs text-slate-400">
-                  <Info className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
-                  <span>{profile.methodology_note}</span>
                 </div>
               </div>
-            )}
 
-            {/* Expandable Cross-Position Compatibility Archetypes */}
-            {crossPositionArchetypes.length > 0 && (
-              <div className="bg-[#131B2E] border border-slate-800/80 rounded-xl p-4">
-                <button
-                  type="button"
-                  onClick={() => setShowOtherPositions((v) => !v)}
-                  className="w-full flex items-center justify-between text-left"
-                >
-                  <div>
-                    <span className="text-sm font-semibold text-slate-200">
-                      타 포지션 전환 시 호환 유형 참고 ({crossPositionArchetypes.length}종)
-                    </span>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      주 포지션 외 다른 포지션에 기용했을 때의 역할 수행 능력과 성향입니다.
-                    </p>
-                  </div>
-                  {showOtherPositions ? (
-                    <ChevronUp className="w-4 h-4 text-slate-400" />
-                  ) : (
-                    <ChevronDown className="w-4 h-4 text-slate-400" />
-                  )}
-                </button>
-
-                {showOtherPositions && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mt-4 pt-3 border-t border-slate-800/80">
-                    {crossPositionArchetypes.map((arch) => (
-                      <button
-                        key={arch.id}
-                        type="button"
-                        onClick={() => setSelectedArchetype(arch)}
-                        className="text-left p-3 rounded-lg bg-[#0B0F17] border border-slate-800 hover:border-slate-700 transition-colors"
-                      >
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-semibold text-slate-200">
-                            {arch.name}
-                          </span>
-                          <span className="font-mono text-slate-400">
-                            특화 {arch.specialization_score}% · 수행 {arch.role_score}점
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-500 mt-1 line-clamp-1">
-                          {arch.desc}
-                        </p>
-                      </button>
-                    ))}
-                  </div>
-                )}
+              <div className="mt-2 pt-3 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
+                {primaryProfile.role_nuance_note}
               </div>
-            )}
+            </div>
           </div>
-        </div>
-      ) : null}
+        </>
+      )}
     </div>
   );
 }
