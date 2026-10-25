@@ -2,47 +2,40 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  Activity,
   AlertTriangle,
-  ArrowDownRight,
   ArrowUpRight,
-  Award,
   BarChart3,
-  Calendar,
+  Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Compass,
-  Database,
-  DollarSign,
-  Filter,
   Flame,
-  Gauge,
   GitCompare,
   Info,
   Layers,
   LineChart as LineChartIcon,
-  PlusCircle,
   RefreshCw,
-  Scale,
   Search,
-  ShieldAlert,
   Sparkles,
   Target,
-  TrendingDown,
-  TrendingUp,
+  Users,
   Zap,
 } from "lucide-react";
 import {
-  MarketDataBasis,
-  MarketEntityForecast,
   MarketLabDashboardPayload,
-  MarketNormalizedSeries,
+  NewTraitMetaGroup,
   PlayerCard,
+  TraitControlledPremiumItem,
+  TraitMetaCatalogItem,
+  TraitRepresentativePlayerItem,
   formatBpKorean,
 } from "@/lib/fclab-types";
 import {
   ChartEventMarker,
   MarketOverviewIndexCard,
   MarketSeasonGradeHeatmap,
+  SeasonBadge,
 } from "@/components/fclab/VisualCharts";
 
 interface ChartSeriesConfig {
@@ -58,6 +51,44 @@ const DEFAULT_MARKET_CHART_EVENTS: ChartEventMarker[] = [
   { date: "10.03", label: "패키지 출시", type: "PACK_RELEASE" },
   { date: "10.10", label: "강화 데이", type: "ENHANCE_DAY" },
   { date: "10.16", label: "수수료 쿠폰 만료", type: "COUPON_EXPIRY" },
+];
+
+const TRAIT_COMPARE_COLORS = [
+  "#0284c7", // sky-600
+  "#e11d48", // rose-600
+  "#d97706", // amber-600
+  "#059669", // emerald-600
+  "#7c3aed", // violet-600
+  "#db2777", // pink-600
+];
+
+const META_GROUP_ORDER: {
+  key: NewTraitMetaGroup | "ALL";
+  label: string;
+  shortDesc: string;
+}[] = [
+  {
+    key: "ALL",
+    label: "전체 신규 특성 (17종)",
+    shortDesc: "공격·드리블·수비·GK 전체 신규 특성 개별 목록",
+  },
+  {
+    key: "공격/슈팅 특성",
+    label: "공격/슈팅 특성 (6종)",
+    shortDesc:
+      "크로스 포쳐 · 아크로바틱 피니셔 · 레이저 슈터 · 타이탄 · 라인 브레이커 · 프레데터",
+  },
+  {
+    key: "드리블/스피드/활동량 특성",
+    label: "드리블/스피드/활동량 특성 (3종)",
+    shortDesc: "스피드스터 · 트릭스터 · 2개의 심장",
+  },
+  {
+    key: "패스/수비/GK 특성",
+    label: "패스/수비/GK 특성 (8종)",
+    shortDesc:
+      "커맨더 · 블로커 · 파이터 · 와일드 태클러 · 체이서 · GK 빠른 반응 · GK 공중볼 장악 · GK 데드아이",
+  },
 ];
 
 function MarketMultiLineChart({
@@ -77,14 +108,14 @@ function MarketMultiLineChart({
 
   if (!data || data.length === 0 || series.length === 0) {
     return (
-      <div className="h-44 flex items-center justify-center text-xs text-slate-500 border border-slate-800">
+      <div className="h-44 flex items-center justify-center text-xs text-slate-500 border border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50 dark:bg-slate-900/40">
         표시할 시계열 데이터가 없습니다.
       </div>
     );
   }
 
   const width = 680;
-  const padX = 28;
+  const padX = 32;
   const padY = 24;
 
   const allValues: number[] = [];
@@ -98,1936 +129,1069 @@ function MarketMultiLineChart({
   const maxVal = allValues.length > 0 ? Math.max(...allValues) : 100;
   const span = Math.max(1e-6, maxVal - minVal);
 
-  const getCoord = (idx: number, val: number) => {
-    const x =
-      padX + (idx / Math.max(1, data.length - 1)) * (width - padX * 2);
-    const y =
-      height - padY - ((val - minVal) / span) * (height - padY * 2);
-    return { x, y };
-  };
+  const toX = (idx: number) =>
+    padX + (idx / Math.max(1, data.length - 1)) * (width - padX * 2);
+  const toY = (val: number) =>
+    height - padY - ((val - minVal) / span) * (height - padY * 2);
 
-  // Resolve event marker positions along the x-axis
-  const resolvedMarkers = (eventMarkers || [])
-    .map((ev, mIdx) => {
-      let idx = data.findIndex((r) => String(r[xKey] || "") === ev.date);
-      if (idx === -1 && data.length >= 6) {
-        const fallbackRatios = [0.22, 0.52, 0.78];
-        idx = Math.min(
-          data.length - 2,
-          Math.max(
-            1,
-            Math.floor(
-              data.length * (fallbackRatios[mIdx % fallbackRatios.length] || 0.5)
-            )
-          )
-        );
-      }
-      if (idx < 0 || !data[idx]) return null;
-      const primaryVal = Number(data[idx][series[0].key] || 0);
-      const coord = getCoord(idx, primaryVal);
-      return {
-        ...ev,
-        idx,
-        dateText: String(data[idx][xKey] || ev.date),
-        coord,
-      };
-    })
-    .filter((x): x is NonNullable<typeof x> => Boolean(x));
-
-  const activeIdx =
-    hoverIdx !== null && data[hoverIdx] ? hoverIdx : data.length - 1;
-  const activeRow = data[activeIdx] || data[data.length - 1];
+  const activeIdx = hoverIdx !== null ? hoverIdx : data.length - 1;
+  const activeRow = data[activeIdx] ?? data[data.length - 1];
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs bg-slate-950/90 border border-slate-800/80 px-3 py-1.5">
-        <span className="font-mono text-slate-400">
-          기준일: <strong className="text-white">{String(activeRow[xKey] || "")}</strong>
-        </span>
-        <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs px-1">
+        <div className="flex items-center gap-3 flex-wrap">
           {series.map((s) => {
-            const rawVal = Number(activeRow[s.key] || 0);
-            const textVal = s.formatValue
-              ? s.formatValue(rawVal)
-              : rawVal.toLocaleString();
+            const val = Number(activeRow?.[s.key] ?? 0);
             return (
-              <span key={s.key} className="inline-flex items-center gap-1.5 font-mono text-[11px]">
+              <div key={s.key} className="flex items-center gap-1.5">
                 <span
-                  className="w-2.5 h-2.5 inline-block"
+                  className="inline-block w-2.5 h-2.5 rounded-full"
                   style={{ backgroundColor: s.color }}
                 />
-                <span className="text-slate-400">{s.label}:</span>
-                <strong className="text-slate-100">{textVal}</strong>
-              </span>
+                <span className="text-slate-600 dark:text-slate-400 font-medium">
+                  {s.label}:
+                </span>
+                <span className="font-mono font-bold text-slate-900 dark:text-slate-100">
+                  {s.formatValue ? s.formatValue(val) : val.toFixed(1)}
+                </span>
+              </div>
             );
           })}
         </div>
+        <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+          기준일: {String(activeRow?.[xKey] ?? "-")}
+        </span>
       </div>
 
-      {/* Market Event Badges Strip */}
-      {resolvedMarkers.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 text-[10px]">
-          <span className="text-slate-500 font-semibold">차트 이벤트 마커:</span>
-          {resolvedMarkers.map((m, i) => {
-            const cls =
-              m.type === "PACK_RELEASE"
-                ? "bg-sky-500/15 text-sky-300 border-sky-500/40"
-                : m.type === "ENHANCE_DAY"
-                  ? "bg-amber-500/15 text-amber-300 border-amber-500/40"
-                  : "bg-rose-500/15 text-rose-300 border-rose-500/40";
+      <div className="relative w-full overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-2">
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          className="w-full h-auto select-none"
+          onMouseLeave={() => setHoverIdx(null)}
+        >
+          {[0, 0.25, 0.5, 0.75, 1].map((ratio, idx) => {
+            const y = padY + ratio * (height - padY * 2);
+            const labelVal = maxVal - ratio * span;
             return (
-              <span
-                key={`${m.label}_${i}`}
-                onMouseEnter={() => setHoverIdx(m.idx)}
-                className={`px-2 py-0.5 border font-mono cursor-pointer transition ${cls}`}
-              >
-                [{m.dateText}] {m.label}
-              </span>
+              <g key={idx}>
+                <line
+                  x1={padX}
+                  y1={y}
+                  x2={width - padX}
+                  y2={y}
+                  stroke="currentColor"
+                  className="text-slate-200 dark:text-slate-800"
+                  strokeDasharray="3 3"
+                  strokeWidth="1"
+                />
+                <text
+                  x={padX - 4}
+                  y={y + 3}
+                  textAnchor="end"
+                  className="fill-slate-400 dark:fill-slate-500 text-[9px] font-mono"
+                >
+                  {labelVal.toFixed(1)}
+                </text>
+              </g>
             );
           })}
-        </div>
-      )}
 
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        className="w-full bg-slate-950/70 border border-slate-800/90 select-none"
-        style={{ height: `${height}px` }}
-        onMouseLeave={() => setHoverIdx(null)}
-      >
-        {[0.2, 0.5, 0.8].map((lvl) => {
-          const y = padY + (height - padY * 2) * lvl;
-          return (
-            <line
-              key={lvl}
-              x1={padX}
-              y1={y}
-              x2={width - padX}
-              y2={y}
-              stroke="#1e293b"
-              strokeDasharray="3 3"
-              strokeWidth="1"
-            />
-          );
-        })}
-
-        {series.map((s) => {
-          const pts = data.map((row, idx) =>
-            getCoord(idx, Number(row[s.key] || 0))
-          );
-          const poly = pts.map((p) => `${p.x},${p.y}`).join(" ");
-          const areaPoly = `${pts[0].x},${height - padY} ${poly} ${
-            pts[pts.length - 1].x
-          },${height - padY}`;
-          return (
-            <g key={s.key}>
-              {s.isArea && (
-                <polygon
-                  points={areaPoly}
-                  fill={s.color}
-                  fillOpacity={0.14}
+          {eventMarkers.map((ev, i) => {
+            const matchIdx = data.findIndex((r) =>
+              String(r[xKey] ?? "").endsWith(ev.date)
+            );
+            if (matchIdx < 0) return null;
+            const x = toX(matchIdx);
+            return (
+              <g key={i}>
+                <line
+                  x1={x}
+                  y1={padY}
+                  x2={x}
+                  y2={height - padY}
+                  stroke="#f59e0b"
+                  strokeDasharray="2 2"
+                  strokeWidth="1"
+                  opacity={0.6}
                 />
-              )}
-              <polyline
-                fill="none"
-                stroke={s.color}
-                strokeWidth={s.dashed ? "1.75" : "2.25"}
-                strokeDasharray={s.dashed ? "4 4" : undefined}
-                points={poly}
-              />
-              {pts[activeIdx] && (
-                <circle
-                  cx={pts[activeIdx].x}
-                  cy={pts[activeIdx].y}
-                  r="4"
-                  fill={s.color}
-                  stroke="#0b0f17"
-                  strokeWidth="1.5"
+                <text
+                  x={x}
+                  y={padY - 6}
+                  textAnchor="middle"
+                  className="fill-amber-600 dark:fill-amber-400 text-[9px] font-semibold"
+                >
+                  {ev.label}
+                </text>
+              </g>
+            );
+          })}
+
+          {series.map((s) => {
+            const pts = data.map((row, idx) => {
+              const v = Number(row[s.key] ?? minVal);
+              return `${toX(idx).toFixed(1)},${toY(
+                Number.isFinite(v) ? v : minVal
+              ).toFixed(1)}`;
+            });
+            return (
+              <g key={s.key}>
+                <polyline
+                  fill="none"
+                  stroke={s.color}
+                  strokeWidth="2.2"
+                  strokeDasharray={s.dashed ? "4 3" : undefined}
+                  points={pts.join(" ")}
                 />
-              )}
-            </g>
-          );
-        })}
+                {hoverIdx !== null && data[hoverIdx] && (
+                  <circle
+                    cx={toX(hoverIdx)}
+                    cy={toY(Number(data[hoverIdx][s.key] ?? minVal))}
+                    r="4"
+                    fill={s.color}
+                    stroke="#ffffff"
+                    strokeWidth="1.5"
+                  />
+                )}
+              </g>
+            );
+          })}
 
-        {/* Render Event Vertical Lines & Labels on Chart */}
-        {resolvedMarkers.map((m, i) => {
-          const strokeColor =
-            m.type === "PACK_RELEASE"
-              ? "#38bdf8"
-              : m.type === "ENHANCE_DAY"
-                ? "#f59e0b"
-                : "#f43f5e";
-          return (
-            <g key={`marker_${i}`}>
-              <line
-                x1={m.coord.x}
-                y1={16}
-                x2={m.coord.x}
-                y2={height - padY}
-                stroke={strokeColor}
-                strokeDasharray="3 3"
-                strokeWidth="1.2"
-                opacity="0.75"
+          {data.map((_, idx) => {
+            const sliceW = (width - padX * 2) / Math.max(1, data.length);
+            return (
+              <rect
+                key={idx}
+                x={toX(idx) - sliceW / 2}
+                y={0}
+                width={sliceW}
+                height={height}
+                fill="transparent"
+                className="cursor-crosshair"
+                onMouseEnter={() => setHoverIdx(idx)}
               />
-              <circle
-                cx={m.coord.x}
-                cy={m.coord.y}
-                r="3.5"
-                fill={strokeColor}
-                stroke="#0b0f17"
-                strokeWidth="1.2"
-              />
-              <text
-                x={m.coord.x}
-                y={12}
-                textAnchor="middle"
-                fill={strokeColor}
-                className="text-[9px] font-mono font-bold"
-              >
-                {m.label}
-              </text>
-            </g>
-          );
-        })}
-
-        {data.map((_, idx) => {
-          const x =
-            padX + (idx / Math.max(1, data.length - 1)) * (width - padX * 2);
-          return (
-            <rect
-              key={idx}
-              x={x - width / data.length / 2}
-              y={0}
-              width={width / data.length}
-              height={height}
-              fill="transparent"
-              className="cursor-crosshair"
-              onMouseEnter={() => setHoverIdx(idx)}
-            />
-          );
-        })}
-      </svg>
+            );
+          })}
+        </svg>
+      </div>
     </div>
   );
 }
 
-interface MarketLabViewProps {
+interface CombinedTraitItem {
+  trait_id: string;
+  trait_name: string;
+  category: string;
+  meta_group: NewTraitMetaGroup;
+  release_or_patch_note: string;
+  in_game_effect: string;
+  icon_url?: string;
+  ranker_usage_pct: number;
+  user_usage_pct: number;
+  controlled_premium_pct: number;
+  avg_premium_bp_diff: number;
+  avg_holder_bp: number;
+  return_1d_pct: number;
+  return_7d_pct: number;
+  return_30d_pct: number;
+  sample_count: number;
+  meta_tier: string;
+  position_suitability: Record<string, number>;
+  price_trend_30d: { date: string; index_value: number }[];
+  representative_players: TraitRepresentativePlayerItem[];
+  matched_examples: TraitControlledPremiumItem["matched_examples"];
+}
+
+export interface MarketLabViewProps {
   initialCards: PlayerCard[];
   onInspectPlayer?: (spid: number, grade?: number) => void;
 }
 
-type MarketSubTab =
-  | "overview"
-  | "sectors"
-  | "forecast_backtest"
-  | "events_supply"
-  | "trait_meta"
-  | "operations";
-
-function BasisBadge({ basis }: { basis: MarketDataBasis }) {
-  if (basis === "observed") {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-        <Database className="w-3 h-3" />
-        실측 데이터 (Observed)
-      </span>
-    );
-  }
-  if (basis === "official_public") {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold bg-sky-500/15 text-sky-300 border border-sky-500/30">
-        <CheckCircle2 className="w-3 h-3" />
-        공식 공개 데이터 (Official Public)
-      </span>
-    );
-  }
-  if (basis === "statistical_estimate") {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
-        <Scale className="w-3 h-3" />
-        통계적 통제 추정 (Controlled Estimate)
-      </span>
-    );
-  }
-  if (basis === "on_hold_insufficient_data") {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold bg-rose-500/15 text-rose-300 border border-rose-500/30">
-        <AlertTriangle className="w-3 h-3" />
-        데이터 부족 판별 보류 (On Hold)
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">
-      <Compass className="w-3 h-3" />
-      모델 예측 (Model Forecast)
-    </span>
-  );
-}
-
-function ReturnBadge({ val, suffix = "%" }: { val: number; suffix?: string }) {
-  const num = Number(val || 0);
-  if (num > 0.15) {
-    return (
-      <span className="inline-flex items-center gap-0.5 font-mono font-semibold text-emerald-400">
-        <ArrowUpRight className="w-3.5 h-3.5" />+{num.toFixed(2)}
-        {suffix}
-      </span>
-    );
-  }
-  if (num < -0.15) {
-    return (
-      <span className="inline-flex items-center gap-0.5 font-mono font-semibold text-rose-400">
-        <ArrowDownRight className="w-3.5 h-3.5" />
-        {num.toFixed(2)}
-        {suffix}
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-0.5 font-mono text-slate-400">
-      0.00{suffix}
-    </span>
-  );
-}
-
 export default function MarketLabView({
-  initialCards,
+  initialCards: _initialCards,
   onInspectPlayer,
 }: MarketLabViewProps) {
-  const [subTab, setSubTab] = useState<MarketSubTab>("overview");
   const [dashboard, setDashboard] = useState<MarketLabDashboardPayload | null>(
     null
   );
   const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string>("");
+  const [collecting, setCollecting] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Sector axis & dynamic flagship filter state
-  const [sectorAxis, setSectorAxis] = useState<
-    "season" | "capital_tier" | "grade" | "multi_axis"
-  >("season");
-  const [flagshipCategoryFilter, setFlagshipCategoryFilter] =
-    useState<string>("ALL");
+  // 최상단 서브 탭: 'MARKET_PRICE' (이적시장 시세 분석) vs 'NEW_TRAIT_META' (신규 특성 메타 분석)
+  const [mainSubTab, setMainSubTab] = useState<
+    "MARKET_PRICE" | "NEW_TRAIT_META"
+  >("MARKET_PRICE");
 
-  // Forecast & Player Inspector state (Default +8강 core gold tier)
-  const [selectedForecastEntityId, setSelectedForecastEntityId] =
-    useState<string>("");
-  const [selectedInspectGrade, setSelectedInspectGrade] = useState<number>(8);
-  const [selectedTraceSpid, setSelectedTraceSpid] = useState<number>(0);
-  const [playerQuery, setPlayerQuery] = useState<string>("");
-  const [loadingPlayerForecast, setLoadingPlayerForecast] =
+  // 시세 수집 기준 강화 단계 (기본 8강)
+  const [selectedGrade, setSelectedGrade] = useState<number>(8);
+
+  // 이적시장 시세 분석 내부 섹션 탭
+  const [marketSectionTab, setMarketSectionTab] = useState<
+    "SECTOR_HEATMAP" | "NORMALIZED_COMPARE" | "FORECAST"
+  >("SECTOR_HEATMAP");
+
+  // 자세히 보기 토글 상태
+  const [showStabilityDetail, setShowStabilityDetail] =
     useState<boolean>(false);
-  const [customPlayerForecast, setCustomPlayerForecast] =
-    useState<MarketEntityForecast | null>(null);
-  const [customPlayerSeries, setCustomPlayerSeries] =
-    useState<MarketNormalizedSeries | null>(null);
+  const [showTraitMethodDetail, setShowTraitMethodDetail] =
+    useState<boolean>(false);
 
-  // Fee coupon interactive simulator state
-  const [simSalePriceEok, setSimSalePriceEok] = useState<number>(5000); // 5,000억 BP
-  const [simHasTopClass, setSimHasTopClass] = useState<boolean>(true);
-  const [simHasPcRoom, setSimHasPcRoom] = useState<boolean>(true);
-  const [simCouponPct, setSimCouponPct] = useState<number>(30);
+  // 신규 특성 메타 분석 상태
+  const [selectedMetaGroup, setSelectedMetaGroup] = useState<
+    NewTraitMetaGroup | "ALL"
+  >("ALL");
+  const [traitSearchQuery, setTraitSearchQuery] = useState<string>("");
+  const [selectedCompareTraits, setSelectedCompareTraits] = useState<string[]>([
+    "크로스 포쳐",
+    "아크로바틱 피니셔",
+    "레이저 슈터",
+  ]);
+  const [expandedTraitCardName, setExpandedTraitCardName] = useState<
+    string | null
+  >(null);
 
-  // Trait filter state (Strictly level: 8 Official New Traits)
-  const [selectedSubstitutionCaseId, setSelectedSubstitutionCaseId] =
-    useState<string>("sub-new-box-finisher-vs-linebreaker");
-  const [selectedTraitForDetail, setSelectedTraitForDetail] =
-    useState<string>("크로스 포쳐");
+  // 정규화 시세 비교 선택 상태
+  const [selectedSeriesKeys, setSelectedSeriesKeys] = useState<string[]>([]);
 
-  // Operations & Event Registration state
-  const [collectingBatch, setCollectingBatch] = useState<boolean>(false);
-  const [syncingSources, setSyncingSources] = useState<boolean>(false);
-  const [batchMessage, setBatchMessage] = useState<string>("");
-  const [newEvtTitle, setNewEvtTitle] = useState<string>("");
-  const [newEvtType, setNewEvtType] = useState<
-    "PACK_RELEASE" | "FEE_DISCOUNT_COUPON" | "BP_SUPPLY" | "TRAIT_ENGINE_PATCH"
-  >("PACK_RELEASE");
-  const [newEvtStart, setNewEvtStart] = useState<string>("10.15");
-  const [newEvtEnd, setNewEvtEnd] = useState<string>("10.22");
-  const [newEvtSeasons, setNewEvtSeasons] = useState<string>("25UCL,WS,26TOTY");
-  const [newEvtCouponPct, setNewEvtCouponPct] = useState<number>(30);
-
-  async function fetchMarketOverview() {
+  async function fetchDashboard() {
     setLoading(true);
-    setError("");
+    setError(null);
     try {
       const res = await fetch("/api/fclab/v1/market/overview");
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        throw new Error(
-          data.error || "이적시장 분석 데이터를 불러오지 못했습니다."
-        );
+      const json = await res.json();
+      if (!res.ok || !json.ok) {
+        throw new Error(json.error || "이적시장 데이터를 불러오지 못했습니다.");
       }
+      const data = json as MarketLabDashboardPayload;
       setDashboard(data);
       if (
-        data.player_forecasts?.length > 0 &&
-        !selectedForecastEntityId
+        data.normalized_series_preview &&
+        data.normalized_series_preview.length > 0 &&
+        selectedSeriesKeys.length === 0
       ) {
-        setSelectedForecastEntityId(data.player_forecasts[0].entity_id);
-      }
-      if (
-        data.backtest_report?.sample_traces?.length > 0 &&
-        !selectedTraceSpid
-      ) {
-        setSelectedTraceSpid(data.backtest_report.sample_traces[0].spid);
+        setSelectedSeriesKeys(
+          data.normalized_series_preview.slice(0, 3).map((s) => s.key)
+        );
       }
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "시장 분석 엔진 로드 중 오류가 발생했습니다."
+          : "데이터 조회 중 오류가 발생했습니다."
       );
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/api/fclab/v1/market/overview");
-        const data = await res.json();
-        if (cancelled) return;
-        if (!res.ok || !data.ok) {
-          setError(
-            data.error || "이적시장 분석 데이터를 불러오지 못했습니다."
-          );
-        } else {
-          setDashboard(data);
-          if (data.player_forecasts?.length > 0) {
-            setSelectedForecastEntityId(data.player_forecasts[0].entity_id);
-          }
-          if (data.backtest_report?.sample_traces?.length > 0) {
-            setSelectedTraceSpid(data.backtest_report.sample_traces[0].spid);
-          }
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(
-            err instanceof Error
-              ? err.message
-              : "시장 분석 엔진 로드 중 오류가 발생했습니다."
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  async function handleInspectCustomPlayer(spid: number, grade = selectedInspectGrade) {
-    setLoadingPlayerForecast(true);
-    try {
-      const res = await fetch(
-        `/api/fclab/v1/market/player?spid=${spid}&grade=${grade}`
-      );
-      const data = await res.json();
-      if (data.ok) {
-        if (data.dashboard) setDashboard(data.dashboard);
-        if (data.forecast) {
-          setCustomPlayerForecast(data.forecast);
-          setSelectedForecastEntityId(data.forecast.entity_id);
-        }
-        if (data.series) {
-          setCustomPlayerSeries(data.series);
-        }
-      }
-    } catch {
-      // ignore transient error
-    } finally {
-      setLoadingPlayerForecast(false);
-    }
-  }
-
-  async function handleRunIncrementalBatch() {
-    setCollectingBatch(true);
-    setBatchMessage("");
+  async function handleCollectSnapshot() {
+    setCollecting(true);
+    setError(null);
     try {
       const res = await fetch("/api/fclab/v1/market/collect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ limit: 5, grade: 8 }),
-      });
-      const data = await res.json();
-      if (data.ok && data.dashboard) {
-        setDashboard(data.dashboard);
-        setBatchMessage(
-          `증분 수집 완료 (+8~+13강): 신규 시계열 ${data.batchResult.collectedSeriesCount}건, 상세 능력치·특성 ${data.batchResult.collectedAbilityCount}건 갱신됨 (${data.batchResult.completedAt})`
-        );
-      }
-    } catch (err) {
-      setBatchMessage(
-        `배치 수집 오류: ${err instanceof Error ? err.message : String(err)}`
-      );
-    } finally {
-      setCollectingBatch(false);
-    }
-  }
-
-  async function handleSyncOfficialSources(mode = "all") {
-    setSyncingSources(true);
-    setBatchMessage("");
-    try {
-      const res = await fetch("/api/fclab/v1/market/sync-sources", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode }),
-      });
-      const data = await res.json();
-      if (data.ok && data.dashboard) {
-        setDashboard(data.dashboard);
-        setBatchMessage(
-          `공식 데이터 동기화 완료: 이벤트·공지 변경감지 및 Top 10,000 랭커 점유율·+8~+13강 시계열 반영 완료`
-        );
-      }
-    } catch (err) {
-      setBatchMessage(
-        `공식 동기화 오류: ${err instanceof Error ? err.message : String(err)}`
-      );
-    } finally {
-      setSyncingSources(false);
-    }
-  }
-
-  async function handleRegisterEvent(e: React.FormEvent) {
-    e.preventDefault();
-    if (!newEvtTitle.trim()) return;
-    try {
-      const res = await fetch("/api/fclab/v1/market/events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: newEvtTitle.trim(),
-          event_type: newEvtType,
-          start_date: newEvtStart,
-          end_date: newEvtEnd,
-          target_seasons: newEvtSeasons
-            .split(",")
-            .map((s) => s.trim().toUpperCase())
-            .filter(Boolean),
-          fee_coupon_discount_pct: newEvtCouponPct,
+          limit: 8,
+          grade: selectedGrade,
         }),
       });
-      const data = await res.json();
-      if (data.ok && data.dashboard) {
-        setDashboard(data.dashboard);
-        setNewEvtTitle("");
+      const json = await res.json();
+      if (!res.ok || !json.ok) {
+        throw new Error(json.error || "시계열 증분 수집에 실패했습니다.");
       }
-    } catch {
-      // ignore
+      if (json.dashboard) {
+        setDashboard(json.dashboard as MarketLabDashboardPayload);
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "증분 수집 중 오류가 발생했습니다."
+      );
+    } finally {
+      setCollecting(false);
     }
   }
 
-  const activeForecast = useMemo(() => {
-    if (!dashboard) return null;
-    if (
-      customPlayerForecast &&
-      customPlayerForecast.entity_id === selectedForecastEntityId
-    ) {
-      return customPlayerForecast;
+  useEffect(() => {
+    void fetchDashboard();
+  }, []);
+
+  // 17종 신규 특성 통합 데이터 (카탈로그 + 프리미엄 + 30일 시세 + 대표 선수)
+  const combinedTraits = useMemo<CombinedTraitItem[]>(() => {
+    if (!dashboard) return [];
+    const catalog = dashboard.trait_catalog ?? [];
+    const premiums = dashboard.trait_premiums ?? [];
+    const premiumMap = new Map<string, TraitControlledPremiumItem>();
+    for (const p of premiums) {
+      premiumMap.set(p.trait_name, p);
     }
-    return (
-      dashboard.player_forecasts.find(
-        (f) => f.entity_id === selectedForecastEntityId
-      ) ||
-      dashboard.player_forecasts[0] ||
-      null
-    );
-  }, [dashboard, selectedForecastEntityId, customPlayerForecast]);
 
-  const activeSeriesForForecast = useMemo(() => {
-    if (!dashboard || !activeForecast) return null;
-    if (
-      customPlayerSeries &&
-      customPlayerSeries.key === activeForecast.entity_id
-    ) {
-      return customPlayerSeries;
-    }
-    return (
-      dashboard.normalized_series_preview.find(
-        (s) => s.key === activeForecast.entity_id
-      ) || null
-    );
-  }, [dashboard, activeForecast, customPlayerSeries]);
+    return catalog.map((cat: TraitMetaCatalogItem, idx: number) => {
+      const p = premiumMap.get(cat.trait_name);
+      const metaGroup: NewTraitMetaGroup =
+        cat.meta_group ??
+        p?.meta_group ??
+        (cat.category === "슈팅·득점" || cat.category === "침투·오프더볼"
+          ? "공격/슈팅 특성"
+          : cat.category === "드리블·탈압박"
+          ? "드리블/스피드/활동량 특성"
+          : "패스/수비/GK 특성");
 
-  const activeBacktestTrace = useMemo(() => {
-    if (!dashboard) return null;
-    return (
-      dashboard.backtest_report.sample_traces.find(
-        (t) => t.spid === selectedTraceSpid
-      ) ||
-      dashboard.backtest_report.sample_traces[0] ||
-      null
-    );
-  }, [dashboard, selectedTraceSpid]);
+      const rankerUsage =
+        p?.ranker_usage_pct ??
+        cat.ranker_usage_pct ??
+        +(cat.overall_meta_score * 0.34).toFixed(1);
+      const userUsage =
+        p?.user_usage_pct ??
+        cat.user_usage_pct ??
+        +(rankerUsage * 0.78).toFixed(1);
 
-  const activeSubstitutionCase = useMemo(() => {
-    if (!dashboard) return null;
-    return (
-      dashboard.trait_substitutions.find(
-        (c) => c.case_id === selectedSubstitutionCaseId
-      ) ||
-      dashboard.trait_substitutions[0] ||
-      null
-    );
-  }, [dashboard, selectedSubstitutionCaseId]);
+      const controlledPremium =
+        p?.controlled_premium_median_pct ?? cat.controlled_premium_pct ?? 8.5;
+      const avgHolderBp =
+        p?.unadjusted_avg_bp_with ?? cat.avg_holder_bp ?? 850_000_000_000;
+      const avgPremiumBpDiff =
+        p?.avg_premium_bp_diff ??
+        cat.avg_premium_bp_diff ??
+        Math.round(avgHolderBp * (controlledPremium / 100));
 
-  const activeTraitPremium = useMemo(() => {
-    if (!dashboard) return null;
-    return (
-      dashboard.trait_premiums.find(
-        (p) => p.trait_name === selectedTraitForDetail
-      ) ||
-      dashboard.trait_premiums[0] ||
-      null
-    );
-  }, [dashboard, selectedTraitForDetail]);
-
-  const filteredCatalogSearch = useMemo(() => {
-    const q = playerQuery.trim().toLowerCase();
-    if (!q) return initialCards.slice(0, 8);
-    return initialCards
-      .filter(
-        (c) =>
-          c.name.toLowerCase().includes(q) ||
-          c.season_code.toLowerCase().includes(q)
-      )
-      .slice(0, 10);
-  }, [initialCards, playerQuery]);
-
-  // Fee simulator & real-time BEP calculation across all player cards
-  const [excludeFeeLossCards, setExcludeFeeLossCards] = useState<boolean>(false);
-
-  const activeEffectiveFeeRate = useMemo(() => {
-    const baseTaxRate = 0.4; // 40% base market fee
-    const totalDiscount = Math.min(
-      1.0,
-      (simHasPcRoom ? 0.3 : 0) +
-        (simHasTopClass ? 0.2 : 0) +
-        Math.max(0, Math.min(40, simCouponPct)) / 100
-    );
-    return +(baseTaxRate * (1 - totalDiscount)).toFixed(4);
-  }, [simHasPcRoom, simHasTopClass, simCouponPct]);
-
-  const computeCardDynamicBepAndProfit = React.useCallback(
-    (buyPrice: number, targetSellPrice: number) => {
-      const safeBuy = Math.max(0, Math.round(buyPrice || 0));
-      const safeTarget = Math.max(0, Math.round(targetSellPrice || 0));
-      const breakEvenPrice =
-        safeBuy > 0 && activeEffectiveFeeRate < 1
-          ? Math.ceil(safeBuy / (1 - activeEffectiveFeeRate))
-          : safeBuy;
-      const netProceeds = Math.floor(safeTarget * (1 - activeEffectiveFeeRate));
-      const netProfitBp = netProceeds - safeBuy;
-      const netProfitPct =
-        safeBuy > 0 ? +((netProfitBp / safeBuy) * 100).toFixed(2) : 0;
       return {
-        effectiveFeeRate: activeEffectiveFeeRate,
-        effectiveFeePct: +(activeEffectiveFeeRate * 100).toFixed(1),
-        breakEvenPrice,
-        netProfitBp,
-        netProfitPct,
-        isFeeLossWarning: netProfitBp < 0,
+        trait_id: String(cat.trait_id ?? `trait-${idx}`),
+        trait_name: cat.trait_name,
+        category: cat.category,
+        meta_group: metaGroup,
+        release_or_patch_note: cat.release_or_patch_note,
+        in_game_effect: cat.in_game_effect,
+        icon_url: cat.icon_url ?? p?.icon_url,
+        ranker_usage_pct: rankerUsage,
+        user_usage_pct: userUsage,
+        controlled_premium_pct: controlledPremium,
+        avg_premium_bp_diff: avgPremiumBpDiff,
+        avg_holder_bp: avgHolderBp,
+        return_1d_pct:
+          p?.return_1d_with_trait_pct ?? cat.return_1d_pct ?? 0.35,
+        return_7d_pct:
+          p?.return_7d_with_trait_pct ?? cat.return_7d_pct ?? 1.25,
+        return_30d_pct:
+          p?.return_30d_with_trait_pct ?? cat.return_30d_pct ?? 3.4,
+        sample_count: p?.holder_sample_count ?? cat.card_holder_count ?? 18,
+        meta_tier: cat.meta_tier,
+        position_suitability: cat.position_suitability ?? {},
+        price_trend_30d:
+          p?.price_trend_30d && p.price_trend_30d.length > 0
+            ? p.price_trend_30d
+            : cat.price_trend_30d ?? [],
+        representative_players:
+          p?.representative_players && p.representative_players.length > 0
+            ? p.representative_players
+            : cat.representative_players ?? [],
+        matched_examples: p?.matched_examples ?? [],
       };
-    },
-    [activeEffectiveFeeRate]
-  );
+    });
+  }, [dashboard]);
 
-  const feeSimResult = useMemo(() => {
-    const saleBp = Math.max(1, simSalePriceEok) * 100_000_000;
-    const baseTaxRate = 0.4; // 40% base market fee
-    const discountRate = Math.min(
-      1.0,
-      (simHasTopClass ? 0.2 : 0) +
-        (simHasPcRoom ? 0.3 : 0) +
-        Math.max(0, Math.min(40, simCouponPct)) / 100
-    );
-    const effectiveTaxRate = baseTaxRate * (1 - discountRate);
-    const taxBp = Math.round(saleBp * effectiveTaxRate);
-    const netProceedsBp = saleBp - taxBp;
-    const noCouponDiscount = (simHasTopClass ? 0.2 : 0) + (simHasPcRoom ? 0.3 : 0);
-    const noCouponNetBp = Math.round(
-      saleBp * (1 - baseTaxRate * (1 - noCouponDiscount))
-    );
-    const couponSavedBp = netProceedsBp - noCouponNetBp;
-    return {
-      saleBp,
-      effectiveTaxPct: +(effectiveTaxRate * 100).toFixed(1),
-      taxBp,
-      netProceedsBp,
-      couponSavedBp,
-      breakevenRebuyBp: netProceedsBp,
-      breakevenDropPct: +(effectiveTaxRate * 100).toFixed(1),
-    };
-  }, [simSalePriceEok, simHasTopClass, simHasPcRoom, simCouponPct]);
+  // 필터링된 개별 특성 목록
+  const filteredTraits = useMemo(() => {
+    return combinedTraits.filter((t) => {
+      if (selectedMetaGroup !== "ALL" && t.meta_group !== selectedMetaGroup) {
+        return false;
+      }
+      if (traitSearchQuery.trim()) {
+        const q = traitSearchQuery.trim().toLowerCase();
+        const inName = t.trait_name.toLowerCase().includes(q);
+        const inDesc = t.in_game_effect.toLowerCase().includes(q);
+        const inPlayer = t.representative_players.some((p) =>
+          p.name.toLowerCase().includes(q)
+        );
+        return inName || inDesc || inPlayer;
+      }
+      return true;
+    });
+  }, [combinedTraits, selectedMetaGroup, traitSearchQuery]);
 
-  if (loading && !dashboard) {
-    return (
-      <div className="bg-slate-900/70 border border-slate-800 p-10 text-center space-y-3">
-        <RefreshCw className="w-7 h-7 text-emerald-400 animate-spin mx-auto" />
-        <div className="text-base font-semibold text-slate-100">
-          FC 온라인 이적시장 시계열·섹터·특성 메타 계량 엔진 가동 중...
-        </div>
-        <p className="text-xs text-slate-400 max-w-xl mx-auto">
-          30일 시계열 단위 정규화, 다축 섹터 지수, 시장 과열·공포 지수(0~100), 4단계 롤링 백테스트, 교란변수 통제 특성 프리미엄을 계산하고 있습니다.
-        </p>
-      </div>
+  // 비교 선택된 특성 객체들
+  const comparedTraitItems = useMemo(() => {
+    return selectedCompareTraits
+      .map((name) => combinedTraits.find((t) => t.trait_name === name))
+      .filter((t): t is CombinedTraitItem => Boolean(t));
+  }, [combinedTraits, selectedCompareTraits]);
+
+  // 다중 특성 30일 시세 추이 차트 데이터
+  const traitCompareChartData = useMemo(() => {
+    if (comparedTraitItems.length === 0) return [];
+    const baseTrend = comparedTraitItems[0]?.price_trend_30d ?? [];
+    if (baseTrend.length === 0) return [];
+
+    return baseTrend.map((pt, idx) => {
+      const row: Record<string, unknown> = {
+        date: pt.date.slice(5).replace("-", "."),
+      };
+      for (const trait of comparedTraitItems) {
+        const itemPt = trait.price_trend_30d[idx];
+        row[trait.trait_name] = itemPt ? itemPt.index_value : 100;
+      }
+      return row;
+    });
+  }, [comparedTraitItems]);
+
+  const traitCompareChartSeries = useMemo<ChartSeriesConfig[]>(() => {
+    return comparedTraitItems.map((trait, idx) => ({
+      key: trait.trait_name,
+      label: trait.trait_name,
+      color: TRAIT_COMPARE_COLORS[idx % TRAIT_COMPARE_COLORS.length],
+      formatValue: (v: number) => `${v.toFixed(1)}pt`,
+    }));
+  }, [comparedTraitItems]);
+
+  // 다축 섹터 (팀컬러 & 포지션)
+  const teamColorSectors = useMemo(() => {
+    const multi = dashboard?.multi_axis_sectors ?? [];
+    const tc = multi.filter((s) => s.axis === "team_color");
+    return tc.length > 0 ? tc : dashboard?.capital_tier_sectors ?? [];
+  }, [dashboard]);
+
+  const positionSectors = useMemo(() => {
+    const multi = dashboard?.multi_axis_sectors ?? [];
+    return multi.filter((s) => s.axis === "position_role");
+  }, [dashboard]);
+
+  // 정규화 시세 비교 차트 데이터
+  const normalizedChartData = useMemo(() => {
+    if (!dashboard?.normalized_series_preview) return [];
+    const activeSeries = dashboard.normalized_series_preview.filter((s) =>
+      selectedSeriesKeys.includes(s.key)
     );
+    if (activeSeries.length === 0) return [];
+    const basePts = activeSeries[0].points;
+    return basePts.map((pt, idx) => {
+      const row: Record<string, unknown> = {
+        date: pt.date.slice(5).replace("-", "."),
+      };
+      for (const s of activeSeries) {
+        row[s.key] = s.points[idx]?.normalized_bp ?? 100;
+      }
+      return row;
+    });
+  }, [dashboard, selectedSeriesKeys]);
+
+  const normalizedChartSeries = useMemo<ChartSeriesConfig[]>(() => {
+    if (!dashboard?.normalized_series_preview) return [];
+    const activeSeries = dashboard.normalized_series_preview.filter((s) =>
+      selectedSeriesKeys.includes(s.key)
+    );
+    return activeSeries.map((s, idx) => ({
+      key: s.key,
+      label: `${s.season_code} ${s.name} (+${s.grade}강)`,
+      color: TRAIT_COMPARE_COLORS[idx % TRAIT_COMPARE_COLORS.length],
+      formatValue: (v: number) => `${v.toFixed(1)}pt`,
+    }));
+  }, [dashboard, selectedSeriesKeys]);
+
+  function toggleCompareTrait(traitName: string) {
+    setSelectedCompareTraits((prev) => {
+      if (prev.includes(traitName)) {
+        if (prev.length <= 1) return prev;
+        return prev.filter((t) => t !== traitName);
+      }
+      if (prev.length >= 6) {
+        return [...prev.slice(1), traitName];
+      }
+      return [...prev, traitName];
+    });
   }
 
-  if (error || !dashboard) {
+  function renderReturnBadge(val: number, prefix = "") {
+    const isUp = val > 0.05;
+    const isDown = val < -0.05;
     return (
-      <div className="bg-rose-950/30 border border-rose-500/40 p-6 text-rose-200 space-y-3">
-        <div className="flex items-center gap-2 font-bold">
-          <AlertTriangle className="w-5 h-5 text-rose-400" />
-          이적시장 분석 엔진 오류
-        </div>
-        <p className="text-sm">{error}</p>
-        <button
-          onClick={fetchMarketOverview}
-          className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold"
-        >
-          다시 시도
-        </button>
-      </div>
+      <span
+        className={`inline-flex items-center gap-0.5 font-mono text-xs font-bold ${
+          isUp
+            ? "text-rose-600 dark:text-rose-400"
+            : isDown
+            ? "text-blue-600 dark:text-blue-400"
+            : "text-slate-600 dark:text-slate-400"
+        }`}
+      >
+        {prefix}
+        {val > 0 ? `+${val.toFixed(2)}%` : `${val.toFixed(2)}%`}
+      </span>
     );
   }
-
-  const fg = dashboard.fear_greed;
-  const fgColor =
-    fg.overall_score >= 60
-      ? "text-amber-400 border-amber-500/40 bg-amber-500/10"
-      : fg.overall_score < 40
-        ? "text-sky-400 border-sky-500/40 bg-sky-500/10"
-        : "text-emerald-400 border-emerald-500/40 bg-emerald-500/10";
 
   return (
     <div className="space-y-6">
-      {/* Top Header & KPI Strip */}
-      <div className="bg-slate-900/90 border border-slate-800 p-6">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-5 border-b border-slate-800">
-          <div>
-            <div className="flex flex-wrap items-center gap-2 mb-1.5">
-              <span className="px-2 py-0.5 text-[11px] font-mono uppercase tracking-wider bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-semibold">
-                QUANT MARKET & TRAIT META ENGINE
+      {/* 상단 헤더 & 컨트롤 바 */}
+      <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-xs">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-sky-50 text-sky-700 border border-sky-200 dark:bg-sky-950/50 dark:text-sky-300 dark:border-sky-800">
+                <LineChartIcon className="w-3.5 h-3.5" />
+                이적시장 · 메타 분석
               </span>
-              <BasisBadge basis="observed" />
-              <BasisBadge basis="statistical_estimate" />
-              <BasisBadge basis="model_forecast" />
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
+                <CheckCircle2 className="w-3 h-3" />
+                절사평균(10%) · EMA 스무딩 · 고정 기준가 앵커 적용
+              </span>
             </div>
-            <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
-              FC 온라인 이적시장 계량 분석 · 시세 예측 · 특성 메타 연구소
+            <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+              FC 온라인 이적시장 시세 &amp; 17종 신규 특성 메타 분석
             </h2>
-            <p className="text-xs sm:text-sm text-slate-400 mt-1">
-              실제 관측된 선수별 30일 시계열({dashboard.collection_status.valid_30d_series_count}종)과 상세 카드 스펙·특성 DB({dashboard.collection_status.cards_with_full_ability}종)를 기반으로 섹터 흐름, 과열·공포 지수, 4단계 백테스트 예측, 신규 특성 통제 프리미엄을 분석합니다.
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">
+              전체 시즌·포지션 시세 흐름과 17종 신규 특성별 실사용률·순수 가격 프리미엄을 한눈에 비교합니다.
             </p>
-          </div>
-          <div className="flex items-center gap-2 self-start lg:self-center">
-            <button
-              onClick={fetchMarketOverview}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              시장 지표 재계산
-            </button>
-            <button
-              onClick={handleRunIncrementalBatch}
-              disabled={collectingBatch}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-slate-950 text-xs font-bold transition"
-            >
-              <Database className="w-3.5 h-3.5" />
-              {collectingBatch ? "실시간 수집 중..." : "시계열·특성 증분 수집"}
-            </button>
-          </div>
-        </div>
-
-        {/* 5 Core KPIs */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 pt-5">
-          <div className="bg-slate-950/70 border border-slate-800/90 p-4">
-            <div className="text-[11px] text-slate-400 flex items-center justify-between">
-              <span>FClab 시장 종합 지수 (30d=100)</span>
-              <Activity className="w-3.5 h-3.5 text-emerald-400" />
-            </div>
-            <div className="mt-1.5 flex items-baseline gap-2">
-              <span className="text-2xl font-mono font-bold text-white">
-                {dashboard.market_index_current.toFixed(2)}
-              </span>
-              <ReturnBadge val={dashboard.market_return_1d_pct} />
-            </div>
-            <div className="mt-1 text-[11px] text-slate-500">
-              30일 누적 수익률:{" "}
-              <span className="text-slate-300 font-mono">
-                {dashboard.market_return_30d_pct >= 0 ? "+" : ""}
-                {dashboard.market_return_30d_pct}%
-              </span>
-            </div>
-          </div>
-
-          <div className="bg-slate-950/70 border border-slate-800/90 p-4">
-            <div className="text-[11px] text-slate-400 flex items-center justify-between">
-              <span>최근 7일 시장 평균 등락률</span>
-              <TrendingUp className="w-3.5 h-3.5 text-cyan-400" />
-            </div>
-            <div className="mt-1.5 flex items-baseline gap-2">
-              <span className="text-2xl font-mono font-bold text-white">
-                {dashboard.market_return_7d_pct >= 0 ? "+" : ""}
-                {dashboard.market_return_7d_pct.toFixed(2)}%
-              </span>
-            </div>
-            <div className="mt-1 text-[11px] text-slate-500">
-              일간 평균 변동성:{" "}
-              <span className="text-slate-300 font-mono">
-                ±{dashboard.market_volatility_30d_pct}%
-              </span>
-            </div>
-          </div>
-
-          <div className={`border p-4 ${fgColor}`}>
-            <div className="text-[11px] flex items-center justify-between opacity-90">
-              <span>시장 과열·공포 지수 (0~100)</span>
-              <Gauge className="w-3.5 h-3.5" />
-            </div>
-            <div className="mt-1.5 flex items-baseline gap-2">
-              <span className="text-2xl font-mono font-bold">
-                {fg.overall_score}
-              </span>
-              <span className="text-xs font-bold px-1.5 py-0.5 bg-slate-950/60 border border-current/30">
-                {fg.band}
-              </span>
-            </div>
-            <div className="mt-1 text-[11px] opacity-80 truncate">
-              {fg.band_range_label}
-            </div>
-          </div>
-
-          <div className="bg-slate-950/70 border border-slate-800/90 p-4">
-            <div className="text-[11px] text-slate-400 flex items-center justify-between">
-              <span>시점 일치 백테스트 (7일 MAPE)</span>
-              <Target className="w-3.5 h-3.5 text-amber-400" />
-            </div>
-            <div className="mt-1.5 flex items-baseline gap-2">
-              <span className="text-2xl font-mono font-bold text-white">
-                {dashboard.backtest_report.models_7d[3]?.mape_pct.toFixed(2)}%
-              </span>
-              <span className="text-[11px] text-emerald-400 font-mono">
-                방향 적중{" "}
-                {dashboard.backtest_report.models_7d[3]?.directional_accuracy_pct.toFixed(
-                  1
-                )}
-                %
-              </span>
-            </div>
-            <div className="mt-1 text-[11px] text-slate-500">
-              검증 윈도우:{" "}
-              <span className="text-slate-300 font-mono">
-                {dashboard.backtest_report.total_rolling_windows.toLocaleString()}회
-              </span>
-            </div>
-          </div>
-
-          <div className="bg-slate-950/70 border border-slate-800/90 p-4">
-            <div className="text-[11px] text-slate-400 flex items-center justify-between">
-              <span>추적 카탈로그 & 특성 DB</span>
-              <Sparkles className="w-3.5 h-3.5 text-fuchsia-400" />
-            </div>
-            <div className="mt-1.5 flex items-baseline gap-2">
-              <span className="text-2xl font-mono font-bold text-white">
-                {dashboard.collection_status.total_catalog_cards}종
-              </span>
-              <span className="text-xs text-slate-400 font-mono">
-                (시계열 {dashboard.collection_status.timeseries_stored_count}종)
-              </span>
-            </div>
-            <div className="mt-1 text-[11px] text-slate-500">
-              상세 특성 분석 카드:{" "}
-              <span className="text-slate-300 font-mono">
-                {dashboard.collection_status.cards_with_full_ability}종
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* =====================================================================
-          TOP PERSISTENT BAR: 내 수수료 혜택 설정 바 (PC방 30% + TOP CLASS 20% + 쿠폰 0~40%)
-      ===================================================================== */}
-      <div className="bg-slate-900/95 border border-emerald-500/40 p-4 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2">
-            <DollarSign className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span className="text-xs sm:text-sm font-bold text-white">
-              내 수수료 혜택 설정 바
-            </span>
-            <span className="text-[11px] text-slate-400 hidden sm:inline">
-              (기본 수수료 40% 기준 · 변경 시 전 종목 BEP 및 순수익 실시간 재계산)
-            </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setSimHasPcRoom((prev) => !prev)}
-              className={`px-3 py-1.5 text-xs font-semibold border transition flex items-center gap-1.5 ${
-                simHasPcRoom
-                  ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/50 font-bold"
-                  : "bg-slate-950 text-slate-400 border-slate-800 hover:text-white"
-              }`}
-            >
-              <span>{simHasPcRoom ? "[✓]" : "[ ]"}</span>
-              <span>프리미엄 PC방 (30%)</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setSimHasTopClass((prev) => !prev)}
-              className={`px-3 py-1.5 text-xs font-semibold border transition flex items-center gap-1.5 ${
-                simHasTopClass
-                  ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/50 font-bold"
-                  : "bg-slate-950 text-slate-400 border-slate-800 hover:text-white"
-              }`}
-            >
-              <span>{simHasTopClass ? "[✓]" : "[ ]"}</span>
-              <span>TOP CLASS (20%)</span>
-            </button>
-
-            <div className="flex items-center bg-slate-950 border border-slate-800 p-0.5">
-              <span className="px-2 text-[11px] text-slate-400">할인쿠폰:</span>
-              {[0, 20, 30, 40].map((cp) => (
+            {/* 강화 등급 기준 선택 */}
+            <div className="inline-flex items-center rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100/80 dark:bg-slate-950 p-1">
+              {[
+                { grade: 8, label: "8강(금카) 기준" },
+                { grade: 5, label: "5강(은카) 기준" },
+                { grade: 1, label: "1강 기준" },
+              ].map((b) => (
                 <button
-                  key={cp}
+                  key={b.grade}
                   type="button"
-                  onClick={() => setSimCouponPct(cp)}
-                  className={`px-2.5 py-1 text-xs font-mono font-semibold transition ${
-                    simCouponPct === cp
-                      ? "bg-amber-500 text-slate-950 font-bold"
-                      : "text-slate-300 hover:text-white"
+                  onClick={() => setSelectedGrade(b.grade)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    selectedGrade === b.grade
+                      ? "bg-white dark:bg-slate-800 text-sky-600 dark:text-sky-400 shadow-xs"
+                      : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
                   }`}
                 >
-                  {cp === 0 ? "없음" : `${cp}%`}
+                  {b.label}
                 </button>
               ))}
             </div>
+
+            {/* 시계열·특성 증분 수집 버튼 */}
+            <button
+              type="button"
+              onClick={handleCollectSnapshot}
+              disabled={collecting || loading}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white shadow-xs transition-colors cursor-pointer"
+            >
+              <RefreshCw
+                className={`w-3.5 h-3.5 ${collecting ? "animate-spin" : ""}`}
+              />
+              {collecting
+                ? "안정화 스냅샷 동기화 중..."
+                : "시계열·특성 증분 수집"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowStabilityDetail((v) => !v)}
+              className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <Info className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+              ℹ️ 자세히 보기
+              {showStabilityDetail ? (
+                <ChevronUp className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5" />
+              )}
+            </button>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between xl:justify-end gap-3 border-t xl:border-t-0 border-slate-800 pt-2.5 xl:pt-0">
+        {/* 자세히 보기: 시계열 지수 안정화 모델 안내 */}
+        {showStabilityDetail && (
+          <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800">
+              <div className="font-bold text-slate-900 dark:text-slate-200 mb-1">
+                1. 표본 풀 대폭 확대 &amp; 고정 기준가 앵커
+              </div>
+              <p className="leading-relaxed">
+                17개 주요 시즌 85종 이상의 핵심 코어 카드를 표본 풀(Sample Pool)로 고정하고, 일자별 첫 기준가 스냅샷(Baseline Anchor)을 고정하여 증분 수집이나 새로고침 시 기준점이 흔들리지 않습니다.
+              </p>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800">
+              <div className="font-bold text-slate-900 dark:text-slate-200 mb-1">
+                2. 상·하위 10% 극단치 제거 절사 평균 (Trimmed Mean)
+              </div>
+              <p className="leading-relaxed">
+                특정 귀속 거래나 일시적 상·하한가 이상치 카드가 전체 지수를 왜곡하지 않도록 상·하위 10% 극단값을 제외한 절사 평균(Trimmed Mean)으로 섹터 및 전체 시장 등락률을 산출합니다.
+              </p>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800">
+              <div className="font-bold text-slate-900 dark:text-slate-200 mb-1">
+                3. 지수이동평균 (EMA) 시계열 스무딩
+              </div>
+              <p className="leading-relaxed">
+                30일 시계열 지수 산출 시 지수이동평균(EMA) 스무딩을 적용하여 단기 노이즈를 억제하고 일관된 추세선을 제공합니다. (현재 스냅샷 표본:{" "}
+                <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                  {dashboard?.collection_status?.valid_30d_series_count ?? 85}종
+                </span>
+                )
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* 최상단 메인 모드 서브 탭: [📈 이적시장 시세 분석] vs [🔥 신규 특성 메타 분석] */}
+        <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
           <button
             type="button"
-            onClick={() => setExcludeFeeLossCards((prev) => !prev)}
-            className={`px-2.5 py-1 text-[11px] font-semibold border transition ${
-              excludeFeeLossCards
-                ? "bg-rose-500/20 text-rose-300 border-rose-500/50"
-                : "bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200"
+            onClick={() => setMainSubTab("MARKET_PRICE")}
+            className={`flex items-center justify-between p-4 rounded-xl border text-left transition-all cursor-pointer ${
+              mainSubTab === "MARKET_PRICE"
+                ? "border-sky-500 bg-sky-50/70 dark:bg-sky-950/40 dark:border-sky-500 shadow-xs"
+                : "border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40 hover:bg-slate-100/70 dark:hover:bg-slate-900"
             }`}
           >
-            {excludeFeeLossCards
-              ? "[✓] 수수료 손실 종목 숨김 중"
-              : "[ ] 수수료 손실 주의 종목 제외"}
+            <div className="flex items-center gap-3">
+              <div
+                className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg ${
+                  mainSubTab === "MARKET_PRICE"
+                    ? "bg-sky-600 text-white"
+                    : "bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+                }`}
+              >
+                📈
+              </div>
+              <div>
+                <div className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                  이적시장 시세 분석
+                  {mainSubTab === "MARKET_PRICE" && (
+                    <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-sky-600 text-white">
+                      현재 선택
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                  전체 시장 지수 · 시즌 카드 아이콘 히트맵 · 섹터별 등락 · 시세 예측
+                </p>
+              </div>
+            </div>
+            <ArrowUpRight className="w-4 h-4 text-slate-400 shrink-0" />
           </button>
 
-          <div className="flex items-center gap-2 bg-slate-950 border border-emerald-500/40 px-3.5 py-1.5">
-            <span className="text-xs text-slate-300">현재 적용 실효 수수료:</span>
-            <span className="text-base font-mono font-bold text-emerald-400 tabular-nums">
-              {(activeEffectiveFeeRate * 100).toFixed(1)}%
-            </span>
-            <span className="text-[11px] text-slate-400 font-mono">
-              (손익분기 상승폭 +
-              {(
-                (1 / Math.max(0.01, 1 - activeEffectiveFeeRate) - 1) *
-                100
-              ).toFixed(1)}
-              %)
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Sub-navigation bar */}
-      <div className="flex flex-wrap gap-1.5 bg-slate-900/80 border border-slate-800 p-1.5">
-        {[
-          {
-            id: "overview" as const,
-            label: "1. 시장 종합 & 공포·과열 지수",
-            icon: Gauge,
-          },
-          {
-            id: "sectors" as const,
-            label: "2. 다축 섹터 분석 (시즌·자본·강화)",
-            icon: Layers,
-          },
-          {
-            id: "forecast_backtest" as const,
-            label: "3. 시세 예측 & 4단계 백테스트 검증",
-            icon: LineChartIcon,
-          },
-          {
-            id: "events_supply" as const,
-            label: "4. 이벤트·공급 시나리오 & 수수료 쿠폰",
-            icon: Calendar,
-          },
-          {
-            id: "trait_meta" as const,
-            label: "5. 신규특성·특성 메타 & 통제 프리미엄",
-            icon: Award,
-          },
-          {
-            id: "operations" as const,
-            label: "6. 수집 운영·단위 정규화·투명성",
-            icon: Database,
-          },
-        ].map((tab) => {
-          const Icon = tab.icon;
-          const active = subTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setSubTab(tab.id)}
-              className={`flex items-center gap-2 px-3.5 py-2 text-xs font-semibold transition ${
-                active
-                  ? "bg-emerald-500 text-slate-950 font-bold"
-                  : "text-slate-300 hover:bg-slate-800 hover:text-white"
-              }`}
-            >
-              <Icon className="w-3.5 h-3.5" />
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* =====================================================================
-          SUB-TAB 1: MARKET OVERVIEW & FEAR / GREED INDEX
-      ===================================================================== */}
-      {subTab === "overview" && (
-        <div className="space-y-6">
-          {/* FClab Market Overview Index Card & Season/Grade Treemap Heatmap */}
-          {dashboard.market_overview_index && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <MarketOverviewIndexCard
-                overviewIndex={dashboard.market_overview_index}
-              />
-              <div className="lg:col-span-2">
-                <MarketSeasonGradeHeatmap
-                  cells={dashboard.market_overview_index.seasonGradeHeatmap}
-                  onSelectCell={(seasonCode, grade) => {
-                    const matched = dashboard.player_forecasts.find(
-                      (f) => f.season_code === seasonCode && f.grade === grade
-                    );
-                    if (matched) {
-                      setSelectedForecastEntityId(matched.entity_id);
-                      setSubTab("forecast_backtest");
-                    } else {
-                      setSubTab("sectors");
-                    }
-                  }}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Actionable Market Signal & Enhancement EV Arbitrage Player Cards */}
-          <div className="bg-slate-900/85 border border-slate-800 p-5 space-y-4">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-slate-800 pb-3">
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Zap className="w-4 h-4 text-emerald-400" />
-                  <h3 className="text-base font-bold text-white">
-                    수수료 손익분기(BEP) · 강화 기댓값(EV) · 신호 품질 통합 실전 시그널 카드
-                  </h3>
-                  <span className="px-2 py-0.5 text-[11px] font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                    실효 수수료 {(activeEffectiveFeeRate * 100).toFixed(1)}% 실시간 반영
-                  </span>
-                </div>
-                <p className="text-xs text-slate-400 mt-1">
-                  내 수수료 혜택 설정에 따른 손익분기 매도가(BEP)와 7일 목표가 매도 시 수수료 차감 후 순수익, 강화 데이 기대 제작 비용(N-1강+동일 OVR 재료 5장), 고강 귀속 위험을 한눈에 판독합니다.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {dashboard.player_forecasts
-                .filter((f) => {
-                  if (!excludeFeeLossCards) return true;
-                  const h7 = f.horizons.find((h) => h.horizon_days === 7) || f.horizons[0];
-                  const dyn = computeCardDynamicBepAndProfit(
-                    f.current_bp,
-                    h7?.expected_bp || f.current_bp
-                  );
-                  return !dyn.isFeeLossWarning;
-                })
-                .slice(0, 9)
-                .map((f) => {
-                  const h7 =
-                    f.horizons.find((h) => h.horizon_days === 7) ||
-                    f.horizons[0];
-                  const dyn = computeCardDynamicBepAndProfit(
-                    f.current_bp,
-                    h7?.expected_bp || f.current_bp
-                  );
-                  const sig = f.signalMetrics;
-                  const ev = sig?.enhancementEv;
-                  const statusTag = sig?.signalStatusTag || "💎 수요 유입";
-                  const qualityScore = sig?.signalQualityScore ?? 78;
-                  const isTrap = Boolean(ev?.isLiquidityTrap);
-
-                  const tagStyle =
-                    statusTag === "🔥 급등 초입"
-                      ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
-                      : statusTag === "📈 상승 지속"
-                        ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
-                        : statusTag === "⚠️ 고점/귀속 주의"
-                          ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
-                          : "bg-cyan-500/20 text-cyan-300 border-cyan-500/40";
-
-                  return (
-                    <div
-                      key={f.entity_id}
-                      onClick={() => {
-                        setSelectedForecastEntityId(f.entity_id);
-                        setSubTab("forecast_backtest");
-                      }}
-                      className="bg-slate-950/90 border border-slate-800 hover:border-emerald-500/50 p-4 space-y-3 cursor-pointer transition flex flex-col justify-between"
-                    >
-                      <div className="space-y-2">
-                        {/* Top Badges: Signal Quality Score + Status Tag + Liquidity Trap Warning */}
-                        <div className="flex flex-wrap items-center justify-between gap-1.5">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="px-2 py-0.5 text-[10px] font-mono font-bold bg-slate-800 text-emerald-300 border border-slate-700">
-                              신호 품질 {qualityScore}점
-                            </span>
-                            <span
-                              className={`px-2 py-0.5 text-[10px] font-bold border ${tagStyle}`}
-                            >
-                              {statusTag}
-                            </span>
-                          </div>
-                          {isTrap && (
-                            <span className="px-2 py-0.5 text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/50">
-                              ⚠️ 귀속 위험 주의
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Player Name & Current Price */}
-                        <div className="flex items-start justify-between gap-2 pt-1">
-                          <div>
-                            <div className="text-sm font-bold text-white">
-                              [{f.season_code}] {f.name}{" "}
-                              <span className="text-amber-300 font-mono">
-                                +{f.grade}강
-                              </span>
-                            </div>
-                            <div className="text-[11px] text-slate-400">
-                              {f.primary_position} · {f.season_sector_label}
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-[10px] text-slate-400">현재 매수가</div>
-                            <div className="text-sm font-mono font-bold text-white">
-                              {f.current_bp_text} BP
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* BEP & Net Profit Box (Real-time updated by Top Fee Bar) */}
-                        <div className="bg-slate-900/90 border border-slate-800 p-2.5 text-xs space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <span className="text-slate-400">
-                              손익분기 매도가 (BEP):
-                            </span>
-                            <span className="font-mono font-bold text-amber-300">
-                              {formatBpKorean(dyn.breakEvenPrice)} BP
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-slate-400">
-                              7일 목표가 ({h7?.expected_bp_text || f.current_bp_text}) 순수익:
-                            </span>
-                            <span
-                              className={`font-mono font-bold ${
-                                dyn.netProfitBp >= 0
-                                  ? "text-emerald-400"
-                                  : "text-rose-400"
-                              }`}
-                            >
-                              {dyn.netProfitBp >= 0 ? "+" : "-"}
-                              {formatBpKorean(Math.abs(dyn.netProfitBp))} BP (
-                              {dyn.netProfitPct >= 0 ? "+" : ""}
-                              {dyn.netProfitPct}%)
-                            </span>
-                          </div>
-                          {dyn.isFeeLossWarning && (
-                            <div className="text-[10px] text-rose-300 font-semibold pt-0.5 flex items-center justify-between">
-                              <span>⚠️ 수수료 손실 주의 (상승폭이 실효 수수료율 미달)</span>
-                              <span className="font-mono">쿠폰 추가 필요</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Enhancement EV Arbitrage Strip */}
-                      {ev && (
-                        <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2 text-[11px]">
-                          <span
-                            className={`px-2 py-0.5 font-bold border ${
-                              ev.recommendation === "CRAFT_RECOMMENDED"
-                                ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
-                                : "bg-sky-500/15 text-sky-300 border-sky-500/30"
-                            }`}
-                          >
-                            {ev.verdictLabel ||
-                              (ev.recommendation === "CRAFT_RECOMMENDED"
-                                ? "직접 강화 유리 (기댓값 양수)"
-                                : "완제품 매수 유리")}
-                          </span>
-                          <span className="font-mono text-slate-400 truncate">
-                            기대제작: {formatBpKorean(ev.expectedCraftCost)} BP
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-            </div>
-          </div>
-
-          {/* Commentary & Unobservable Disclosure */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 bg-slate-900/80 border border-slate-800 p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Flame className="w-4 h-4 text-amber-400" />
-                  <h3 className="text-sm font-bold text-white">
-                    이적시장 국면 진단 및 30일 시장 지수 · 심리지수 추이
-                  </h3>
-                </div>
-                <BasisBadge basis="observed" />
-              </div>
-              <p className="text-xs text-slate-300 leading-relaxed bg-slate-950/70 border border-slate-800 p-3.5">
-                {fg.summary_comment}
-              </p>
-
-              <div className="pt-2">
-                <MarketMultiLineChart
-                  data={
-                    fg.history_30d as unknown as Record<string, unknown>[]
-                  }
-                  xKey="date"
-                  height={230}
-                  series={[
-                    {
-                      key: "market_index",
-                      label: "FClab 30일 동일가중 시장지수 (Base=100)",
-                      color: "#10b981",
-                      isArea: true,
-                      formatValue: (v) => v.toFixed(2),
-                    },
-                    {
-                      key: "score",
-                      label: "시장 과열·공포 지수 (0~100)",
-                      color: "#f59e0b",
-                      formatValue: (v) => `${v.toFixed(0)}점`,
-                    },
-                  ]}
-                />
-              </div>
-            </div>
-
-            {/* 5-Band Gauge & Unobservable Notice */}
-            <div className="bg-slate-900/80 border border-slate-800 p-5 flex flex-col justify-between space-y-4">
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-bold text-white">
-                    시장 과열·공포 5단계 구간 기준
-                  </h3>
-                  <span className="text-xs font-mono text-slate-400">
-                    현재 {fg.overall_score}점
-                  </span>
-                </div>
-
-                <div className="space-y-1.5 text-xs">
-                  {[
-                    {
-                      range: "80 ~ 100",
-                      name: "극단적 과열",
-                      desc: "단기 급등 쏠림·추격 매수 과열 (차익실현 주의)",
-                      active: fg.overall_score >= 80,
-                      color: "border-rose-500/50 bg-rose-500/10 text-rose-300",
-                    },
-                    {
-                      range: "60 ~ 79",
-                      name: "과열",
-                      desc: "상승 종목 우위 및 매수 모멘텀 확산",
-                      active: fg.overall_score >= 60 && fg.overall_score < 80,
-                      color:
-                        "border-amber-500/50 bg-amber-500/10 text-amber-300",
-                    },
-                    {
-                      range: "40 ~ 59",
-                      name: "중립",
-                      desc: "수급 균형 및 시즌·특성별 차별화 장세",
-                      active: fg.overall_score >= 40 && fg.overall_score < 60,
-                      color:
-                        "border-emerald-500/50 bg-emerald-500/10 text-emerald-300",
-                    },
-                    {
-                      range: "20 ~ 39",
-                      name: "공포",
-                      desc: "매물 출회 우위·단기 가격 조정 구간",
-                      active: fg.overall_score >= 20 && fg.overall_score < 40,
-                      color: "border-sky-500/50 bg-sky-500/10 text-sky-300",
-                    },
-                    {
-                      range: "0 ~ 19",
-                      name: "극단적 공포",
-                      desc: "패키지 폭탄·패닉셀 투매 (저점 분할매수 기회)",
-                      active: fg.overall_score < 20,
-                      color:
-                        "border-indigo-500/50 bg-indigo-500/10 text-indigo-300",
-                    },
-                  ].map((b) => (
-                    <div
-                      key={b.name}
-                      className={`p-2.5 border flex items-center justify-between ${
-                        b.active
-                          ? `${b.color} font-bold`
-                          : "border-slate-800 bg-slate-950/40 text-slate-400"
-                      }`}
-                    >
-                      <div>
-                        <span className="font-mono mr-2">{b.range}</span>
-                        <span>{b.name}</span>
-                        <div className="text-[11px] opacity-80 font-normal mt-0.5">
-                          {b.desc}
-                        </div>
-                      </div>
-                      {b.active && (
-                        <span className="px-2 py-0.5 text-[10px] bg-slate-950 border border-current">
-                          현재 위치
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="bg-slate-950/90 border border-amber-500/30 p-3.5 space-y-1.5">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-300">
-                  <ShieldAlert className="w-4 h-4 shrink-0" />
-                  비공개 데이터(거래량·호가 잔량) 미사용 원칙 명시
-                </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  {fg.unobservable_Exclusion_note}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* 5 Components Breakdown */}
-          <div className="bg-slate-900/80 border border-slate-800 p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-white">
-                과열·공포 지수 5대 산출 구성 요소 (실제 관측치 및 가중치)
-              </h3>
-              <span className="text-xs text-slate-400 font-mono">
-                표본 커버리지: 시계열 {fg.sample_series_count}종 / 전체 카탈로그{" "}
-                {fg.total_catalog_count}종 ({fg.data_coverage_pct}%)
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-              {fg.components.map((comp) => (
-                <div
-                  key={comp.id}
-                  className="bg-slate-950/80 border border-slate-800 p-4 flex flex-col justify-between space-y-3"
-                >
-                  <div>
-                    <div className="flex items-center justify-between text-[11px] text-slate-400">
-                      <span>가중치 {(comp.weight * 100).toFixed(0)}%</span>
-                      <span
-                        className={`px-1.5 py-0.5 font-semibold ${
-                          comp.signal === "과열"
-                            ? "bg-amber-500/15 text-amber-300"
-                            : comp.signal === "공포"
-                              ? "bg-sky-500/15 text-sky-300"
-                              : "bg-emerald-500/15 text-emerald-300"
-                        }`}
-                      >
-                        {comp.signal}
-                      </span>
-                    </div>
-                    <div className="text-xs font-bold text-slate-100 mt-1">
-                      {comp.name}
-                    </div>
-                    <div className="text-xl font-mono font-bold text-white mt-2">
-                      {comp.normalized_score}
-                      <span className="text-xs text-slate-500 font-normal">
-                        {" "}
-                        / 100
-                      </span>
-                    </div>
-                    <div className="w-full h-1.5 bg-slate-800 mt-1.5 overflow-hidden">
-                      <div
-                        className={`h-full ${
-                          comp.normalized_score >= 60
-                            ? "bg-amber-400"
-                            : comp.normalized_score < 40
-                              ? "bg-sky-400"
-                              : "bg-emerald-400"
-                        }`}
-                        style={{ width: `${comp.normalized_score}%` }}
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-1.5 pt-2 border-t border-slate-800/80">
-                    <div className="text-[11px] font-mono text-emerald-300">
-                      {comp.raw_value_text}
-                    </div>
-                    <p className="text-[11px] text-slate-400 leading-snug">
-                      {comp.description}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Sector & Capital Tier Fear/Greed Split */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-slate-900/80 border border-slate-800 p-5 space-y-3">
-              <h3 className="text-sm font-bold text-white">
-                시즌 섹터별 체감 심리지수 및 7일 수익률 비교
-              </h3>
-              <div className="space-y-2.5">
-                {fg.by_season_sector.map((item) => (
-                  <div
-                    key={item.sector_id}
-                    className="bg-slate-950/70 border border-slate-800 p-3 flex items-center justify-between gap-4"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold text-slate-200 truncate">
-                        {item.name}
-                      </div>
-                      <div className="text-[11px] text-slate-500">
-                        시계열 표본 {item.sample_count}종
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4 shrink-0">
-                      <div className="text-right">
-                        <div className="text-[10px] text-slate-400">7일 등락</div>
-                        <ReturnBadge val={item.return_7d_pct} />
-                      </div>
-                      <div className="text-right min-w-[80px]">
-                        <div className="text-xs font-mono font-bold text-white">
-                          {item.score}점 ({item.band})
-                        </div>
-                        <div className="w-20 h-1.5 bg-slate-800 mt-1">
-                          <div
-                            className="h-full bg-emerald-400"
-                            style={{ width: `${item.score}%` }}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="bg-slate-900/80 border border-slate-800 p-5 space-y-3">
-              <h3 className="text-sm font-bold text-white">
-                자본·가격대 구간별 체감 심리지수 및 7일 수익률 비교
-              </h3>
-              <div className="space-y-2.5">
-                {fg.by_capital_tier.map((item) => (
-                  <div
-                    key={item.sector_id}
-                    className="bg-slate-950/70 border border-slate-800 p-3 flex items-center justify-between gap-4"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold text-slate-200 truncate">
-                        {item.name}
-                      </div>
-                      <div className="text-[11px] text-slate-500">
-                        시계열 표본 {item.sample_count}종
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4 shrink-0">
-                      <div className="text-right">
-                        <div className="text-[10px] text-slate-400">7일 등락</div>
-                        <ReturnBadge val={item.return_7d_pct} />
-                      </div>
-                      <div className="text-right min-w-[80px]">
-                        <div className="text-xs font-mono font-bold text-white">
-                          {item.score}점 ({item.band})
-                        </div>
-                        <div className="w-20 h-1.5 bg-slate-800 mt-1">
-                          <div
-                            className="h-full bg-cyan-400"
-                            style={{ width: `${item.score}%` }}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* =====================================================================
-          SUB-TAB 2: MULTI-AXIS SECTOR ANALYSIS & DYNAMIC FLAGSHIP EXPLORER
-      ===================================================================== */}
-      {subTab === "sectors" && (
-        <div className="space-y-6">
-          <div className="bg-slate-900/80 border border-slate-800 p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-white">
-                  다중 축 동적 섹터 분석 (시즌·자본·강화단계·포지션·팀컬러·신규특성)
-                </h3>
-                <BasisBadge basis="observed" />
-                <BasisBadge basis="official_public" />
-              </div>
-              <p className="text-xs text-slate-400 mt-1">
-                단일 선수는 시즌 공급구조, 자본 구간, 강화 구간(+8~+11강 주류 vs +12~+13강 분리), 포지션, 팀컬러, 공식 신규특성(level: 8) 보유 여부에 따라 복수의 동적 섹터에 동시에 소속됩니다.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5 bg-slate-950 p-1 border border-slate-800 self-start">
-              {[
-                { id: "season" as const, label: "시즌·공급구조 축" },
-                { id: "capital_tier" as const, label: "자본·가격대 축" },
-                { id: "grade" as const, label: "강화 구간 축 (+8~+11 / +12~+13)" },
-                { id: "multi_axis" as const, label: "포지션·팀컬러·신규특성 다중축" },
-              ].map((ax) => (
-                <button
-                  key={ax.id}
-                  onClick={() => setSectorAxis(ax.id)}
-                  className={`px-3 py-1.5 text-xs font-semibold transition ${
-                    sectorAxis === ax.id
-                      ? "bg-emerald-500 text-slate-950 font-bold"
-                      : "text-slate-300 hover:text-white"
-                  }`}
-                >
-                  {ax.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Sector Cards Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {(sectorAxis === "season"
-              ? dashboard.season_sectors
-              : sectorAxis === "capital_tier"
-                ? dashboard.capital_tier_sectors
-                : sectorAxis === "grade"
-                  ? dashboard.grade_sectors
-                  : dashboard.multi_axis_sectors || []
-            ).map((sec) => (
+          <button
+            type="button"
+            onClick={() => setMainSubTab("NEW_TRAIT_META")}
+            className={`flex items-center justify-between p-4 rounded-xl border text-left transition-all cursor-pointer ${
+              mainSubTab === "NEW_TRAIT_META"
+                ? "border-rose-500 bg-rose-50/70 dark:bg-rose-950/40 dark:border-rose-500 shadow-xs"
+                : "border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40 hover:bg-slate-100/70 dark:hover:bg-slate-900"
+            }`}
+          >
+            <div className="flex items-center gap-3">
               <div
-                key={sec.sector_id}
-                className="bg-slate-900/85 border border-slate-800 p-5 space-y-4"
+                className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg ${
+                  mainSubTab === "NEW_TRAIT_META"
+                    ? "bg-rose-600 text-white"
+                    : "bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+                }`}
               >
-                <div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold text-white">
-                        {sec.name}
-                      </span>
-                      <span
-                        className={`px-2 py-0.5 text-[10px] font-mono font-semibold border ${
-                          sec.confidence_level === "high"
-                            ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
-                            : sec.confidence_level === "medium"
-                              ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/30"
-                              : "bg-amber-500/15 text-amber-300 border-amber-500/30"
-                        }`}
-                      >
-                        표본 신뢰도:{" "}
-                        {sec.confidence_level === "high"
-                          ? "높음"
-                          : sec.confidence_level === "medium"
-                            ? "보통"
-                            : "표본 제한"}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-400 mt-1">
-                      {sec.description}
-                    </p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className="text-[11px] text-slate-400">섹터 평균가</div>
-                    <div className="text-sm font-mono font-bold text-amber-300">
-                      {sec.avg_bp_text} BP
-                    </div>
-                    <div className="text-[10px] text-slate-500 font-mono">
-                      중앙값 {sec.median_bp_text}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Period returns & relative strength */}
-                <div className="grid grid-cols-5 gap-2 bg-slate-950/80 border border-slate-800/80 p-3 text-center">
-                  <div>
-                    <div className="text-[10px] text-slate-400">1일 수익률</div>
-                    <div className="text-xs mt-0.5">
-                      <ReturnBadge val={sec.return_1d_pct} />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] text-slate-400">7일 수익률</div>
-                    <div className="text-xs mt-0.5">
-                      <ReturnBadge val={sec.return_7d_pct} />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] text-slate-400">14일 수익률</div>
-                    <div className="text-xs mt-0.5">
-                      <ReturnBadge val={sec.return_14d_pct} />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] text-slate-400">30일 수익률</div>
-                    <div className="text-xs mt-0.5">
-                      <ReturnBadge val={sec.return_30d_pct} />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] text-slate-400">
-                      시장 대비 상대강도
-                    </div>
-                    <div className="text-xs mt-0.5">
-                      <ReturnBadge
-                        val={sec.relative_strength_vs_market}
-                        suffix="%p"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Advance / Decline Breadth Bar */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-[11px] text-slate-400">
-                    <span>
-                      등락 확산도: 상승 {sec.advance_ratio}% · 보합{" "}
-                      {sec.flat_ratio}% · 하락 {sec.decline_ratio}%
-                    </span>
-                    <span className="font-mono">
-                      급등(+7%↑) {sec.surge_ratio}% / 급락(-7%↓){" "}
-                      {sec.plunge_ratio}%
-                    </span>
-                  </div>
-                  <div className="w-full h-2 bg-slate-800 flex overflow-hidden">
-                    <div
-                      className="bg-emerald-500 h-full"
-                      style={{ width: `${sec.advance_ratio}%` }}
-                    />
-                    <div
-                      className="bg-slate-500 h-full"
-                      style={{ width: `${sec.flat_ratio}%` }}
-                    />
-                    <div
-                      className="bg-rose-500 h-full"
-                      style={{ width: `${sec.decline_ratio}%` }}
-                    />
-                  </div>
-                </div>
-
-                {/* Risk & Exposure Metadata */}
-                <div className="grid grid-cols-3 gap-2 text-[11px]">
-                  <div className="bg-slate-950/60 border border-slate-800 p-2">
-                    <span className="text-slate-500 block">공급 이벤트 노출</span>
-                    <span className="text-slate-200 font-semibold">
-                      {sec.supply_event_exposure}
-                    </span>
-                  </div>
-                  <div className="bg-slate-950/60 border border-slate-800 p-2">
-                    <span className="text-slate-500 block">신규 시즌 대체 위험</span>
-                    <span className="text-slate-200 font-semibold">
-                      {sec.replacement_risk}
-                    </span>
-                  </div>
-                  <div className="bg-slate-950/60 border border-slate-800 p-2">
-                    <span className="text-slate-500 block">카탈로그 / 시계열 표본</span>
-                    <span className="text-slate-200 font-mono font-semibold">
-                      {sec.sample_card_count}종 / {sec.timeseries_sample_count}종
-                    </span>
-                  </div>
-                </div>
-
-                {/* Top Movers in Sector */}
-                {sec.top_movers.length > 0 && (
-                  <div className="pt-2 border-t border-slate-800/80">
-                    <div className="text-[11px] font-semibold text-slate-400 mb-2">
-                      섹터 내 주요 변동 카드 (7일 기준)
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {sec.top_movers.map((m, idx) => (
-                        <div
-                          key={`${m.spid}_${m.grade}_${idx}`}
-                          onClick={() =>
-                            onInspectPlayer && onInspectPlayer(m.spid, m.grade)
-                          }
-                          className="bg-slate-950/90 border border-slate-800/90 hover:border-emerald-500/40 p-2 flex items-center justify-between cursor-pointer transition"
-                        >
-                          <div className="min-w-0">
-                            <div className="text-xs font-semibold text-slate-200 truncate">
-                              [{m.season_code}] {m.name} +{m.grade}
-                            </div>
-                            <div className="text-[10px] font-mono text-slate-400">
-                              {m.current_bp_text} BP
-                            </div>
-                          </div>
-                          <ReturnBadge val={m.return_7d_pct} />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                🔥
               </div>
-            ))}
-          </div>
-
-          {/* Core Gold Tier (+8~+11강) vs Separated Ultra Tier (+12~+13강) Comparison Table */}
-          {dashboard.grade_tier_comparisons && (
-            <div className="bg-slate-900/85 border border-slate-800 p-5 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-sm font-bold text-white">
-                    강화 단계별 시세 분석 기준: +8~+11강 주류 금카 구간 vs +12~+13강 초고가·저유동성 분리 구간
-                  </h3>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    13강 등 초고가 희소 매물이 전체 시장 평균을 왜곡하지 않도록 +8~+11강 핵심 금카 구간과 +12~+13강 구간을 엄격히 분리하며, 시계열 관측 횟수와 실제 거래량(미제공)을 명확히 구분합니다.
-                  </p>
+              <div>
+                <div className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                  신규 특성 메타 분석
+                  <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-rose-600 text-white">
+                    17종 개별 분리 · 다중 비교
+                  </span>
                 </div>
-                <BasisBadge basis="observed" />
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
-                      <th className="py-2 pr-2">강화 단계 (구간 분류)</th>
-                      <th className="py-2 px-2 text-right">시계열 관측 표본 (일자 수)</th>
-                      <th className="py-2 px-2 text-right">실제 거래량 제공 여부</th>
-                      <th className="py-2 px-2 text-right">평균가 / 중앙값</th>
-                      <th className="py-2 px-2 text-right">7일 / 30일 수익률</th>
-                      <th className="py-2 pl-2">판별 상태 및 유동성 해석</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/70">
-                    {dashboard.grade_tier_comparisons.map((g) => (
-                      <tr key={g.grade} className="hover:bg-slate-950/60">
-                        <td className="py-2.5 pr-2">
-                          <span className="font-mono font-bold text-white mr-1.5">
-                            +{g.grade}강
-                          </span>
-                          <span
-                            className={`px-1.5 py-0.5 text-[10px] font-semibold ${
-                              g.tier_zone === "CORE_GOLD_8_11"
-                                ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
-                                : "bg-amber-500/15 text-amber-300 border border-amber-500/30"
-                            }`}
-                          >
-                            {g.tier_zone === "CORE_GOLD_8_11"
-                              ? "주류 금카 핵심 구간"
-                              : "고가·저유동성 분리 구간"}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-2 text-right font-mono text-slate-200">
-                          {g.timeseries_observation_count}종 (30일 시계열 관측)
-                        </td>
-                        <td className="py-2.5 px-2 text-right font-mono text-slate-400">
-                          미제공 (가격 스냅샷만 존재)
-                        </td>
-                        <td className="py-2.5 px-2 text-right font-mono">
-                          <div className="text-amber-300 font-semibold">
-                            {g.avg_bp_text} BP
-                          </div>
-                          <div className="text-[10px] text-slate-500">
-                            중앙값 {g.median_bp_text}
-                          </div>
-                        </td>
-                        <td className="py-2.5 px-2 text-right font-mono">
-                          <div>
-                            7일 <ReturnBadge val={g.return_7d_pct} />
-                          </div>
-                          <div className="text-[10px] text-slate-400">
-                            30일 {g.return_30d_pct >= 0 ? "+" : ""}
-                            {g.return_30d_pct}% (변동성 {g.volatility_30d_pct}%)
-                          </div>
-                        </td>
-                        <td className="py-2.5 pl-2 text-[11px]">
-                          <span
-                            className={`px-1.5 py-0.5 text-[10px] font-semibold mr-1.5 ${
-                              g.status === "analyzed"
-                                ? "bg-emerald-500/15 text-emerald-300"
-                                : "bg-rose-500/15 text-rose-300"
-                            }`}
-                          >
-                            {g.status === "analyzed"
-                              ? "정상 분석"
-                              : "표본 부족 판별 보류"}
-                          </span>
-                          <span className="text-slate-400">{g.liquidity_note}</span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                  크로스 포쳐 · 아크로바틱 피니셔 · 레이저 슈터 등 17종 실사용률 &amp; 가격 프리미엄 비교
+                </p>
               </div>
             </div>
+            <Sparkles className="w-4 h-4 text-rose-500 shrink-0" />
+          </button>
+        </div>
+      </div>
+
+      {/* 에러 배너 */}
+      {error && (
+        <div className="rounded-xl border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/50 p-4 text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {/* 로딩 스켈레톤 */}
+      {loading && !dashboard ? (
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-12 text-center space-y-3">
+          <RefreshCw className="w-7 h-7 text-sky-600 animate-spin mx-auto" />
+          <div className="text-sm font-bold text-slate-800 dark:text-slate-200">
+            이적시장 시계열 및 17종 신규 특성 메타 데이터를 불러오는 중입니다...
+          </div>
+        </div>
+      ) : null}
+
+      {/* =====================================================================
+          MODE 1: [📈 이적시장 시세 분석]
+      ===================================================================== */}
+      {dashboard && mainSubTab === "MARKET_PRICE" && (
+        <div className="space-y-6">
+          {/* 1. 종합 지수 카드 & 공포·탐욕 요약 */}
+          {dashboard.market_overview_index && (
+            <MarketOverviewIndexCard
+              overviewIndex={dashboard.market_overview_index}
+            />
           )}
 
-          {/* Data-Driven Dynamic Flagship ("대장") Candidates Explorer */}
-          {dashboard.dynamic_flagship_candidates && (
-            <div className="bg-slate-900/85 border border-slate-800 p-5 space-y-4">
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-800 pb-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-base font-bold text-white">
-                      데이터 기반 동적 대장 판별 탐색기 (하드코딩 시즌 배열 전면 제거)
+          {/* 2. 시즌 × 강화 시세 히트맵 (시즌 공식 로고 아이콘 포함) */}
+          {dashboard.market_overview_index && (
+            <MarketSeasonGradeHeatmap
+              cells={dashboard.market_overview_index.seasonGradeHeatmap}
+            />
+          )}
+
+          {/* 3. 세부 섹션 전환 탭 */}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
+            <div className="flex flex-wrap items-center gap-2">
+              {(
+                [
+                  {
+                    id: "SECTOR_HEATMAP",
+                    label: "섹터별 시세 흐름 (시즌·팀컬러·포지션·강화)",
+                    icon: Layers,
+                  },
+                  {
+                    id: "NORMALIZED_COMPARE",
+                    label: "선수·시즌 정규화 지수 비교 (Base 100)",
+                    icon: GitCompare,
+                  },
+                  {
+                    id: "FORECAST",
+                    label: "시세 방향성 예측 & 매수·매도 시그널",
+                    icon: Compass,
+                  },
+                ] as const
+              ).map((tab) => {
+                const Icon = tab.icon;
+                const active = marketSectionTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setMarketSectionTab(tab.id)}
+                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      active
+                        ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-xs"
+                        : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800"
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 3-A. 섹터별 시세 흐름 */}
+          {marketSectionTab === "SECTOR_HEATMAP" && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              {/* 시즌 섹터 */}
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                      <BarChart3 className="w-4 h-4 text-sky-600" />
+                      주요 시즌별 시세 지수 &amp; 등락률
                     </h3>
-                    <BasisBadge basis="official_public" />
-                    <BasisBadge basis="statistical_estimate" />
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      절사평균(10%) 및 고정 기준가 앵커가 적용된 시즌별 평균 흐름
+                    </p>
                   </div>
-                  <p className="text-xs text-slate-400 mt-1">
-                    고정 시즌 배열이나 선수 이름 하드코딩 없이, 공식 Top 10,000 랭커 스쿼드 사용률({dashboard.ranker_meta_snapshot?.snapshot_date || "최신"}), 포지션별 점유율, 공식 신규특성(level: 8) 보유 개수, +8강 가격 대비 성능(가성비), 7일 시세 방어력을 종합해 동적으로 분류합니다.
-                  </p>
                 </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {[
-                    "ALL",
-                    "최상위 메타픽",
-                    "팀컬러별 대장",
-                    "가성비 대장",
-                    "신규 시즌 수혜 후보",
-                    "경쟁력 하락 후보",
-                    "데이터 부족으로 판별 보류",
-                  ].map((cat) => (
-                    <button
-                      key={cat}
-                      onClick={() => setFlagshipCategoryFilter(cat)}
-                      className={`px-2.5 py-1 text-[11px] font-semibold border transition ${
-                        flagshipCategoryFilter === cat
-                          ? "bg-emerald-500 text-slate-950 border-emerald-400 font-bold"
-                          : "bg-slate-950 text-slate-300 border-slate-800 hover:text-white"
-                      }`}
+                <div className="divide-y divide-slate-100 dark:divide-slate-800/70">
+                  {dashboard.season_sectors.slice(0, 8).map((sec) => (
+                    <div
+                      key={sec.sector_id}
+                      className="py-2.5 flex items-center justify-between gap-3 text-xs"
                     >
-                      {cat === "ALL" ? "전체 분류" : cat}
-                    </button>
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <SeasonBadge seasonCode={sec.code} />
+                        <span className="font-bold text-slate-900 dark:text-slate-100 truncate">
+                          {sec.name}
+                        </span>
+                        <span className="text-[11px] text-slate-400">
+                          표본 {sec.sample_card_count}종
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-4 shrink-0">
+                        <div className="text-right">
+                          <span className="text-[10px] text-slate-400 block">
+                            1일 변동
+                          </span>
+                          {renderReturnBadge(sec.return_1d_pct)}
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[10px] text-slate-400 block">
+                            7일 변동
+                          </span>
+                          {renderReturnBadge(sec.return_7d_pct)}
+                        </div>
+                        <div className="text-right w-16">
+                          <span className="text-[10px] text-slate-400 block">
+                            30일 변동
+                          </span>
+                          {renderReturnBadge(sec.return_30d_pct)}
+                        </div>
+                      </div>
+                    </div>
                   ))}
                 </div>
               </div>
 
-              <div className="overflow-x-auto max-h-96">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
-                      <th className="py-2 pr-2">동적 판별 분류</th>
-                      <th className="py-2 px-2">선수 카드 (+강화)</th>
-                      <th className="py-2 px-2 text-right">랭커 점유율 (시즌)</th>
-                      <th className="py-2 px-2 text-right">+8~+11강 시세 (7일)</th>
-                      <th className="py-2 px-2">보유 신규특성 (level: 8)</th>
-                      <th className="py-2 pl-2">데이터 기반 판별 근거</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/70">
-                    {dashboard.dynamic_flagship_candidates
-                      .filter(
-                        (c) =>
-                          flagshipCategoryFilter === "ALL" ||
-                          c.category === flagshipCategoryFilter
-                      )
-                      .slice(0, 24)
-                      .map((cand) => (
-                        <tr
-                          key={`${cand.spid}_${cand.analyzed_grade}`}
-                          onClick={() =>
-                            onInspectPlayer &&
-                            onInspectPlayer(cand.spid, cand.analyzed_grade)
-                          }
-                          className="hover:bg-slate-950/60 cursor-pointer"
-                        >
-                          <td className="py-2.5 pr-2">
-                            <span
-                              className={`px-2 py-0.5 text-[10px] font-bold border ${
-                                cand.category === "최상위 메타픽"
-                                  ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
-                                  : cand.category === "팀컬러별 대장"
-                                    ? "bg-sky-500/15 text-sky-300 border-sky-500/30"
-                                    : cand.category === "가성비 대장"
-                                      ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/30"
-                                      : cand.category === "데이터 부족으로 판별 보류"
-                                        ? "bg-rose-500/15 text-rose-300 border-rose-500/30"
-                                        : "bg-amber-500/15 text-amber-300 border-amber-500/30"
-                              }`}
-                            >
-                              {cand.category}
-                            </span>
-                            <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-                              대장점수 {cand.flagship_score}점 / 가성비 {cand.value_efficiency_score}점
+              {/* 인기 팀컬러 섹터 */}
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                      <Users className="w-4 h-4 text-emerald-600" />
+                      인기 팀컬러 / 자본 티어 섹터 시세 흐름
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      상위 랭커 인기 구단/국가 팀컬러 및 가격대별 코어 선수 평균 추이
+                    </p>
+                  </div>
+                </div>
+                <div className="divide-y divide-slate-100 dark:divide-slate-800/70">
+                  {teamColorSectors.slice(0, 8).map((sec) => (
+                    <div
+                      key={sec.sector_id}
+                      className="py-2.5 flex items-center justify-between gap-3 text-xs"
+                    >
+                      <div className="min-w-0">
+                        <div className="font-bold text-slate-900 dark:text-slate-100 truncate">
+                          {sec.name}
+                        </div>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                          대표: {sec.top_movers?.[0]?.name ?? "-"} (
+                          {sec.top_movers?.[0]?.season_code ?? "-"})
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4 shrink-0">
+                        <div className="text-right">
+                          <span className="text-[10px] text-slate-400 block">
+                            1일 변동
+                          </span>
+                          {renderReturnBadge(sec.return_1d_pct)}
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[10px] text-slate-400 block">
+                            7일 변동
+                          </span>
+                          {renderReturnBadge(sec.return_7d_pct)}
+                        </div>
+                        <div className="text-right w-16">
+                          <span className="text-[10px] text-slate-400 block">
+                            심리 점수
+                          </span>
+                          <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                            {sec.fear_greed_score}점
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 포지션 섹터 */}
+              {positionSectors.length > 0 && (
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-4">
+                  <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                    <Target className="w-4 h-4 text-amber-600" />
+                    포지션 그룹별 시세 등락
+                  </h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {positionSectors.map((pos) => (
+                      <div
+                        key={pos.sector_id}
+                        className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/50 space-y-1.5"
+                      >
+                        <div className="text-xs font-extrabold text-slate-900 dark:text-white">
+                          {pos.name}
+                        </div>
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-slate-500">1일</span>
+                          {renderReturnBadge(pos.return_1d_pct)}
+                        </div>
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-slate-500">7일</span>
+                          {renderReturnBadge(pos.return_7d_pct)}
+                        </div>
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-slate-500">30일</span>
+                          {renderReturnBadge(pos.return_30d_pct)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 강화 등급 섹터 */}
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-4">
+                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-purple-600" />
+                  강화 단계별 시장 흐름
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {dashboard.grade_sectors.slice(0, 6).map((gr) => (
+                    <div
+                      key={gr.sector_id}
+                      className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/50 space-y-2"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-extrabold text-slate-900 dark:text-white">
+                          {gr.name}
+                        </span>
+                        <span className="text-[11px] font-mono text-slate-500">
+                          평균 {gr.avg_bp_text}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-500">7일 등락</span>
+                        {renderReturnBadge(gr.return_7d_pct)}
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-500">30일 등락</span>
+                        {renderReturnBadge(gr.return_30d_pct)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 3-B. 정규화 지수 비교 */}
+          {marketSectionTab === "NORMALIZED_COMPARE" && (
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
+                    선수·시즌 30일 정규화 시세 지수 비교 (시작일 = 100pt)
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    가격대(BP)가 서로 다른 카드와 시즌을 시작일 100 기준 상대 수익률 곡선으로 동시 비교합니다.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {dashboard.normalized_series_preview.map((s) => {
+                  const active = selectedSeriesKeys.includes(s.key);
+                  return (
+                    <button
+                      key={s.key}
+                      type="button"
+                      onClick={() => {
+                        setSelectedSeriesKeys((prev) =>
+                          prev.includes(s.key)
+                            ? prev.length > 1
+                              ? prev.filter((id) => id !== s.key)
+                              : prev
+                            : [...prev.slice(-4), s.key]
+                        );
+                      }}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                        active
+                          ? "bg-sky-600 text-white border-sky-600"
+                          : "bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+                      }`}
+                    >
+                      {s.season_code} {s.name} +{s.grade}강 (
+                      {s.return_30d_pct > 0 ? "+" : ""}
+                      {s.return_30d_pct.toFixed(1)}%)
+                    </button>
+                  );
+                })}
+              </div>
+
+              <MarketMultiLineChart
+                data={normalizedChartData}
+                xKey="date"
+                series={normalizedChartSeries}
+                height={240}
+              />
+            </div>
+          )}
+
+          {/* 3-C. 시세 방향성 예측 */}
+          {marketSectionTab === "FORECAST" && (
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-4">
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
+                  주요 대장 카드 단기·중기 시세 예측 시그널
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  최근 거래 모멘텀과 30일 백분위 위치를 기반으로 매수 적기 / 관망 / 고점 주의 신호를 요약합니다.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {dashboard.player_forecasts.slice(0, 9).map((fc) => {
+                  const h7 =
+                    fc.horizons.find((h) => h.horizon_days === 7) ??
+                    fc.horizons[0];
+                  const h30 =
+                    fc.horizons.find((h) => h.horizon_days === 30) ??
+                    fc.horizons[fc.horizons.length - 1];
+                  const signalLabel =
+                    fc.signalMetrics?.signalStatusTag ??
+                    (h7?.direction === "상승"
+                      ? "🟢 상승 우위"
+                      : h7?.direction === "하락"
+                      ? "🔴 조정 주의"
+                      : "🟡 중립 관망");
+
+                  return (
+                    <div
+                      key={fc.entity_id}
+                      className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/50 p-4 space-y-2.5"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <SeasonBadge seasonCode={fc.season_code} />
+                          <div className="min-w-0">
+                            <div className="text-xs font-extrabold text-slate-900 dark:text-white truncate">
+                              {fc.name} {fc.grade ? `(+${fc.grade}강)` : ""}
                             </div>
-                          </td>
-                          <td className="py-2.5 px-2">
-                            <div className="font-bold text-white">
-                              [{cand.season_code}] {cand.name} +{cand.analyzed_grade}강
+                            <div className="text-[11px] font-mono text-slate-500">
+                              현재가: {fc.current_bp_text}
                             </div>
-                            <div className="text-[10px] text-slate-400">
-                              {cand.primary_position} · OVR {cand.ovr} · 급여 {cand.salary}
-                              {cand.team_colors.length > 0 &&
-                                ` · ${cand.team_colors.slice(0, 2).join("/")}`}
-                            </div>
-                          </td>
-                          <td className="py-2.5 px-2 text-right font-mono">
-                            <div className="text-emerald-300 font-semibold">
-                              {cand.ranker_usage_pct > 0
-                                ? `${cand.ranker_usage_pct}% (${cand.ranker_usage_count}명)`
-                                : "포지션 외"}
-                            </div>
-                            <div className="text-[10px] text-slate-500">
-                              시즌 점유 {cand.season_ranker_share_pct}%
-                            </div>
-                          </td>
-                          <td className="py-2.5 px-2 text-right font-mono">
-                            <div className="text-amber-300 font-semibold">
-                              {cand.current_bp_text} BP
-                            </div>
-                            <ReturnBadge val={cand.return_7d_pct} />
-                          </td>
-                          <td className="py-2.5 px-2 text-[11px]">
-                            {cand.new_traits.length > 0 ? (
-                              <div className="flex flex-wrap gap-1">
-                                {cand.new_traits.map((nt) => (
-                                  <span
-                                    key={nt}
-                                    className="px-1.5 py-0.5 text-[10px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
-                                  >
-                                    {nt}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : (
-                              <span className="text-slate-500 text-[10px]">
-                                신규특성 미보유 (제외 일반특성 {cand.legacy_traits_excluded_count}개)
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-2.5 pl-2 text-[11px] text-slate-300 max-w-xs">
-                            {cand.classification_rationale}
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
+                          </div>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 shrink-0">
+                          {signalLabel}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 text-xs bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200/70 dark:border-slate-800">
+                        <div>
+                          <span className="text-[10px] text-slate-400 block">
+                            7일 예상 등락
+                          </span>
+                          {renderReturnBadge(h7?.expected_return_pct ?? 0)}
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 block">
+                            30일 예상 등락
+                          </span>
+                          {renderReturnBadge(h30?.expected_return_pct ?? 0)}
+                        </div>
+                      </div>
+
+                      {fc.upward_factors?.[0] && (
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400 line-clamp-2">
+                          • {fc.upward_factors[0]}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -2035,1868 +1199,650 @@ export default function MarketLabView({
       )}
 
       {/* =====================================================================
-          SUB-TAB 3: PRICE PREDICTION & 4-STAGE BACKTESTING
+          MODE 2: [🔥 신규 특성 메타 분석] (17종 개별 분리 + 유저 맞춤형 다중 비교)
       ===================================================================== */}
-      {subTab === "forecast_backtest" && (
+      {dashboard && mainSubTab === "NEW_TRAIT_META" && (
         <div className="space-y-6">
-          {/* Player Forecast Explorer */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left Selector & On-Demand Search */}
-            <div className="bg-slate-900/80 border border-slate-800 p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white">
-                  선수별 1일·7일·30일 예측 대상 선택
-                </h3>
-                <BasisBadge basis="model_forecast" />
-              </div>
-
-              {/* Search any card from catalog + Grade Selector (+8~+13강) */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-[11px] text-slate-400">
-                  <span>실시간 조회 강화 단계 (주류 금카 +8~+11강 권장):</span>
-                  <select
-                    value={selectedInspectGrade}
-                    onChange={(e) => setSelectedInspectGrade(Number(e.target.value))}
-                    className="bg-slate-950 border border-slate-700 px-2 py-0.5 text-xs text-emerald-300 font-mono"
-                  >
-                    {[8, 9, 10, 11, 12, 13, 5, 1].map((g) => (
-                      <option key={g} value={g}>
-                        +{g}강 {g >= 8 && g <= 11 ? "(주류 금카)" : g >= 12 ? "(분리 구간)" : "(하위 참조)"}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-                  <input
-                    type="text"
-                    value={playerQuery}
-                    onChange={(e) => setPlayerQuery(e.target.value)}
-                    placeholder="선수명 또는 시즌 검색 (예: 호날두, 굴리트, 25UCL)"
-                    className="w-full bg-slate-950 border border-slate-800 pl-8 pr-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-                {playerQuery.trim() && (
-                  <div className="bg-slate-950 border border-slate-800 max-h-44 overflow-y-auto divide-y divide-slate-800/80">
-                    {filteredCatalogSearch.map((c) => (
-                      <button
-                        key={c.spid}
-                        onClick={() => {
-                          setPlayerQuery("");
-                          handleInspectCustomPlayer(c.spid, selectedInspectGrade);
-                        }}
-                        className="w-full px-3 py-2 text-left text-xs hover:bg-slate-900 flex items-center justify-between"
-                      >
-                        <span>
-                          <span className="font-mono text-emerald-400 mr-1.5">
-                            [{c.season_code}]
-                          </span>
-                          <span className="font-semibold text-slate-100">
-                            {c.name} +{selectedInspectGrade}강
-                          </span>{" "}
-                          <span className="text-slate-400">
-                            ({c.primary_position} · OVR {c.ovr})
-                          </span>
-                        </span>
-                        <span className="font-mono text-[11px] text-amber-300">
-                          {formatBpKorean(
-                            c.prices?.[String(selectedInspectGrade)]?.bp ||
-                              c.bp_8 ||
-                              c.bp_1
-                          )}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="text-[11px] text-slate-400 font-semibold pt-1">
-                시계열 구축 완료 주요 선수 목록 ({dashboard.player_forecasts.length}종)
-              </div>
-              <div className="space-y-1.5 max-h-[380px] overflow-y-auto pr-1">
-                {dashboard.player_forecasts.map((f) => {
-                  const isSelected =
-                    activeForecast?.entity_id === f.entity_id;
-                  const h7 = f.horizons.find((h) => h.horizon_days === 7);
-                  return (
-                    <button
-                      key={f.entity_id}
-                      onClick={() => setSelectedForecastEntityId(f.entity_id)}
-                      className={`w-full p-2.5 text-left border transition flex items-center justify-between gap-2 ${
-                        isSelected
-                          ? "bg-emerald-500/15 border-emerald-500/50 text-white"
-                          : "bg-slate-950/70 border-slate-800/90 text-slate-300 hover:bg-slate-900"
-                      }`}
-                    >
-                      <div className="min-w-0 space-y-1">
-                        <div className="flex flex-wrap items-center gap-1">
-                          <span className="text-xs font-bold truncate">
-                            [{f.season_code}] {f.name} +{f.grade}강
-                          </span>
-                          {f.signalMetrics && (
-                            <span className="px-1.5 py-0.5 text-[9px] font-mono bg-slate-800 text-emerald-300">
-                              품질 {f.signalMetrics.signalQualityScore}점
-                            </span>
-                          )}
-                          {f.signalMetrics?.enhancementEv.isLiquidityTrap && (
-                            <span className="px-1.5 py-0.5 text-[9px] font-bold bg-rose-500/20 text-rose-300">
-                              ⚠️ 귀속주의
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[11px] font-mono text-slate-400">
-                          현재가: {f.current_bp_text} BP
-                        </div>
-                      </div>
-                      {h7 && (
-                        <div className="text-right shrink-0">
-                          <div className="text-[10px] text-slate-400">
-                            {f.signalMetrics?.signalStatusTag || "7일 기대수익"}
-                          </div>
-                          <ReturnBadge val={h7.expected_return_pct} />
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Right Forecast Detail Panel */}
-            <div className="lg:col-span-2 bg-slate-900/80 border border-slate-800 p-5 space-y-5">
-              {loadingPlayerForecast ? (
-                <div className="p-12 text-center text-xs text-slate-400">
-                  선수 실시간 시계열 및 4단계 예측 모델을 계산 중입니다...
-                </div>
-              ) : activeForecast ? (
-                <>
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="px-2 py-0.5 text-xs font-mono font-bold bg-slate-800 text-emerald-300">
-                          {activeForecast.season_code}
-                        </span>
-                        <h3 className="text-lg font-bold text-white">
-                          {activeForecast.name} (+{activeForecast.grade}강)
-                        </h3>
-                        <span className="text-xs text-slate-400">
-                          {activeForecast.primary_position}
-                        </span>
-                        {activeForecast.signalMetrics && (
-                          <>
-                            <span className="px-2 py-0.5 text-[11px] font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                              신호 품질 {activeForecast.signalMetrics.signalQualityScore}점
-                            </span>
-                            <span className="px-2 py-0.5 text-[11px] font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
-                              {activeForecast.signalMetrics.signalStatusTag}
-                            </span>
-                          </>
-                        )}
-                        {activeForecast.signalMetrics?.enhancementEv.isLiquidityTrap && (
-                          <span className="px-2 py-0.5 text-[11px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40">
-                            ⚠️ 귀속 위험 주의
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-slate-400 mt-1">
-                        {activeForecast.season_sector_label} ·{" "}
-                        {activeForecast.capital_tier_label}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-[11px] text-slate-400">
-                        현재 검증 기준가
-                      </div>
-                      <div className="text-xl font-mono font-bold text-amber-300">
-                        {activeForecast.current_bp_text} BP
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Real-time Fee BEP & Enhancement EV Arbitrage Panel for Selected Player */}
-                  {(() => {
-                    const h7 =
-                      activeForecast.horizons.find((h) => h.horizon_days === 7) ||
-                      activeForecast.horizons[0];
-                    const dyn = computeCardDynamicBepAndProfit(
-                      activeForecast.current_bp,
-                      h7?.expected_bp || activeForecast.current_bp
-                    );
-                    const ev = activeForecast.signalMetrics?.enhancementEv;
-                    return (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-950/90 border border-slate-800 p-4 text-xs">
-                        <div className="space-y-1.5">
-                          <div className="font-bold text-emerald-300 flex items-center justify-between">
-                            <span>
-                              내 수수료({dyn.effectiveFeePct}%) 반영 손익분기점(BEP) 분석
-                            </span>
-                            {dyn.isFeeLossWarning && (
-                              <span className="px-1.5 py-0.5 text-[10px] bg-rose-500/20 text-rose-300 border border-rose-500/40">
-                                ⚠️ 수수료 손실 주의
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex justify-between text-slate-300">
-                            <span>손익분기 매도가 (BEP):</span>
-                            <span className="font-mono font-bold text-amber-300">
-                              {formatBpKorean(dyn.breakEvenPrice)} BP
-                            </span>
-                          </div>
-                          <div className="flex justify-between text-slate-300">
-                            <span>7일 예측가 매도 시 순수익:</span>
-                            <span
-                              className={`font-mono font-bold ${
-                                dyn.netProfitBp >= 0
-                                  ? "text-emerald-400"
-                                  : "text-rose-400"
-                              }`}
-                            >
-                              {dyn.netProfitBp >= 0 ? "+" : "-"}
-                              {formatBpKorean(Math.abs(dyn.netProfitBp))} BP (
-                              {dyn.netProfitPct >= 0 ? "+" : ""}
-                              {dyn.netProfitPct}%)
-                            </span>
-                          </div>
-                        </div>
-
-                        {ev && (
-                          <div className="space-y-1.5 border-t md:border-t-0 md:border-l border-slate-800 pt-3 md:pt-0 md:pl-4">
-                            <div className="font-bold text-cyan-300 flex items-center justify-between">
-                              <span>강화 데이 / 야수의 심장 기대 제작 비용 (EV)</span>
-                              <span
-                                className={`px-1.5 py-0.5 text-[10px] border ${
-                                  ev.recommendation === "CRAFT_RECOMMENDED"
-                                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
-                                    : "bg-sky-500/20 text-sky-300 border-sky-500/40"
-                                }`}
-                              >
-                                {ev.verdictLabel ||
-                                  (ev.recommendation === "CRAFT_RECOMMENDED"
-                                    ? "직접 강화 유리 (기댓값 양수)"
-                                    : "완제품 매수 유리")}
-                              </span>
-                            </div>
-                            <div className="flex justify-between text-slate-300">
-                              <span>
-                                하위(+{(activeForecast.grade || 8) - 1}강) + 재료 5장 기대비용:
-                              </span>
-                              <span className="font-mono font-bold text-white">
-                                {formatBpKorean(ev.expectedCraftCost)} BP
-                              </span>
-                            </div>
-                            <div className="text-[11px] text-slate-400 leading-snug">
-                              {ev.liquidityTrapReason}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-
-                  {/* Horizon Cards (1d, 7d, 30d) */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {activeForecast.horizons.map((h) => (
-                      <div
-                        key={h.horizon_days}
-                        className="bg-slate-950/90 border border-slate-800 p-4 space-y-3"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-slate-200">
-                            {h.horizon_days}일 예측 ({h.direction})
-                          </span>
-                          <span
-                            className={`px-1.5 py-0.5 text-[10px] font-mono ${
-                              h.status === "available"
-                                ? "bg-emerald-500/15 text-emerald-300"
-                                : "bg-amber-500/15 text-amber-300"
-                            }`}
-                          >
-                            신뢰도 {h.confidence_score}점
-                          </span>
-                        </div>
-
-                        <div>
-                          <div className="text-[11px] text-slate-400">
-                            기대 예측 가격 (앙상블)
-                          </div>
-                          <div className="text-base font-mono font-bold text-white mt-0.5">
-                            {h.expected_bp_text} BP
-                          </div>
-                          <div className="mt-0.5">
-                            <ReturnBadge val={h.expected_return_pct} />
-                          </div>
-                        </div>
-
-                        <div className="bg-slate-900/90 border border-slate-800/80 p-2.5 text-[11px] space-y-1">
-                          <div className="text-slate-400">
-                            80% 예측 가격 범위 (변동성 반영)
-                          </div>
-                          <div className="font-mono text-slate-200">
-                            하단: {h.lower_bound_bp_text}
-                          </div>
-                          <div className="font-mono text-slate-200">
-                            상단: {h.upper_bound_bp_text}
-                          </div>
-                        </div>
-
-                        {/* Probability bar */}
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                            <span className="text-emerald-400">
-                              상승 {h.up_probability_pct}%
-                            </span>
-                            <span>보합 {h.flat_probability_pct}%</span>
-                            <span className="text-rose-400">
-                              하락 {h.down_probability_pct}%
-                            </span>
-                          </div>
-                          <div className="w-full h-1.5 bg-slate-800 flex overflow-hidden">
-                            <div
-                              className="bg-emerald-500"
-                              style={{ width: `${h.up_probability_pct}%` }}
-                            />
-                            <div
-                              className="bg-slate-500"
-                              style={{ width: `${h.flat_probability_pct}%` }}
-                            />
-                            <div
-                              className="bg-rose-500"
-                              style={{ width: `${h.down_probability_pct}%` }}
-                            />
-                          </div>
-                        </div>
-
-                        {h.horizon_days === 30 && (
-                          <p className="text-[10px] text-amber-300/90 leading-snug">
-                            * 데이터센터 기본 30일 관측창 한계로 인해 30일 장기 예측은 시나리오 밴드 참고용(낮은 신뢰도)으로만 제공됩니다.
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* 4-Stage Model Comparison for 7-Day Horizon */}
-                  {activeForecast.horizons[1] && (
-                    <div className="bg-slate-950/70 border border-slate-800 p-4 space-y-2.5">
-                      <div className="text-xs font-bold text-white">
-                        7일 예측에 대한 4단계 모델별 분해 (Stepwise Model Decomposition)
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
-                        {activeForecast.horizons[1].model_predictions.map(
-                          (mp) => (
-                            <div
-                              key={mp.model_id}
-                              className="bg-slate-900/90 border border-slate-800 p-2.5"
-                            >
-                              <div className="text-[11px] font-semibold text-slate-300">
-                                {mp.model_name}
-                              </div>
-                              <div className="text-xs font-mono font-bold text-white mt-1">
-                                {formatBpKorean(mp.predicted_bp)} BP
-                              </div>
-                              <div className="text-[11px] mt-0.5 flex items-center justify-between">
-                                <ReturnBadge val={mp.predicted_return_pct} />
-                                <span className="text-[10px] text-slate-500 font-mono">
-                                  가중치 {(mp.weight * 100).toFixed(0)}%
-                                </span>
-                              </div>
-                            </div>
-                          )
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Upward / Downward / Risk Factors */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                    <div className="bg-emerald-950/20 border border-emerald-500/30 p-3 space-y-1.5">
-                      <div className="font-bold text-emerald-300 flex items-center gap-1">
-                        <TrendingUp className="w-3.5 h-3.5" />
-                        주요 상승·지지 요인
-                      </div>
-                      <ul className="space-y-1 text-[11px] text-slate-300 list-disc list-inside">
-                        {activeForecast.upward_factors.map((f, i) => (
-                          <li key={i}>{f}</li>
-                        ))}
-                      </ul>
-                    </div>
-                    <div className="bg-rose-950/20 border border-rose-500/30 p-3 space-y-1.5">
-                      <div className="font-bold text-rose-300 flex items-center gap-1">
-                        <TrendingDown className="w-3.5 h-3.5" />
-                        주요 하락·조정 요인
-                      </div>
-                      <ul className="space-y-1 text-[11px] text-slate-300 list-disc list-inside">
-                        {activeForecast.downward_factors.map((f, i) => (
-                          <li key={i}>{f}</li>
-                        ))}
-                      </ul>
-                    </div>
-                    <div className="bg-amber-950/20 border border-amber-500/30 p-3 space-y-1.5">
-                      <div className="font-bold text-amber-300 flex items-center gap-1">
-                        <AlertTriangle className="w-3.5 h-3.5" />
-                        변동성 및 리스크 진단
-                      </div>
-                      <ul className="space-y-1 text-[11px] text-slate-300 list-disc list-inside">
-                        {activeForecast.risk_factors.map((f, i) => (
-                          <li key={i}>{f}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
-
-                  {/* Normalized 30d Price History Chart for this card */}
-                  {activeSeriesForForecast && (
-                    <div className="pt-2">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-bold text-slate-200">
-                          최근 30일 정규화 시세 추이 ({activeSeriesForForecast.name})
-                        </span>
-                        <span className="text-[11px] font-mono text-slate-400">
-                          단위 변환 계수: x
-                          {activeSeriesForForecast.unit_scale_factor.toLocaleString()}{" "}
-                          ({activeSeriesForForecast.quality_status})
-                        </span>
-                      </div>
-                      <div className="w-full">
-                        <MarketMultiLineChart
-                          data={
-                            activeSeriesForForecast.points as unknown as Record<
-                              string,
-                              unknown
-                            >[]
-                          }
-                          xKey="date"
-                          height={185}
-                          series={[
-                            {
-                              key: "normalized_bp",
-                              label: "정규화 시세",
-                              color: "#10b981",
-                              isArea: true,
-                              formatValue: (v) => `${formatBpKorean(v)} BP`,
-                            },
-                          ]}
-                        />
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : null}
-            </div>
-          </div>
-
-          {/* 4-Stage Point-in-Time Backtesting Verification Report */}
-          <div className="bg-slate-900/85 border border-slate-800 p-6 space-y-5">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+          {/* 1. 유저 맞춤형 다중 특성 비교 인터랙티브 패널 */}
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-xs space-y-5">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
               <div>
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <h3 className="text-base font-bold text-white">
-                    과거 데이터 기반 4단계 모델 예측 정확도 검증 (Point-in-Time Rolling Backtest)
-                  </h3>
-                  <BasisBadge basis="statistical_estimate" />
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/50 dark:text-rose-300 dark:border-rose-800 mb-1">
+                  <GitCompare className="w-3.5 h-3.5" />
+                  유저 맞춤형 신규 특성 1:1 / 다중 비교기
                 </div>
-                <p className="text-xs text-slate-400 mt-1">
-                  {dashboard.backtest_report.methodology_summary}
+                <h3 className="text-lg font-extrabold text-slate-900 dark:text-white">
+                  비교할 신규 특성을 2개 이상 선택해 실사용률·프리미엄·30일 시세를 비교하세요
+                </h3>
+                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                  크로스 포쳐 · 아크로바틱 피니셔 · 레이저 슈터 등 17종 신규 특성이 절대 하나로 묶이지 않고 개별 단위로 정밀 비교됩니다.
                 </p>
               </div>
-              <div className="text-right font-mono text-xs text-slate-300 shrink-0">
-                <div>
-                  검증 시계열:{" "}
-                  <span className="text-emerald-400 font-bold">
-                    {dashboard.backtest_report.total_series_evaluated}종
-                  </span>
-                </div>
-                <div>
-                  총 롤링 검증 횟수:{" "}
-                  <span className="text-amber-300 font-bold">
-                    {dashboard.backtest_report.total_rolling_windows.toLocaleString()}
-                    회
-                  </span>
-                </div>
-              </div>
-            </div>
 
-            {/* Official New Trait (level: 8) Forecast Contribution Verification */}
-            {dashboard.backtest_report.new_trait_contribution && (
-              <div className="bg-slate-950/90 border border-emerald-500/30 p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <div className="text-xs font-bold text-emerald-300">
-                    [신규특성(level: 8) 변수 예측 기여도 실증 검증 — M3(미반영) vs M4(신규특성 반영)]
-                  </div>
-                  <p className="text-xs text-slate-300">
-                    {dashboard.backtest_report.new_trait_contribution.legacy_trait_excluded_note} (오차율 -{dashboard.backtest_report.new_trait_contribution.net_mape_reduction_pct}%p 감소, 방향 적중률 +{dashboard.backtest_report.new_trait_contribution.directional_gain_pct}%p 개선)
-                  </p>
-                </div>
-                <div className="flex items-center gap-4 shrink-0 font-mono text-xs">
-                  <div className="bg-slate-900 border border-slate-800 p-2.5 text-right">
-                    <div className="text-[10px] text-slate-400">M3 오차율 (미반영)</div>
-                    <div className="text-slate-200 font-bold">
-                      {dashboard.backtest_report.new_trait_contribution.without_new_trait_mape_7d_pct}%
-                    </div>
-                  </div>
-                  <div className="bg-slate-900 border border-emerald-500/40 p-2.5 text-right">
-                    <div className="text-[10px] text-emerald-300">M4 오차율 (신규특성 반영)</div>
-                    <div className="text-emerald-400 font-bold">
-                      {dashboard.backtest_report.new_trait_contribution.with_new_trait_mape_7d_pct}%
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Model Comparison Tables (1-Day & 7-Day) */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {[
-                {
-                  title: "단기 1일(t+1) 예측 백테스트 성과 비교",
-                  rows: dashboard.backtest_report.models_1d,
-                },
-                {
-                  title: "중기 7일(t+7) 예측 백테스트 성과 비교",
-                  rows: dashboard.backtest_report.models_7d,
-                },
-              ].map((tbl) => (
-                <div
-                  key={tbl.title}
-                  className="bg-slate-950/80 border border-slate-800 p-4 space-y-3"
+              {/* 빠른 비교 프리셋 버튼 */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSelectedCompareTraits([
+                      "크로스 포쳐",
+                      "아크로바틱 피니셔",
+                      "레이저 슈터",
+                    ])
+                  }
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800 transition-colors cursor-pointer"
                 >
-                  <div className="text-xs font-bold text-white">
-                    {tbl.title}
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
-                          <th className="py-2 pr-2">모델 단계</th>
-                          <th className="py-2 px-2 text-right">MAPE (오차율)</th>
-                          <th className="py-2 px-2 text-right">RMSE</th>
-                          <th className="py-2 px-2 text-right">방향 적중률</th>
-                          <th className="py-2 pl-2 text-right">기준선 대비 개선</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/70">
-                        {tbl.rows.map((m) => (
-                          <tr key={m.model_id} className="hover:bg-slate-900/60">
-                            <td className="py-2.5 pr-2">
-                              <div className="font-semibold text-slate-200">
-                                {m.model_name}
-                              </div>
-                              <div className="text-[10px] text-slate-500">
-                                {m.description}
-                              </div>
-                            </td>
-                            <td className="py-2.5 px-2 text-right font-mono font-bold text-white">
-                              {m.mape_pct.toFixed(2)}%
-                            </td>
-                            <td className="py-2.5 px-2 text-right font-mono text-slate-300">
-                              {m.rmse_pct.toFixed(2)}%
-                            </td>
-                            <td className="py-2.5 px-2 text-right font-mono text-emerald-400 font-semibold">
-                              {m.directional_accuracy_pct.toFixed(1)}%
-                            </td>
-                            <td className="py-2.5 pl-2 text-right font-mono">
-                              {m.model_id === "M1_NAIVE" ? (
-                                <span className="text-slate-500">기준선(Baseline)</span>
-                              ) : m.beats_baseline_mape ? (
-                                <span className="text-emerald-400 font-bold">
-                                  오차 -{m.improvement_vs_baseline_pct.toFixed(1)}% 감소
-                                </span>
-                              ) : (
-                                <span className="text-amber-400">
-                                  {m.improvement_vs_baseline_pct.toFixed(1)}%
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ))}
+                  ⚡ 슈팅 3대장 비교 (크로스 포쳐·아크로바틱·레이저 슈터)
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSelectedCompareTraits([
+                      "라인 브레이커",
+                      "타이탄",
+                      "프레데터",
+                    ])
+                  }
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 transition-colors cursor-pointer"
+                >
+                  🎯 침투·피지컬 비교 (라인 브레이커·타이탄·프레데터)
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSelectedCompareTraits([
+                      "스피드스터",
+                      "2개의 심장",
+                      "커맨더",
+                      "블로커",
+                    ])
+                  }
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800 transition-colors cursor-pointer"
+                >
+                  🛡️ 2선·수비 코어 비교 (스피드스터·2개의 심장·커맨더·블로커)
+                </button>
+              </div>
             </div>
 
-            {/* Sector & Event Window Backtest Breakdown + Actual vs Predicted Chart */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="bg-slate-950/80 border border-slate-800 p-4 space-y-4">
-                <div className="text-xs font-bold text-white">
-                  섹터별 · 이벤트 구간별 7일 예측 오차율(MAPE) 비교
+            {/* 17종 전체 개별 특성 선택 칩 (3대 그룹별 구분) */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800">
+              {(
+                [
+                  "공격/슈팅 특성",
+                  "드리블/스피드/활동량 특성",
+                  "패스/수비/GK 특성",
+                ] as NewTraitMetaGroup[]
+              ).map((groupName) => {
+                const groupTraits = combinedTraits.filter(
+                  (t) => t.meta_group === groupName
+                );
+                return (
+                  <div key={groupName} className="space-y-2">
+                    <div className="text-[11px] font-extrabold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                      <span>{groupName}</span>
+                      <span className="text-slate-400 font-mono">
+                        {groupTraits.length}종
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {groupTraits.map((t) => {
+                        const isChecked = selectedCompareTraits.includes(
+                          t.trait_name
+                        );
+                        return (
+                          <button
+                            key={t.trait_id}
+                            type="button"
+                            onClick={() => toggleCompareTrait(t.trait_name)}
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                              isChecked
+                                ? "bg-slate-900 text-white border-slate-900 dark:bg-sky-500 dark:text-slate-950 dark:border-sky-400 shadow-xs"
+                                : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-400"
+                            }`}
+                          >
+                            <span
+                              className={`w-3.5 h-3.5 rounded flex items-center justify-center border ${
+                                isChecked
+                                  ? "bg-white text-slate-900 border-white"
+                                  : "border-slate-300 dark:border-slate-600"
+                              }`}
+                            >
+                              {isChecked && <Check className="w-2.5 h-2.5" />}
+                            </span>
+                            {t.icon_url && (
+                              <img
+                                src={t.icon_url}
+                                alt={t.trait_name}
+                                className="w-4 h-4 object-contain"
+                                loading="lazy"
+                              />
+                            )}
+                            <span>{t.trait_name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* 선택된 특성들의 나란히 비교 카드 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {comparedTraitItems.map((trait, idx) => {
+                const color =
+                  TRAIT_COMPARE_COLORS[idx % TRAIT_COMPARE_COLORS.length];
+                return (
+                  <div
+                    key={trait.trait_id}
+                    className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/70 p-4 space-y-3 relative overflow-hidden"
+                  >
+                    <div
+                      className="absolute top-0 left-0 right-0 h-1"
+                      style={{ backgroundColor: color }}
+                    />
+                    <div className="flex items-start justify-between gap-2 pt-1">
+                      <div className="flex items-center gap-2.5">
+                        {trait.icon_url ? (
+                          <img
+                            src={trait.icon_url}
+                            alt={trait.trait_name}
+                            className="w-9 h-9 rounded-lg object-contain bg-slate-100 dark:bg-slate-800 p-1 border border-slate-200 dark:border-slate-700"
+                          />
+                        ) : (
+                          <div className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center font-bold text-xs">
+                            특성
+                          </div>
+                        )}
+                        <div>
+                          <div className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
+                            {trait.trait_name}
+                          </div>
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                            {trait.meta_group}
+                          </span>
+                        </div>
+                      </div>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                          trait.meta_tier.includes("OP")
+                            ? "bg-rose-100 text-rose-700 dark:bg-rose-950/70 dark:text-rose-300"
+                            : trait.meta_tier.includes("1티어")
+                            ? "bg-sky-100 text-sky-700 dark:bg-sky-950/70 dark:text-sky-300"
+                            : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                        }`}
+                      >
+                        {trait.meta_tier}
+                      </span>
+                    </div>
+
+                    {/* 핵심 3대 비교 수치: ① 실사용률, ② 평균 가격 프리미엄(% & BP), ③ 30일 시세 변동 */}
+                    <div className="grid grid-cols-3 gap-2 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800 text-center">
+                      <div>
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 block">
+                          랭커 실사용률
+                        </span>
+                        <span className="text-sm font-extrabold font-mono text-slate-900 dark:text-white">
+                          {trait.ranker_usage_pct.toFixed(1)}%
+                        </span>
+                        <span className="text-[10px] text-slate-400 block">
+                          전체 {trait.user_usage_pct.toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="border-x border-slate-200 dark:border-slate-800 px-1">
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 block">
+                          평균 가격 프리미엄
+                        </span>
+                        <span className="text-sm font-extrabold font-mono text-rose-600 dark:text-rose-400">
+                          +{trait.controlled_premium_pct.toFixed(1)}%
+                        </span>
+                        <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 block">
+                          +{formatBpKorean(trait.avg_premium_bp_diff)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 block">
+                          최근 30일 추이
+                        </span>
+                        <div className="mt-0.5">
+                          {renderReturnBadge(trait.return_30d_pct)}
+                        </div>
+                        <span className="text-[10px] font-mono text-slate-400 block">
+                          7일 {trait.return_7d_pct > 0 ? "+" : ""}
+                          {trait.return_7d_pct.toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 인게임 발동 효과 한줄 요약 */}
+                    <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                      {trait.in_game_effect}
+                    </p>
+
+                    {/* 포지션 적합도 상위 배지 */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] font-bold text-slate-400">
+                        포지션 적합도:
+                      </span>
+                      {Object.entries(trait.position_suitability)
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 3)
+                        .map(([pos, score]) => (
+                          <span
+                            key={pos}
+                            className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+                          >
+                            {pos} {score}점
+                          </span>
+                        ))}
+                    </div>
+
+                    {/* 대표 보유 대장 선수 */}
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 space-y-1.5">
+                      <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                        대표 보유 대장 선수 (+{selectedGrade}강 기준)
+                      </div>
+                      <div className="space-y-1">
+                        {trait.representative_players.slice(0, 3).map((pl) => (
+                          <div
+                            key={`${trait.trait_id}-${pl.spid}`}
+                            onClick={() =>
+                              onInspectPlayer &&
+                              onInspectPlayer(pl.spid, pl.grade)
+                            }
+                            className={`flex items-center justify-between text-xs p-1.5 rounded-lg bg-slate-50/80 dark:bg-slate-900/70 ${
+                              onInspectPlayer
+                                ? "hover:bg-sky-50 dark:hover:bg-sky-950/30 cursor-pointer"
+                                : ""
+                            }`}
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <SeasonBadge
+                                seasonImg={pl.season_img}
+                                seasonCode={pl.season_code}
+                              />
+                              <span className="font-bold text-slate-900 dark:text-slate-100 truncate">
+                                {pl.name}
+                              </span>
+                              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-200/80 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                                {pl.position} · {pl.ovr}
+                              </span>
+                            </div>
+                            <div className="font-mono font-bold text-slate-800 dark:text-slate-200 shrink-0">
+                              {pl.bp_text || formatBpKorean(pl.bp)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* 선택된 특성들의 30일 시세 지수 멀티라인 차트 & 포지션 적합도 매트릭스 */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 pt-2">
+              <div className="lg:col-span-7 space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-extrabold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <LineChartIcon className="w-3.5 h-3.5 text-sky-600" />
+                    선택한 신규 특성 보유군 30일 시세 지수 추이 비교 (Base = 100pt)
+                  </h4>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
-                        <th className="py-1.5">시즌 섹터 구분</th>
-                        <th className="py-1.5 text-right">M1(기준선)</th>
-                        <th className="py-1.5 text-right">M4(통합모델)</th>
-                        <th className="py-1.5 text-right">최우수 모델</th>
+                <MarketMultiLineChart
+                  data={traitCompareChartData}
+                  xKey="date"
+                  series={traitCompareChartSeries}
+                  height={210}
+                />
+              </div>
+
+              <div className="lg:col-span-5 space-y-2">
+                <h4 className="text-xs font-extrabold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <Target className="w-3.5 h-3.5 text-rose-600" />
+                  선택 특성별 포지션 적합도 &amp; 프리미엄 비교표
+                </h4>
+                <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-slate-100 dark:bg-slate-950 text-slate-600 dark:text-slate-400 font-bold">
+                      <tr>
+                        <th className="p-2.5">특성명</th>
+                        <th className="p-2.5 text-right">랭커 픽률</th>
+                        <th className="p-2.5 text-right">가격 프리미엄</th>
+                        <th className="p-2.5 text-right">최적 포지션</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-800/60">
-                      {dashboard.backtest_report.by_season_sector_7d.map(
-                        (row) => (
-                          <tr key={row.sector_name}>
-                            <td className="py-2 text-slate-200 font-medium">
-                              {row.sector_name}
+                    <tbody className="divide-y divide-slate-200/70 dark:divide-slate-800 bg-white dark:bg-slate-900">
+                      {comparedTraitItems.map((t) => {
+                        const topPos = Object.entries(t.position_suitability)
+                          .sort((a, b) => b[1] - a[1])
+                          .slice(0, 2)
+                          .map(([p, sc]) => `${p}(${sc})`)
+                          .join(" · ");
+                        return (
+                          <tr key={t.trait_id}>
+                            <td className="p-2.5 font-bold text-slate-900 dark:text-white">
+                              {t.trait_name}
                             </td>
-                            <td className="py-2 text-right font-mono text-slate-400">
-                              {row.m1_mape_pct.toFixed(2)}%
+                            <td className="p-2.5 text-right font-mono font-bold text-slate-800 dark:text-slate-200">
+                              {t.ranker_usage_pct.toFixed(1)}%
                             </td>
-                            <td className="py-2 text-right font-mono font-bold text-emerald-400">
-                              {row.m4_mape_pct.toFixed(2)}%
+                            <td className="p-2.5 text-right font-mono font-bold text-rose-600 dark:text-rose-400">
+                              +{t.controlled_premium_pct.toFixed(1)}%
+                              <span className="block text-[10px] text-slate-400">
+                                (+{formatBpKorean(t.avg_premium_bp_diff)})
+                              </span>
                             </td>
-                            <td className="py-2 text-right text-[11px] text-cyan-300">
-                              {row.best_model_name}
+                            <td className="p-2.5 text-right font-mono text-[11px] text-slate-600 dark:text-slate-300">
+                              {topPos || "-"}
                             </td>
                           </tr>
-                        )
-                      )}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
-
-                <div className="pt-2 border-t border-slate-800">
-                  <div className="text-[11px] font-semibold text-slate-300 mb-2">
-                    이벤트·변동성 구간(10.01~10.16) vs 일반 평시 구간 비교
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    {dashboard.backtest_report.event_vs_normal_period.map(
-                      (p) => (
-                        <div
-                          key={p.period_type}
-                          className="bg-slate-900 border border-slate-800 p-3"
-                        >
-                          <div className="text-xs font-bold text-slate-200">
-                            {p.period_type}
-                          </div>
-                          <div className="text-[11px] text-slate-400 mt-1">
-                            M1 오차:{" "}
-                            <span className="font-mono text-slate-200">
-                              {p.m1_mape_pct}%
-                            </span>{" "}
-                            → M4 오차:{" "}
-                            <span className="font-mono text-emerald-400 font-bold">
-                              {p.m4_mape_pct}%
-                            </span>
-                          </div>
-                          <div className="text-[11px] text-slate-400">
-                            방향 적중률:{" "}
-                            <span className="font-mono text-amber-300">
-                              {p.m4_directional_accuracy_pct}%
-                            </span>{" "}
-                            (검증 {p.window_count}건)
-                          </div>
-                        </div>
-                      )
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Actual vs Predicted Trace Chart */}
-              <div className="bg-slate-950/80 border border-slate-800 p-4 space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-xs font-bold text-white">
-                    실제 가격 vs 4단계 통합 모델(M4) 워크포워드 예측 궤적
-                  </div>
-                  <select
-                    value={selectedTraceSpid}
-                    onChange={(e) =>
-                      setSelectedTraceSpid(Number(e.target.value))
-                    }
-                    className="bg-slate-900 border border-slate-700 px-2.5 py-1 text-xs text-slate-200"
-                  >
-                    {dashboard.backtest_report.sample_traces.map((t, idx) => (
-                      <option key={`${t.spid}_${t.grade}_${idx}`} value={t.spid}>
-                        [{t.season_code}] {t.name} +{t.grade}강
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {activeBacktestTrace && (
-                  <div className="w-full">
-                    <MarketMultiLineChart
-                      data={
-                        activeBacktestTrace.points as unknown as Record<
-                          string,
-                          unknown
-                        >[]
-                      }
-                      xKey="date"
-                      height={220}
-                      series={[
-                        {
-                          key: "actual_bp",
-                          label: "실제 관측 가격 (Actual)",
-                          color: "#10b981",
-                          formatValue: (v) => `${formatBpKorean(v)} BP`,
-                        },
-                        {
-                          key: "m4_pred_bp",
-                          label: "M4 통합 모델 예측 (Predicted)",
-                          color: "#f59e0b",
-                          dashed: true,
-                          formatValue: (v) => `${formatBpKorean(v)} BP`,
-                        },
-                        {
-                          key: "m1_pred_bp",
-                          label: "M1 단순 기준선",
-                          color: "#64748b",
-                          dashed: true,
-                          formatValue: (v) => `${formatBpKorean(v)} BP`,
-                        },
-                      ]}
-                    />
-                  </div>
-                )}
               </div>
             </div>
           </div>
-        </div>
-      )}
 
-      {/* =====================================================================
-          SUB-TAB 4: EVENT IMPACT, SUPPLY SCENARIOS & FEE COUPON SIMULATOR
-      ===================================================================== */}
-      {subTab === "events_supply" && (
-        <div className="space-y-6">
-          {/* Automated Official Event & Notice Crawler + Change Detection Log */}
-          <div className="bg-slate-900/85 border border-slate-800 p-5 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+          {/* 2. 17종 신규 특성 전체 개별 카탈로그 & 상세 분석 */}
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-xs space-y-5">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-bold text-white">
-                    공식 이벤트·공지사항 자동 크롤링 및 변경 감지(Change Detection) 로그
-                  </h3>
-                  <BasisBadge basis="official_public" />
-                </div>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  고정 하드코딩 배열 없이 공식 홈페이지(news/events/list, news/notice/list)에서 수집된 이벤트·패키지·수수료 쿠폰 공지의 신규 발견·내용 변경·종료 전환 이력을 데이터베이스에 영구 보존합니다.
-                </p>
-              </div>
-              <button
-                onClick={() => handleSyncOfficialSources("events")}
-                disabled={syncingSources}
-                className="px-3.5 py-1.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-bold shrink-0"
-              >
-                {syncingSources ? "공식 공지 동기화 중..." : "공식 이벤트·공지 실시간 크롤링"}
-              </button>
-            </div>
-
-            {dashboard.event_change_logs && dashboard.event_change_logs.length > 0 && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 max-h-48 overflow-y-auto pr-1">
-                {dashboard.event_change_logs.slice(0, 9).map((log, idx) => (
-                  <div
-                    key={`${log.event_id}_${idx}`}
-                    className="bg-slate-950/90 border border-slate-800 p-2.5 text-xs space-y-1"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="px-1.5 py-0.5 text-[10px] font-bold bg-sky-500/15 text-sky-300 border border-sky-500/30">
-                        {log.change_type}
-                      </span>
-                      <span className="text-[10px] font-mono text-slate-500">
-                        {log.detected_at.slice(0, 16).replace("T", " ")}
-                      </span>
-                    </div>
-                    <div className="font-semibold text-white truncate">
-                      {log.title}
-                    </div>
-                    <div className="text-[11px] text-slate-400 truncate">
-                      {log.detail}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Event DID Impact Cards */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-bold text-white">
-                  이벤트·프로모션 전후 시세 영향 및 대조군 이중차분(DID) 분석
+                <h3 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Flame className="w-5 h-5 text-rose-600" />
+                  FC 온라인 17종 신규 특성 개별 메타 리포트
                 </h3>
-                <p className="text-xs text-slate-400">
-                  단순 전후 비교의 오류를 줄이기 위해 이벤트 직접 노출 섹터(Affected)와 비노출 대조군(Control)의 동일 기간 수익률 차이를 비교합니다.
+                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                  공격/슈팅(6종) · 드리블/스피드/활동량(3종) · 패스/수비/GK(8종) 각 특성의 개별 프리미엄과 대장 선수를 확인하세요.
                 </p>
               </div>
-              <BasisBadge basis="statistical_estimate" />
-            </div>
 
-            {dashboard.event_impacts.map((imp) => (
-              <div
-                key={imp.event.id}
-                className="bg-slate-900/85 border border-slate-800 p-5 space-y-4"
-              >
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-slate-800 pb-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="px-2 py-0.5 text-[11px] font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
-                        {imp.event.event_type_label}
-                      </span>
-                      <span className="text-xs font-mono text-slate-400">
-                        기간: {imp.event.start_date} ~ {imp.event.end_date}
-                      </span>
-                      <span className="text-[11px] text-slate-500">
-                        출처: {imp.event.source}
-                      </span>
-                    </div>
-                    <h4 className="text-sm font-bold text-white mt-1">
-                      {imp.event.title}
-                    </h4>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0 text-xs font-mono">
-                    <span className="px-2.5 py-1 bg-slate-950 border border-slate-800 text-slate-300">
-                      BP 공급: {imp.event.bp_injection_scale}
-                    </span>
-                    <span className="px-2.5 py-1 bg-slate-950 border border-slate-800 text-slate-300">
-                      선수팩 공급: {imp.event.pack_supply_scale}
-                    </span>
-                    {imp.event.fee_coupon_discount_pct > 0 && (
-                      <span className="px-2.5 py-1 bg-amber-500/15 border border-amber-500/40 text-amber-300">
-                        수수료 쿠폰 {imp.event.fee_coupon_discount_pct}%
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Pre / During / Post / Control / DID Metrics */}
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 bg-slate-950/80 border border-slate-800 p-3.5 text-center">
-                  <div>
-                    <div className="text-[11px] text-slate-400">
-                      이벤트 직전 (Pre)
-                    </div>
-                    <div className="mt-1">
-                      <ReturnBadge val={imp.pre_event_return_pct} />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-slate-400">
-                      이벤트 기간 (대상군)
-                    </div>
-                    <div className="mt-1">
-                      <ReturnBadge val={imp.during_event_return_pct} />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-slate-400">
-                      동일 기간 비대상 (대조군)
-                    </div>
-                    <div className="mt-1">
-                      <ReturnBadge val={imp.control_during_return_pct} />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-amber-300 font-semibold">
-                      대조군 대비 순효과 (DID)
-                    </div>
-                    <div className="mt-1">
-                      <ReturnBadge val={imp.did_net_effect_pct} suffix="%p" />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-slate-400">
-                      이벤트 종료 후 (Post)
-                    </div>
-                    <div className="mt-1">
-                      <ReturnBadge val={imp.post_event_return_pct} />
-                    </div>
-                  </div>
-                </div>
-
-                <p className="text-xs text-slate-300 bg-slate-950/50 border border-slate-800/80 p-3">
-                  <strong className="text-emerald-400 mr-1.5">
-                    [경제 메커니즘 판정]
-                  </strong>
-                  {imp.mechanism_diagnosis}
-                </p>
-
-                {/* 3-Stage Supply Scenario Table */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-                  {imp.supply_scenarios.map((sc) => (
-                    <div
-                      key={sc.scenario}
-                      className="bg-slate-950/70 border border-slate-800 p-3 text-xs space-y-1"
-                    >
-                      <div className="font-bold text-slate-200 flex items-center justify-between">
-                        <span>공급 추정: {sc.scenario}</span>
-                        <span className="font-mono text-[11px] text-slate-400">
-                          공급지수 {sc.estimated_pack_influx_index}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-[11px] text-slate-400">
-                        <span>BP 유입 인플레이션 압력:</span>
-                        <span className="font-mono text-emerald-400">
-                          +{sc.estimated_bp_inflation_effect_pct}%
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-[11px] text-slate-400">
-                        <span>선수팩 매물 희석 압력:</span>
-                        <span className="font-mono text-rose-400">
-                          {sc.estimated_supply_dilution_effect_pct}%
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-[11px] font-semibold pt-1 border-t border-slate-800">
-                        <span className="text-slate-300">순 기대 시세 영향:</span>
-                        <ReturnBadge val={sc.net_expected_price_impact_pct} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Interactive Fee Discount Coupon & Net Proceeds Simulator */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-slate-900/85 border border-slate-800 p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <DollarSign className="w-4 h-4 text-amber-400" />
-                  <h3 className="text-sm font-bold text-white">
-                    이적시장 수수료 할인 쿠폰 · 손익분기 재매수 시뮬레이터
-                  </h3>
-                </div>
-                <BasisBadge basis="observed" />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 text-xs">
-                <div>
-                  <label className="text-slate-400 block mb-1">
-                    매도 예정 카드 가격 (단위: 억 BP)
-                  </label>
-                  <input
-                    type="number"
-                    value={simSalePriceEok}
-                    onChange={(e) =>
-                      setSimSalePriceEok(Math.max(1, Number(e.target.value)))
-                    }
-                    className="w-full bg-slate-950 border border-slate-700 px-3 py-2 text-white font-mono"
-                  />
-                  <div className="text-[11px] text-amber-300 font-mono mt-1">
-                    = {formatBpKorean(feeSimResult.saleBp)} BP
-                  </div>
-                </div>
-                <div>
-                  <label className="text-slate-400 block mb-1">
-                    수수료 할인 쿠폰 적용률 (%)
-                  </label>
-                  <select
-                    value={simCouponPct}
-                    onChange={(e) => setSimCouponPct(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-slate-700 px-3 py-2 text-white font-mono"
-                  >
-                    <option value={0}>쿠폰 미적용 (0%)</option>
-                    <option value={15}>15% 수수료 할인 쿠폰</option>
-                    <option value={20}>20% 수수료 할인 쿠폰</option>
-                    <option value={30}>30% 수수료 할인 쿠폰</option>
-                    <option value={40}>40% 수수료 할인 쿠폰</option>
-                    <option value={50}>50% 수수료 할인 쿠폰</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-6 text-xs pt-1">
-                <label className="flex items-center gap-2 text-slate-200 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={simHasTopClass}
-                    onChange={(e) => setSimHasTopClass(e.target.checked)}
-                  />
-                  TOP Class 보유 (기본 수수료 20% 감면)
-                </label>
-                <label className="flex items-center gap-2 text-slate-200 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={simHasPcRoom}
-                    onChange={(e) => setSimHasPcRoom(e.target.checked)}
-                  />
-                  프리미엄 PC방 혜택 (기본 수수료 30% 감면)
-                </label>
-              </div>
-
-              <div className="bg-slate-950 border border-slate-800 p-4 space-y-2 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">실효 거래 수수료율:</span>
-                  <span className="font-mono font-bold text-amber-300">
-                    {feeSimResult.effectiveTaxPct}% (기본 40% 대비 감면)
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">수수료 차감 후 실수령액:</span>
-                  <span className="font-mono font-bold text-emerald-400 text-sm">
-                    {formatBpKorean(feeSimResult.netProceedsBp)} BP
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">쿠폰으로 절약한 BP:</span>
-                  <span className="font-mono text-cyan-300">
-                    +{formatBpKorean(feeSimResult.couponSavedBp)} BP
-                  </span>
-                </div>
-                <div className="flex justify-between pt-2 border-t border-slate-800">
-                  <span className="text-slate-300 font-semibold">
-                    동일 카드 재매수 시 손익분기 하락폭:
-                  </span>
-                  <span className="font-mono font-bold text-rose-300">
-                    -{feeSimResult.breakevenDropPct}% 이하 하락 시 이득
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Event Registration Form */}
-            <form
-              onSubmit={handleRegisterEvent}
-              className="bg-slate-900/85 border border-slate-800 p-5 space-y-3.5"
-            >
-              <div className="flex items-center gap-2">
-                <PlusCircle className="w-4 h-4 text-emerald-400" />
-                <h3 className="text-sm font-bold text-white">
-                  신규 프로모션 · 패치 이벤트 수동 등록 및 즉시 영향 분석
-                </h3>
-              </div>
-              <p className="text-xs text-slate-400">
-                공식 홈페이지 공지나 신규 패키지·버닝 이벤트를 등록하면 즉시 시계열 대조군(DID) 분석에 반영됩니다.
-              </p>
-              <div className="space-y-2.5 text-xs">
-                <input
-                  type="text"
-                  value={newEvtTitle}
-                  onChange={(e) => setNewEvtTitle(e.target.value)}
-                  placeholder="이벤트 제목 (예: 주말 스페셜 버닝 & 40% 수수료 쿠폰 지급)"
-                  className="w-full bg-slate-950 border border-slate-700 px-3 py-2 text-white"
-                />
-                <div className="grid grid-cols-3 gap-2">
-                  <select
-                    value={newEvtType}
-                    onChange={(e) =>
-                      setNewEvtType(
-                        e.target.value as
-                          | "PACK_RELEASE"
-                          | "FEE_DISCOUNT_COUPON"
-                          | "BP_SUPPLY"
-                          | "TRAIT_ENGINE_PATCH"
-                      )
-                    }
-                    className="bg-slate-950 border border-slate-700 px-2.5 py-2 text-white"
-                  >
-                    <option value="PACK_RELEASE">선수팩·패키지 공급</option>
-                    <option value="FEE_DISCOUNT_COUPON">수수료 할인 쿠폰</option>
-                    <option value="BP_SUPPLY">BP 버닝·대량 지급</option>
-                    <option value="TRAIT_ENGINE_PATCH">특성·인게임 패치</option>
-                  </select>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
-                    value={newEvtStart}
-                    onChange={(e) => setNewEvtStart(e.target.value)}
-                    placeholder="시작일 (예: 10.12)"
-                    className="bg-slate-950 border border-slate-700 px-2.5 py-2 text-white font-mono"
-                  />
-                  <input
-                    type="text"
-                    value={newEvtEnd}
-                    onChange={(e) => setNewEvtEnd(e.target.value)}
-                    placeholder="종료일 (예: 10.18)"
-                    className="bg-slate-950 border border-slate-700 px-2.5 py-2 text-white font-mono"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="text"
-                    value={newEvtSeasons}
-                    onChange={(e) => setNewEvtSeasons(e.target.value)}
-                    placeholder="대상 시즌 코드 (쉼표 구분: 26TOTY,WS)"
-                    className="bg-slate-950 border border-slate-700 px-2.5 py-2 text-white font-mono"
-                  />
-                  <input
-                    type="number"
-                    value={newEvtCouponPct}
-                    onChange={(e) => setNewEvtCouponPct(Number(e.target.value))}
-                    placeholder="쿠폰 할인율 (%)"
-                    className="bg-slate-950 border border-slate-700 px-2.5 py-2 text-white font-mono"
+                    value={traitSearchQuery}
+                    onChange={(e) => setTraitSearchQuery(e.target.value)}
+                    placeholder="특성명 또는 대표 선수 검색..."
+                    className="pl-8 pr-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white focus:outline-none focus:border-sky-500"
                   />
                 </div>
                 <button
-                  type="submit"
-                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs transition"
+                  type="button"
+                  onClick={() => setShowTraitMethodDetail((v) => !v)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 cursor-pointer"
                 >
-                  이벤트 등록 및 대조군(DID) 영향 재산출
+                  <Info className="w-3.5 h-3.5 text-sky-600" />
+                  ℹ️ 프리미엄 산출 방식
+                  {showTraitMethodDetail ? (
+                    <ChevronUp className="w-3.5 h-3.5" />
+                  ) : (
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  )}
                 </button>
               </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* =====================================================================
-          SUB-TAB 5: NEW TRAIT & PLAYER TRAIT META ANALYSIS
-      ===================================================================== */}
-      {subTab === "trait_meta" && (
-        <div className="space-y-6">
-          {/* Official New Traits (level: 8) vs Excluded Legacy Traits (level: 5) Policy Banner */}
-          <div className="bg-slate-900/90 border border-emerald-500/40 p-5 space-y-3">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 text-[11px] font-mono font-bold bg-emerald-500 text-slate-950">
-                  LEVEL 8 NEW TRAITS ONLY
-                </span>
-                <h3 className="text-sm font-bold text-white">
-                  시세 분석 및 예측 변수 원칙: 공식 신규특성(level: 8, trait_icon_50~68) 17종만 반영 · 기존 특성(level: 5) 전면 제외
-                </h3>
-              </div>
-              <BasisBadge basis="official_public" />
             </div>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              데이터센터 공식 스펙상 <code className="text-emerald-300 font-mono">data-ori=&quot;{`{"level":8}`}&quot;</code> 및 아이콘 ID <code className="text-emerald-300 font-mono">trait_icon_50.png ~ trait_icon_68.png</code>로 검증된 <strong>17종 공식 신규특성</strong>만 시세 프리미엄 산출(+8강 금카 매칭)과 시세 예측 입력(M4 모델)에 사용합니다.
-            </p>
-            {dashboard.legacy_traits_excluded && dashboard.legacy_traits_excluded.length > 0 && (
-              <div className="bg-slate-950/90 border border-slate-800 p-3 text-[11px] space-y-1.5">
-                <div className="font-semibold text-amber-300">
-                  시세 프리미엄 계산 및 예측 모델 입력에서 제외된 기존 일반 특성 (level: 5, ID 00~49 — 일반 선수 정보에서만 별도 표시)
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {dashboard.legacy_traits_excluded.map((lt) => (
-                    <span
-                      key={lt.trait_id}
-                      className="px-2 py-0.5 bg-slate-900 border border-slate-800 text-slate-400 font-mono text-[10px]"
-                    >
-                      [제외] {lt.trait_name} (ID {lt.trait_id})
-                    </span>
-                  ))}
-                </div>
+
+            {showTraitMethodDetail && (
+              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                <strong className="text-slate-900 dark:text-slate-200">
+                  • 통제 가격 프리미엄(Controlled Price Premium) 산출 기준:
+                </strong>{" "}
+                단순 평균가 비교 시 상위 시즌 카드에 신규 특성이 많아 가격 왜곡이 발생합니다. 이를 방지하기 위해{" "}
+                <strong>동일 포지션 · 유사 오버롤(±1) · 동일 강화 단계 · 유사 스탯 티어</strong>를 가진 대조군 카드와 1:1 매칭하여 순수하게 해당 신규 특성 보유로 인해 발생하는 가격 차이(% 및 BP)만 분리 측정했습니다.
               </div>
             )}
-          </div>
 
-          {/* Section A: Competing Trait Substitution Empirical Testing */}
-          <div className="bg-slate-900/90 border border-slate-800 p-6 space-y-5">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-800 pb-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <GitCompare className="w-4 h-4 text-emerald-400" />
-                  <h3 className="text-base font-bold text-white">
-                    신규특성(level: 8) 간 경쟁·대체 효과 실증 검증 (예: 아크로바틱 피니셔·크로스 포쳐 vs 라인 브레이커)
-                  </h3>
-                  <BasisBadge basis="statistical_estimate" />
-                </div>
-                <p className="text-xs text-slate-400 mt-1">
-                  특정 선수 이름을 하드코딩하지 않고, 실제 공식 신규특성(level: 8) 보유 여부·포지션·동일 시즌 등급 매칭 표본(+8강 금카 기준)과 30일 시계열 수익률을 비교해 가설이 지지되는지 검증합니다.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {dashboard.trait_substitutions.map((c, idx) => (
+            {/* 3대 메타 그룹 필터 탭 */}
+            <div className="flex flex-wrap gap-2">
+              {META_GROUP_ORDER.map((grp) => {
+                const active = selectedMetaGroup === grp.key;
+                return (
                   <button
-                    key={c.case_id}
-                    onClick={() => setSelectedSubstitutionCaseId(c.case_id)}
-                    className={`px-3 py-1.5 text-xs font-semibold border transition ${
-                      activeSubstitutionCase?.case_id === c.case_id
-                        ? "bg-emerald-500 text-slate-950 border-emerald-400 font-bold"
-                        : "bg-slate-950 text-slate-300 border-slate-800 hover:text-white"
+                    key={grp.key}
+                    type="button"
+                    onClick={() => setSelectedMetaGroup(grp.key)}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                      active
+                        ? "bg-slate-900 text-white border-slate-900 dark:bg-white dark:text-slate-900 dark:border-white shadow-xs"
+                        : "bg-slate-50 dark:bg-slate-950/60 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:bg-slate-100"
                     }`}
                   >
-                    실증 가설 {idx + 1}
+                    {grp.label}
                   </button>
-                ))}
-              </div>
+                );
+              })}
             </div>
 
-            {activeSubstitutionCase && (
-              <div className="space-y-5">
-                <div className="bg-slate-950/90 border border-slate-800 p-4 space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h4 className="text-sm font-bold text-white">
-                      {activeSubstitutionCase.title}
-                    </h4>
-                    <span
-                      className={`px-2.5 py-1 text-xs font-bold border ${
-                        activeSubstitutionCase.empirical_verdict.includes(
-                          "가설 지지"
-                        )
-                          ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
-                          : activeSubstitutionCase.empirical_verdict.includes(
-                                "부분 지지"
-                              )
-                            ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/40"
-                            : "bg-amber-500/15 text-amber-300 border-amber-500/40"
-                      }`}
-                    >
-                      실증 판정: {activeSubstitutionCase.empirical_verdict}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-400">
-                    {activeSubstitutionCase.hypothesis}
-                  </p>
-                  <p className="text-xs text-emerald-300 pt-1 font-medium">
-                    → {activeSubstitutionCase.verdict_explanation}
-                  </p>
-                </div>
+            {/* 17종 개별 특성 그리드 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {filteredTraits.map((trait) => {
+                const isSelectedForCompare = selectedCompareTraits.includes(
+                  trait.trait_name
+                );
+                const isExpanded = expandedTraitCardName === trait.trait_name;
 
-                {/* Comparison Metrics Strip */}
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                  <div className="bg-slate-950/70 border border-slate-800 p-3">
-                    <div className="text-[11px] text-slate-400">
-                      신규·부상 특성군 ({activeSubstitutionCase.rising_traits.join("·")})
-                    </div>
-                    <div className="text-sm font-mono font-bold text-white mt-1">
-                      7일 평균{" "}
-                      <ReturnBadge
-                        val={activeSubstitutionCase.rising_avg_return_7d_pct}
-                      />
-                    </div>
-                    <div className="text-[11px] text-slate-500 mt-0.5">
-                      표본 {activeSubstitutionCase.rising_group_sample_count}종 / 30일{" "}
-                      {activeSubstitutionCase.rising_avg_return_30d_pct}%
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-950/70 border border-slate-800 p-3">
-                    <div className="text-[11px] text-slate-400">
-                      비교 신규특성군 ({activeSubstitutionCase.incumbent_trait})
-                    </div>
-                    <div className="text-sm font-mono font-bold text-white mt-1">
-                      7일 평균{" "}
-                      <ReturnBadge
-                        val={activeSubstitutionCase.incumbent_avg_return_7d_pct}
-                      />
-                    </div>
-                    <div className="text-[11px] text-slate-500 mt-0.5">
-                      표본 {activeSubstitutionCase.incumbent_group_sample_count}종 / 30일{" "}
-                      {activeSubstitutionCase.incumbent_avg_return_30d_pct}%
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-950/70 border border-slate-800 p-3">
-                    <div className="text-[11px] text-slate-400">
-                      부상 신규특성 통제 프리미엄
-                    </div>
-                    <div className="text-base font-mono font-bold text-emerald-400 mt-1">
-                      {activeSubstitutionCase.controlled_rising_premium_pct >= 0
-                        ? "+"
-                        : ""}
-                      {activeSubstitutionCase.controlled_rising_premium_pct}%
-                    </div>
-                    <div className="text-[11px] text-slate-500 mt-0.5">
-                      동일 포지션·시즌·OVR +8강 매칭
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-950/70 border border-slate-800 p-3">
-                    <div className="text-[11px] text-slate-400">
-                      비교 신규특성 통제 프리미엄
-                    </div>
-                    <div className="text-base font-mono font-bold text-cyan-300 mt-1">
-                      {activeSubstitutionCase.controlled_incumbent_premium_pct >=
-                      0
-                        ? "+"
-                        : ""}
-                      {activeSubstitutionCase.controlled_incumbent_premium_pct}%
-                    </div>
-                    <div className="text-[11px] text-slate-500 mt-0.5">
-                      동일 포지션·시즌·OVR +8강 매칭
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-950/70 border border-slate-800 p-3">
-                    <div className="text-[11px] text-slate-400">
-                      전체 시장 벤치마크 (7일)
-                    </div>
-                    <div className="text-sm font-mono font-bold text-white mt-1">
-                      <ReturnBadge
-                        val={
-                          activeSubstitutionCase.market_benchmark_return_7d_pct
-                        }
-                      />
-                    </div>
-                    <div className="text-[11px] text-slate-500 mt-0.5">
-                      대상 포지션:{" "}
-                      {activeSubstitutionCase.target_positions.join("·")}
-                    </div>
-                  </div>
-                </div>
-
-                {/* 30-Day Comparative Trajectory + Representative Cards */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <div className="bg-slate-950/80 border border-slate-800 p-4">
-                    <div className="text-xs font-bold text-white mb-2">
-                      30일 상대 지수 궤적 비교 (초기 시점 = 100)
-                    </div>
-                    <div className="w-full">
-                      <MarketMultiLineChart
-                        data={
-                          activeSubstitutionCase.comparative_curve_30d as unknown as Record<
-                            string,
-                            unknown
-                          >[]
-                        }
-                        xKey="date"
-                        height={215}
-                        series={[
-                          {
-                            key: "rising_index",
-                            label: `신규·부상 (${activeSubstitutionCase.rising_traits.join("·")})`,
-                            color: "#10b981",
-                            formatValue: (v) => v.toFixed(1),
-                          },
-                          {
-                            key: "incumbent_index",
-                            label: `비교 신규특성 (${activeSubstitutionCase.incumbent_trait})`,
-                            color: "#f59e0b",
-                            formatValue: (v) => v.toFixed(1),
-                          },
-                          {
-                            key: "market_index",
-                            label: "시장 전체 평균",
-                            color: "#64748b",
-                            dashed: true,
-                            formatValue: (v) => v.toFixed(1),
-                          },
-                        ]}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-950/80 border border-slate-800 p-4 space-y-2.5">
-                    <div className="text-xs font-bold text-white">
-                      실제 데이터셋 내 대표 비교 카드 표본 (+8강 금카 기준 · 하드코딩 없음)
-                    </div>
-                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                      {activeSubstitutionCase.representative_cards.map((rc, idx) => (
-                        <div
-                          key={`${rc.spid}_${rc.group}_${idx}`}
-                          onClick={() =>
-                            onInspectPlayer && onInspectPlayer(rc.spid, 8)
-                          }
-                          className="bg-slate-900/90 border border-slate-800 p-2.5 flex items-center justify-between cursor-pointer hover:border-emerald-500/40"
-                        >
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span
-                                className={`px-1.5 py-0.5 text-[10px] font-semibold ${
-                                  rc.group === "신규·부상 특성군"
-                                    ? "bg-emerald-500/15 text-emerald-300"
-                                    : "bg-amber-500/15 text-amber-300"
-                                }`}
-                              >
-                                {rc.group}
-                              </span>
-                              <span className="text-xs font-bold text-white truncate">
-                                [{rc.season_code}] {rc.name} ({rc.position} · OVR{" "}
-                                {rc.ovr})
-                              </span>
-                            </div>
-                            <div className="text-[11px] text-slate-400 mt-1 truncate">
-                              보유 신규특성(level:8): {rc.key_traits.join(", ")}
-                            </div>
+                return (
+                  <div
+                    key={trait.trait_id}
+                    className={`rounded-2xl border p-4 space-y-3.5 transition-all ${
+                      isSelectedForCompare
+                        ? "border-sky-500/80 bg-sky-50/20 dark:bg-sky-950/20"
+                        : "border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-950/40"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        {trait.icon_url && (
+                          <img
+                            src={trait.icon_url}
+                            alt={trait.trait_name}
+                            className="w-10 h-10 rounded-xl object-contain bg-white dark:bg-slate-900 p-1 border border-slate-200 dark:border-slate-800 shadow-2xs"
+                          />
+                        )}
+                        <div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                              {trait.trait_name}
+                            </h4>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200/80 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                              {trait.meta_group}
+                            </span>
                           </div>
-                          <div className="text-right shrink-0 ml-2">
-                            <div className="text-xs font-mono font-bold text-amber-300">
-                              {rc.current_bp_text}
-                            </div>
-                            <ReturnBadge val={rc.return_7d_pct} />
-                          </div>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                            {trait.release_or_patch_note}
+                          </p>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+                      </div>
 
-          {/* Section B: Controlled Trait Premium vs Simple Unadjusted Difference */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 bg-slate-900/85 border border-slate-800 p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-bold text-white">
-                    공식 신규특성(level: 8) 17종 단순 가격 차이 vs 교란변수 통제 프리미엄 (+8강 금카 매칭)
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    고급 신규특성이 비싼 시즌에 집중되는 착시를 제거하기 위해 동일 포지션군 · 동일 시즌 섹터 · OVR ±2 · +8강 금카 기준가 매칭 쌍(Matched Pairs)으로 순수 신규특성 프리미엄을 분리합니다.
-                  </p>
-                </div>
-                <BasisBadge basis="statistical_estimate" />
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
-                      <th className="py-2 pr-2">공식 신규특성명 (아이콘 ID)</th>
-                      <th className="py-2 px-2 text-right">보유/매칭 표본</th>
-                      <th className="py-2 px-2 text-right">
-                        단순 평균 차이 (보정 전)
-                      </th>
-                      <th className="py-2 px-2 text-right">
-                        통제 프리미엄 (중앙값)
-                      </th>
-                      <th className="py-2 px-2 text-right">7일 초과수익률</th>
-                      <th className="py-2 pl-2 text-right">신뢰도</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/70">
-                    {dashboard.trait_premiums.map((tp) => (
-                      <tr
-                        key={tp.trait_name}
-                        onClick={() => setSelectedTraitForDetail(tp.trait_name)}
-                        className={`cursor-pointer transition ${
-                          selectedTraitForDetail === tp.trait_name
-                            ? "bg-emerald-500/10"
-                            : "hover:bg-slate-950/60"
+                      <button
+                        type="button"
+                        onClick={() => toggleCompareTrait(trait.trait_name)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border shrink-0 transition-colors cursor-pointer ${
+                          isSelectedForCompare
+                            ? "bg-sky-600 text-white border-sky-600"
+                            : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-sky-500"
                         }`}
                       >
-                        <td className="py-2.5 pr-2">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-white">
-                              {tp.trait_name}
-                            </span>
-                            <span className="px-1 py-0.5 text-[9px] font-mono bg-emerald-500/15 text-emerald-300">
-                              Lv.{tp.trait_level || 8}
-                            </span>
-                          </div>
-                          <div className="text-[10px] text-slate-400 font-mono">
-                            ID {tp.trait_id ?? "50+"} · {tp.meta_tier} · {tp.category}
-                          </div>
-                        </td>
-                        <td className="py-2.5 px-2 text-right font-mono text-slate-300">
-                          {tp.holder_sample_count}종 / {tp.matched_pair_count}쌍
-                        </td>
-                        <td className="py-2.5 px-2 text-right font-mono text-slate-400">
-                          {tp.unadjusted_diff_pct >= 0 ? "+" : ""}
-                          {tp.unadjusted_diff_pct}%
-                        </td>
-                        <td className="py-2.5 px-2 text-right font-mono font-bold text-emerald-400">
-                          {tp.controlled_premium_median_pct >= 0 ? "+" : ""}
-                          {tp.controlled_premium_median_pct}%
-                          <div className="text-[10px] font-normal text-slate-500">
-                            IQR [{tp.controlled_premium_iqr_low_pct}% ~{" "}
-                            {tp.controlled_premium_iqr_high_pct}%]
-                          </div>
-                        </td>
-                        <td className="py-2.5 px-2 text-right">
-                          <ReturnBadge
-                            val={tp.excess_return_7d_pct}
-                            suffix="%p"
-                          />
-                        </td>
-                        <td className="py-2.5 pl-2 text-right">
-                          <span
-                            className={`px-2 py-0.5 text-[10px] font-semibold ${
-                              tp.confidence_level === "높음"
-                                ? "bg-emerald-500/15 text-emerald-300"
-                                : tp.confidence_level === "보통"
-                                  ? "bg-cyan-500/15 text-cyan-300"
-                                  : "bg-amber-500/15 text-amber-300"
-                            }`}
-                          >
-                            {tp.confidence_level}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Right Panel: Matched Pair Examples for Selected Trait */}
-            <div className="bg-slate-900/85 border border-slate-800 p-5 space-y-4">
-              {activeTraitPremium && (
-                <>
-                  <div>
-                    <span className="text-[11px] font-mono text-emerald-400">
-                      선택 신규특성(level: 8) 통제 비교 상세
-                    </span>
-                    <h4 className="text-base font-bold text-white mt-0.5">
-                      [{activeTraitPremium.trait_name}] 유사 조건 +8강 매칭 사례
-                    </h4>
-                    <p className="text-xs text-slate-400 mt-1">
-                      {activeTraitPremium.interpretation}
-                    </p>
-                  </div>
-
-                  <div className="bg-slate-950 border border-slate-800 p-3 text-[11px] text-slate-300 space-y-1">
-                    <div className="font-semibold text-amber-300">
-                      통제된 교란 요인 (Confounders Controlled)
+                        {isSelectedForCompare ? "✓ 비교중" : "+ 비교 담기"}
+                      </button>
                     </div>
-                    <div>{activeTraitPremium.confounder_control_summary}</div>
-                  </div>
 
-                  <div className="space-y-3">
-                    <div className="text-xs font-bold text-slate-200">
-                      실제 매칭된 보유 vs 미보유 카드 비교 쌍 (+8강 금카 기준)
-                    </div>
-                    {activeTraitPremium.matched_examples.length === 0 ? (
-                      <div className="text-xs text-slate-500 p-4 bg-slate-950 border border-slate-800">
-                        동일 시즌 섹터 및 OVR ±2 조건을 동시에 만족하는 매칭 쌍 표본이 부족하여 판별을 보류합니다.
+                    {/* 4대 핵심 지표 요약 박스 */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-center">
+                      <div>
+                        <span className="text-[10px] text-slate-400 block">
+                          랭커 채택률
+                        </span>
+                        <span className="text-xs font-extrabold font-mono text-slate-900 dark:text-white">
+                          {trait.ranker_usage_pct.toFixed(1)}%
+                        </span>
                       </div>
-                    ) : (
-                      activeTraitPremium.matched_examples.map((ex, i) => (
-                        <div
-                          key={i}
-                          className="bg-slate-950/90 border border-slate-800 p-3 space-y-2 text-xs"
-                        >
-                          <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
-                            <span className="text-[11px] font-mono text-slate-400">
-                              매칭 사례 #{i + 1} (OVR 차이 {ex.ovr_gap})
-                            </span>
-                            <span className="font-mono font-bold text-emerald-400">
-                              가격 차이: {ex.premium_pct >= 0 ? "+" : ""}
-                              {ex.premium_pct}%
-                            </span>
-                          </div>
-                          <div className="flex justify-between items-center">
-                            <div>
-                              <span className="px-1.5 py-0.5 text-[10px] bg-emerald-500/20 text-emerald-300 mr-1.5">
-                                보유
-                              </span>
-                              <span className="font-semibold text-white">
-                                [{ex.with_card.season_code}] {ex.with_card.name}
-                              </span>{" "}
-                              <span className="text-slate-400">
-                                ({ex.with_card.position} · {ex.with_card.ovr})
-                              </span>
-                            </div>
-                            <span className="font-mono text-amber-300">
-                              {ex.with_card.bp_1_text}
-                            </span>
-                          </div>
-                          <div className="flex justify-between items-center">
-                            <div>
-                              <span className="px-1.5 py-0.5 text-[10px] bg-slate-800 text-slate-400 mr-1.5">
-                                미보유
-                              </span>
-                              <span className="font-semibold text-slate-300">
-                                [{ex.without_card.season_code}]{" "}
-                                {ex.without_card.name}
-                              </span>{" "}
-                              <span className="text-slate-500">
-                                ({ex.without_card.position} ·{" "}
-                                {ex.without_card.ovr})
-                              </span>
-                            </div>
-                            <span className="font-mono text-slate-400">
-                              {ex.without_card.bp_1_text}
-                            </span>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* Section C: Trait-Lacking Season Discount Analysis & Patch History */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 bg-slate-900/85 border border-slate-800 p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-bold text-white">
-                    시즌별 공식 신규특성(level: 8) 보유율 및 신규특성 부재 가치 할인(Discount) 분석
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    공식 신규특성(크로스 포쳐·아크로바틱 피니셔·라인 브레이커·2개의 심장·타이탄 등)이 없는 시즌이 동일 OVR 기대가(+8강 기준) 대비 할인을 받는지, 아니면 단종 희소성·양발로 방어하는지 판별합니다.
-                  </p>
-                </div>
-                <BasisBadge basis="statistical_estimate" />
-              </div>
-
-              <div className="overflow-x-auto max-h-96">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
-                      <th className="py-2 pr-2">시즌</th>
-                      <th className="py-2 px-2 text-right">평균 OVR / +8강 기준가</th>
-                      <th className="py-2 px-2 text-right">
-                        신규특성 보유율 (평균 개수)
-                      </th>
-                      <th className="py-2 px-2 text-right">
-                        동일 OVR 대비 프리미엄/할인
-                      </th>
-                      <th className="py-2 pl-2">미보유 주요 신규특성 및 방어 요인</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/70">
-                    {dashboard.trait_season_discounts.slice(0, 14).map((sd) => (
-                      <tr key={sd.season_code} className="hover:bg-slate-950/60">
-                        <td className="py-2.5 pr-2">
-                          <div className="font-mono font-bold text-emerald-300">
-                            {sd.season_code}
-                          </div>
-                          <div className="text-[10px] text-slate-500">
-                            표본 {sd.evaluated_card_count}종
-                          </div>
-                        </td>
-                        <td className="py-2.5 px-2 text-right font-mono">
-                          <div className="text-white font-semibold">
-                            OVR {sd.avg_ovr}
-                          </div>
-                          <div className="text-amber-300 text-[11px]">
-                            {sd.avg_bp_1_text}
-                          </div>
-                        </td>
-                        <td className="py-2.5 px-2 text-right font-mono">
-                          <div className="text-slate-200 font-semibold">
-                            {sd.core_meta_trait_coverage_pct}%
-                          </div>
-                          <div className="text-[10px] text-slate-500">
-                            신규특성 평균 {sd.avg_trait_count}개
-                          </div>
-                        </td>
-                        <td className="py-2.5 px-2 text-right font-mono">
-                          <ReturnBadge val={sd.trait_deficit_discount_pct} />
-                        </td>
-                        <td className="py-2.5 pl-2 text-[11px] text-slate-300 max-w-xs">
-                          <div className="text-slate-400">
-                            {sd.missing_key_traits.length > 0
-                              ? `미보유: ${sd.missing_key_traits.slice(0, 3).join(", ")}`
-                              : "주요 신규특성 전방위 보유"}
-                          </div>
-                          <div className="text-emerald-300/90 text-[10px] mt-0.5">
-                            보완: {sd.compensating_factors.join(" · ")}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Trait Patch History */}
-            <div className="bg-slate-900/85 border border-slate-800 p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white">
-                  공식 신규특성(level: 8) 도입 · 밸런스 패치 이력
-                </h3>
-                <BasisBadge basis="official_public" />
-              </div>
-              <div className="space-y-3">
-                {dashboard.trait_patches.map((tp) => (
-                  <div
-                    key={tp.id}
-                    className="bg-slate-950/90 border border-slate-800 p-3.5 space-y-2 text-xs"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="px-2 py-0.5 text-[10px] font-semibold bg-fuchsia-500/15 text-fuchsia-300 border border-fuchsia-500/30">
-                        {tp.change_type}
-                      </span>
-                      <span className="text-[11px] font-mono text-slate-400">
-                        {tp.patch_date}
-                      </span>
+                      <div>
+                        <span className="text-[10px] text-slate-400 block">
+                          전체 유저 픽률
+                        </span>
+                        <span className="text-xs font-extrabold font-mono text-slate-700 dark:text-slate-300">
+                          {trait.user_usage_pct.toFixed(1)}%
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 block">
+                          가격 프리미엄
+                        </span>
+                        <span className="text-xs font-extrabold font-mono text-rose-600 dark:text-rose-400">
+                          +{trait.controlled_premium_pct.toFixed(1)}%
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 block">
+                          평균 BP 차이
+                        </span>
+                        <span className="text-xs font-extrabold font-mono text-amber-600 dark:text-amber-400">
+                          +{formatBpKorean(trait.avg_premium_bp_diff)}
+                        </span>
+                      </div>
                     </div>
-                    <div className="font-bold text-white">{tp.title}</div>
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                      {tp.summary}
-                    </p>
-                    <div className="text-[11px] text-emerald-300 bg-slate-900 p-2 border border-slate-800">
-                      <strong>시장 반응:</strong> {tp.observed_market_reaction}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
-      {/* =====================================================================
-          SUB-TAB 6: COLLECTION OPERATIONS, CODE AUDIT & TRANSPARENCY
-      ===================================================================== */}
-      {subTab === "operations" && (
-        <div className="space-y-6">
-          {/* Code Audit Report Table */}
-          {dashboard.code_audit_findings && (
-            <div className="bg-slate-900/85 border border-slate-800 p-6 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
-                <div>
-                  <h3 className="text-base font-bold text-white">
-                    이적시장 분석 엔진 코드 감사(Code Audit) 및 데이터 기반 아키텍처 전환 검증표
-                  </h3>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    1) 실제 하드코딩 확인 및 수정 항목, 2) 데이터 기반 구현 확인 항목, 3) 일부 구현 보강 항목, 4) 외부 비공개로 확인 불가한 항목을 투명하게 분류합니다.
-                  </p>
-                </div>
-                <BasisBadge basis="observed" />
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
-                      <th className="py-2 pr-2">감사 분류</th>
-                      <th className="py-2 px-2">점검 모듈 (파일 위치)</th>
-                      <th className="py-2 px-2">감사 발견 사항</th>
-                      <th className="py-2 pl-2">데이터 기반 개선 및 조치 내역</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/70">
-                    {dashboard.code_audit_findings.map((item, idx) => (
-                      <tr key={`${item.module_path}_${idx}`} className="hover:bg-slate-950/60">
-                        <td className="py-2.5 pr-2 whitespace-nowrap">
-                          <span
-                            className={`px-2 py-0.5 text-[10px] font-bold border ${
-                              item.category.startsWith("1.")
-                                ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
-                                : item.category.startsWith("2.")
-                                  ? "bg-sky-500/15 text-sky-300 border-sky-500/30"
-                                  : item.category.startsWith("3.")
-                                    ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/30"
-                                    : "bg-amber-500/15 text-amber-300 border-amber-500/30"
-                            }`}
-                          >
-                            {item.category}
+                    {/* 최근 시세 변동 추이 */}
+                    <div className="flex items-center justify-between text-xs px-1">
+                      <span className="text-slate-500 dark:text-slate-400 font-medium">
+                        보유 카드 시세 추이:
+                      </span>
+                      <div className="flex items-center gap-3">
+                        <span>
+                          <span className="text-[10px] text-slate-400 mr-1">
+                            1일
                           </span>
-                        </td>
-                        <td className="py-2.5 px-2">
-                          <div className="font-bold text-white">{item.finding_title}</div>
-                          <div className="text-[10px] font-mono text-slate-500">
-                            {item.module_path}
+                          {renderReturnBadge(trait.return_1d_pct)}
+                        </span>
+                        <span>
+                          <span className="text-[10px] text-slate-400 mr-1">
+                            7일
+                          </span>
+                          {renderReturnBadge(trait.return_7d_pct)}
+                        </span>
+                        <span>
+                          <span className="text-[10px] text-slate-400 mr-1">
+                            30일
+                          </span>
+                          {renderReturnBadge(trait.return_30d_pct)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 대표 보유 대장 선수 목록 */}
+                    <div className="space-y-1.5">
+                      <div className="text-[11px] font-bold text-slate-600 dark:text-slate-400 flex items-center justify-between">
+                        <span>대표 보유 대장 선수</span>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          보유 평균가 {formatBpKorean(trait.avg_holder_bp)}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 gap-1.5">
+                        {trait.representative_players.slice(0, 3).map((pl) => (
+                          <div
+                            key={`${trait.trait_id}-rep-${pl.spid}`}
+                            onClick={() =>
+                              onInspectPlayer &&
+                              onInspectPlayer(pl.spid, pl.grade)
+                            }
+                            className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800 text-xs hover:border-sky-400 transition-colors cursor-pointer"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <SeasonBadge
+                                seasonImg={pl.season_img}
+                                seasonCode={pl.season_code}
+                              />
+                              <span className="font-bold text-slate-900 dark:text-slate-100 truncate">
+                                {pl.name}
+                              </span>
+                              <span className="text-[10px] font-mono text-slate-500">
+                                {pl.position} · OVR {pl.ovr} · +{pl.grade}강
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="font-mono font-bold text-slate-900 dark:text-white">
+                                {pl.bp_text || formatBpKorean(pl.bp)}
+                              </span>
+                              {renderReturnBadge(pl.return_7d_pct)}
+                            </div>
                           </div>
-                        </td>
-                        <td className="py-2.5 px-2 text-[11px] text-slate-300 max-w-xs">
-                          {item.before_state}
-                        </td>
-                        <td className="py-2.5 pl-2 text-[11px] text-emerald-300/90 max-w-md">
-                          {item.after_state}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+                        ))}
+                      </div>
+                    </div>
 
-          <div className="bg-slate-900/85 border border-slate-800 p-6 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-              <div>
-                <h3 className="text-base font-bold text-white">
-                  데이터 수집 아키텍처 (+8~+11강 주류 / +12~+13강 분리) · 단위 정규화 · 비공개 지표 고지
-                </h3>
-                <p className="text-xs text-slate-400 mt-1">
-                  {dashboard.collection_status.environment_mode} (주류 +8~+11강 시계열{" "}
-                  {dashboard.collection_status.core_grades_8_11_series_count ?? 0}종 / 분리 +12~+13강 시계열{" "}
-                  {dashboard.collection_status.separated_12_13_series_count ?? 0}종)
-                </p>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  onClick={() => handleSyncOfficialSources("all")}
-                  disabled={syncingSources}
-                  className="px-3.5 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-bold text-xs"
-                >
-                  {syncingSources
-                    ? "공식 소스 동기화 중..."
-                    : "공식 이벤트·랭커·+8~13강 전체 동기화"}
-                </button>
-                <button
-                  onClick={handleRunIncrementalBatch}
-                  disabled={collectingBatch}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-slate-950 font-bold text-xs"
-                >
-                  {collectingBatch
-                    ? "증분 배치 실행 중..."
-                    : "수동 증분 수집 배치 실행 (+8~+13강)"}
-                </button>
-              </div>
-            </div>
+                    {/* 자세히 보기 아코디언: 인게임 상세 효과 & 대조군 매칭 사례 */}
+                    <div className="pt-1">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedTraitCardName(
+                            isExpanded ? null : trait.trait_name
+                          )
+                        }
+                        className="w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-slate-100/80 dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 cursor-pointer"
+                      >
+                        <span>
+                          ℹ️ 인게임 상세 효과 &amp; 동급 대조군 비교 보기
+                        </span>
+                        {isExpanded ? (
+                          <ChevronUp className="w-3.5 h-3.5" />
+                        ) : (
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        )}
+                      </button>
 
-            {batchMessage && (
-              <div className="p-3 bg-emerald-950/40 border border-emerald-500/40 text-emerald-200 text-xs font-mono">
-                {batchMessage}
-              </div>
-            )}
+                      {isExpanded && (
+                        <div className="mt-2 p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2.5 text-xs">
+                          <div>
+                            <div className="font-bold text-slate-800 dark:text-slate-200 mb-0.5">
+                              • 인게임 체감 및 발동 메커니즘
+                            </div>
+                            <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
+                              {trait.in_game_effect}
+                            </p>
+                          </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-              <div className="bg-slate-950/80 border border-slate-800 p-4 space-y-1.5">
-                <div className="font-bold text-slate-200">
-                  요청 제한(Rate Limit) 및 차단 방지 정책
-                </div>
-                <p className="text-slate-400 leading-relaxed">
-                  {dashboard.collection_status.rate_limit_policy}
-                </p>
-              </div>
-              <div className="bg-slate-950/80 border border-slate-800 p-4 space-y-1.5">
-                <div className="font-bold text-slate-200">
-                  시계열 누적 및 중복 방지 정책
-                </div>
-                <p className="text-slate-400 leading-relaxed">
-                  {dashboard.collection_status.deduplication_policy}
-                </p>
-              </div>
-              <div className="bg-slate-950/80 border border-slate-800 p-4 space-y-1.5">
-                <div className="font-bold text-amber-300">
-                  비공개·관측 불가 데이터 처리 원칙
-                </div>
-                <ul className="list-disc list-inside text-[11px] text-slate-400 space-y-1">
-                  {dashboard.collection_status.unobservable_metrics_disclosure.map(
-                    (item, idx) => (
-                      <li key={idx}>{item}</li>
-                    )
-                  )}
-                </ul>
-              </div>
-            </div>
-
-            {/* Unit Conversion Audit Table */}
-            <div className="pt-2 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <h4 className="text-sm font-bold text-white">
-                  데이터센터 시계열 그래프 원본값(Raw) vs 검증 기준가(Verified BP) 단위 정규화 감사 로그
-                </h4>
-                <span className="text-xs font-mono text-slate-400">
-                  직접 일치 {dashboard.collection_status.direct_verified_series_count}종 / 스케일 보정{" "}
-                  {dashboard.collection_status.unit_rescaled_series_count}종
-                </span>
-              </div>
-              <div className="overflow-x-auto max-h-80">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
-                      <th className="py-2 pr-2">시계열 키 (선수)</th>
-                      <th className="py-2 px-2 text-right">
-                        그래프 원본 최신값 (Raw)
-                      </th>
-                      <th className="py-2 px-2 text-right">
-                        검증된 카드 기준가 (Verified)
-                      </th>
-                      <th className="py-2 px-2 text-right">적용 스케일 배수</th>
-                      <th className="py-2 pl-2">단위 변환 사유 및 품질 상태</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/70">
-                    {dashboard.collection_status.unit_conversion_samples.map(
-                      (rec) => (
-                        <tr key={rec.key} className="hover:bg-slate-950/60">
-                          <td className="py-2 pr-2 font-mono text-slate-200">
-                            [{rec.season_code}] {rec.player_name} +{rec.grade}강
-                          </td>
-                          <td className="py-2 px-2 text-right font-mono text-slate-400">
-                            {rec.raw_latest_value.toLocaleString()}
-                          </td>
-                          <td className="py-2 px-2 text-right font-mono text-amber-300 font-semibold">
-                            {formatBpKorean(rec.verified_card_bp)} BP
-                          </td>
-                          <td className="py-2 px-2 text-right font-mono text-emerald-400">
-                            x{rec.applied_scale_factor.toLocaleString()}
-                          </td>
-                          <td className="py-2 pl-2 text-[11px] text-slate-400">
-                            {rec.conversion_reason}
-                          </td>
-                        </tr>
-                      )
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                          {trait.matched_examples.length > 0 && (
+                            <div className="space-y-1.5">
+                              <div className="font-bold text-slate-800 dark:text-slate-200">
+                                • 동일 스펙 보유 vs 미보유 가격 비교 사례
+                              </div>
+                              {trait.matched_examples
+                                .slice(0, 2)
+                                .map((pair, pIdx) => (
+                                  <div
+                                    key={pIdx}
+                                    className="p-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200/60 dark:border-slate-800 text-[11px] flex items-center justify-between gap-2"
+                                  >
+                                    <div className="min-w-0">
+                                      <span className="font-bold text-sky-700 dark:text-sky-300">
+                                        [보유] {pair.with_card.season_code}{" "}
+                                        {pair.with_card.name}
+                                      </span>{" "}
+                                      <span className="text-slate-400">vs</span>{" "}
+                                      <span className="text-slate-600 dark:text-slate-400">
+                                        [미보유] {pair.without_card.season_code}{" "}
+                                        {pair.without_card.name}
+                                      </span>
+                                    </div>
+                                    <span className="font-mono font-bold text-rose-600 dark:text-rose-400 shrink-0">
+                                      +{pair.premium_pct.toFixed(1)}%
+                                    </span>
+                                  </div>
+                                ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

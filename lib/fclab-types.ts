@@ -353,6 +353,7 @@ export interface SquadReplacementRecommendation {
 export interface SquadAnalysisResult {
   formation: string;
   player_count: number;
+  avg_ovr?: number;
   total_salary: number;
   salary_cap: number;
   salary_valid: boolean;
@@ -384,6 +385,7 @@ export interface SquadAnalysisResult {
     pid: number;
     name: string;
     season_code: string;
+    season_img?: string;
     thumb_url: string;
     grade: number;
     salary: number;
@@ -396,6 +398,10 @@ export interface SquadAnalysisResult {
     feelScore?: number;
     positionSalaryEfficiency?: number;
     statTrapBadge?: StatTrapBadgeType;
+    foot?: string;
+    traits?: TraitItem[];
+    new_traits?: string[];
+    team_colors?: TeamColorItem[];
   }[];
   purchaseAudit?: SquadPurchaseAudit;
   systemRules?: SystemRules;
@@ -927,6 +933,26 @@ export interface MarketBacktestReport {
   }[];
 }
 
+export type NewTraitMetaGroup =
+  | "공격/슈팅 특성"
+  | "드리블/스피드/활동량 특성"
+  | "패스/수비/GK 특성";
+
+export interface TraitRepresentativePlayerItem {
+  spid: number;
+  name: string;
+  season_code: string;
+  season_img?: string;
+  thumb_url?: string;
+  position: string;
+  ovr: number;
+  grade: number;
+  bp: number;
+  bp_text: string;
+  return_7d_pct: number;
+  ranker_pick_pct: number;
+}
+
 export interface TraitMetaCatalogItem {
   trait_id?: number;
   trait_level?: 8 | 5;
@@ -934,6 +960,7 @@ export interface TraitMetaCatalogItem {
   included_in_price_model?: boolean;
   exclusion_reason?: string;
   trait_name: string;
+  meta_group?: NewTraitMetaGroup;
   category:
     | "슈팅·득점"
     | "침투·오프더볼"
@@ -961,12 +988,34 @@ export interface TraitMetaCatalogItem {
     | "2티어 (상황별 유효)"
     | "3티어 (보조·비주류)";
   position_suitability: Record<string, number>;
+  /** 상위 랭커 실사용률 (%) */
+  ranker_usage_pct?: number;
+  /** 전체 유저 실사용률 (%) */
+  user_usage_pct?: number;
+  /** 교란변수 통제 후 평균 가격 프리미엄 (%) */
+  controlled_premium_pct?: number;
+  /** 비보유 대조군 대비 평균 가격 프리미엄 차액 (BP) */
+  avg_premium_bp_diff?: number;
+  /** 특성 보유 카드 평균 +8강 시세 (BP) */
+  avg_holder_bp?: number;
+  /** 최근 1일 시세 등락률 (%) */
+  return_1d_pct?: number;
+  /** 최근 7일 시세 등락률 (%) */
+  return_7d_pct?: number;
+  /** 최근 30일 시세 등락률 (%) */
+  return_30d_pct?: number;
+  /** 개별 특성 보유군 30일 시세 지수 추이 (기준일=100) */
+  price_trend_30d?: { date: string; index_value: number }[];
+  /** 해당 특성을 보유한 대표 대장 선수 목록 */
+  representative_players?: TraitRepresentativePlayerItem[];
 }
 
 export interface TraitControlledPremiumItem {
   trait_id?: number;
   trait_level?: 8;
   trait_name: string;
+  meta_group?: NewTraitMetaGroup;
+  icon_url?: string;
   category: string;
   meta_tier: string;
   analyzed_grade_range?: string;
@@ -978,13 +1027,21 @@ export interface TraitControlledPremiumItem {
   controlled_premium_median_pct: number;
   controlled_premium_iqr_low_pct: number;
   controlled_premium_iqr_high_pct: number;
+  avg_premium_bp_diff?: number;
+  ranker_usage_pct?: number;
+  user_usage_pct?: number;
+  return_1d_with_trait_pct?: number;
   return_7d_with_trait_pct: number;
   return_7d_without_trait_pct: number;
+  return_30d_with_trait_pct?: number;
   excess_return_7d_pct: number;
   confounder_control_summary: string;
+  legacy_traits_excluded_from_model?: boolean;
   confidence_level: "높음" | "보통" | "표본 부족 주의" | "표본 부족으로 판별 보류";
   basis?: MarketDataBasis;
   interpretation: string;
+  price_trend_30d?: { date: string; index_value: number }[];
+  representative_players?: TraitRepresentativePlayerItem[];
   matched_examples: {
     with_card: {
       spid: number;
@@ -1430,6 +1487,7 @@ export interface MarketSignalMetrics {
 export interface MarketOverviewHeatmapCell {
   seasonCode: string;
   seasonName: string;
+  seasonImg?: string;
   grade: number;
   avgBp: number;
   changePct1d: number;

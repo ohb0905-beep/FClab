@@ -69,16 +69,21 @@ export function SeasonBadge({
   className?: string;
 }) {
   const [failed, setFailed] = useState(false);
-  if (!seasonImg || failed) {
+  const resolvedSrc =
+    seasonImg ||
+    (seasonCode
+      ? `https://ssl.nexon.com/s2/game/fc/online/obt/externalAssets/season/${seasonCode.toLowerCase()}.png`
+      : "");
+  if (!resolvedSrc || failed) {
     return (
-      <span className="font-mono text-[11px] font-semibold text-amber-300 tracking-tight">
+      <span className="font-mono text-[11px] font-bold text-amber-600 dark:text-amber-300 tracking-tight px-1 py-0.5 rounded bg-amber-500/10 border border-amber-500/30">
         {seasonCode}
       </span>
     );
   }
   return (
     <img
-      src={seasonImg}
+      src={resolvedSrc}
       alt={seasonCode}
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}
@@ -560,29 +565,29 @@ export function MarketOverviewIndexCard({
   const isPositive7d = (overviewIndex.changePct7d || 0) >= 0;
 
   return (
-    <div className="bg-slate-900/90 border border-slate-800 p-5 flex flex-col justify-between space-y-4">
+    <div className="bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 rounded-xl p-5 flex flex-col justify-between space-y-4 shadow-xs">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <span className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-semibold">
+          <span className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 rounded font-bold">
             FCLAB COMPOSITE INDEX
           </span>
-          <h3 className="text-base font-bold text-white mt-1.5">
-            FClab 마켓 종합 지수 (+8~+11강 주류 기준)
+          <h3 className="text-base font-bold text-slate-900 dark:text-white mt-1.5">
+            FClab 마켓 종합 지수 (+8~+11강 기준)
           </h3>
-          <p className="text-xs text-slate-400 mt-0.5">
-            초기 기준점(100.0) 대비 주류 금카 시장의 동일가중 가격 흐름과 상승·하락 확산도를 실시간 집계합니다.
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            고정 기준가 스냅샷(100.0) 대비 절사평균·EMA 안정화 지수
           </p>
         </div>
         <div className="text-right shrink-0">
-          <div className="text-2xl sm:text-3xl font-mono font-bold text-white tabular-nums">
+          <div className="text-2xl sm:text-3xl font-mono font-black text-slate-900 dark:text-white tabular-nums">
             {overviewIndex.currentIndex.toFixed(2)}
           </div>
           <div className="flex items-center justify-end gap-2 mt-1 text-xs font-mono">
             <span
               className={
                 isPositive1d
-                  ? "text-rose-400 font-bold"
-                  : "text-sky-400 font-bold"
+                  ? "text-rose-600 dark:text-rose-400 font-bold"
+                  : "text-sky-600 dark:text-sky-400 font-bold"
               }
             >
               1일 {isPositive1d ? "+" : ""}
@@ -591,7 +596,9 @@ export function MarketOverviewIndexCard({
             {overviewIndex.changePct7d !== undefined && (
               <span
                 className={
-                  isPositive7d ? "text-rose-300" : "text-sky-300"
+                  isPositive7d
+                    ? "text-rose-500 dark:text-rose-300"
+                    : "text-sky-500 dark:text-sky-300"
                 }
               >
                 · 7일 {isPositive7d ? "+" : ""}
@@ -603,32 +610,32 @@ export function MarketOverviewIndexCard({
       </div>
 
       {/* Advance / Flat / Decline Breadth Bar */}
-      <div className="space-y-2 bg-slate-950/80 border border-slate-800 p-3.5">
+      <div className="space-y-2 bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-lg p-3.5">
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-          <span className="font-semibold text-slate-300">
-            시장 등락 종목 비중 (총 {totalCount}종)
+          <span className="font-bold text-slate-700 dark:text-slate-300">
+            시장 등락 종목 비중 (표본 {totalCount}종)
           </span>
           <div className="flex items-center gap-3 font-mono text-[11px]">
-            <span className="text-rose-400 font-semibold">
-              ▲ 상승 {overviewIndex.advancingCount}종 ({advPct}%)
+            <span className="text-rose-600 dark:text-rose-400 font-bold">
+              ▲ 상승 {overviewIndex.advancingCount} ({advPct}%)
             </span>
-            <span className="text-slate-400">
-              ▬ 보합 {overviewIndex.flatCount}종 ({flatPct}%)
+            <span className="text-slate-500 dark:text-slate-400">
+              ▬ 보합 {overviewIndex.flatCount} ({flatPct}%)
             </span>
-            <span className="text-sky-400 font-semibold">
-              ▼ 하락 {overviewIndex.decliningCount}종 ({decPct}%)
+            <span className="text-sky-600 dark:text-sky-400 font-bold">
+              ▼ 하락 {overviewIndex.decliningCount} ({decPct}%)
             </span>
           </div>
         </div>
 
-        <div className="w-full h-3 bg-slate-800 flex overflow-hidden">
+        <div className="w-full h-3 bg-slate-200 dark:bg-slate-800 rounded-full flex overflow-hidden">
           <div
             className="bg-rose-500 h-full transition-all"
             style={{ width: `${advPct}%` }}
             title={`상승 ${advPct}%`}
           />
           <div
-            className="bg-slate-500 h-full transition-all"
+            className="bg-slate-400 dark:bg-slate-500 h-full transition-all"
             style={{ width: `${flatPct}%` }}
             title={`보합 ${flatPct}%`}
           />
@@ -639,7 +646,7 @@ export function MarketOverviewIndexCard({
           />
         </div>
 
-        <div className="flex items-center justify-between text-[11px] text-slate-400 pt-0.5">
+        <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 pt-0.5">
           <span>
             {advPct >= 50
               ? "🔥 매수세 확산 우위 (주류 금카 단기 반등·상승장)"
@@ -647,11 +654,6 @@ export function MarketOverviewIndexCard({
                 ? "❄️ 매도·조정 우위 (수수료 쿠폰·패키지 물량 소화 구간)"
                 : "⚖️ 시즌·특성별 순환매 및 수급 균형 장세"}
           </span>
-          {overviewIndex.updatedAt && (
-            <span className="font-mono text-[10px] text-slate-500">
-              갱신: {overviewIndex.updatedAt}
-            </span>
-          )}
         </div>
       </div>
     </div>
@@ -659,7 +661,7 @@ export function MarketOverviewIndexCard({
 }
 
 /**
- * 시즌/강화별 등락 히트맵 (Treemap 스타일 그리드, -5% 파란색 ~ +5% 빨간색 컬러 그라데이션)
+ * 시즌/강화별 등락 히트맵 (Treemap 스타일 그리드, 공식 시즌 로고 아이콘 + 컬러 그라데이션)
  */
 export function MarketSeasonGradeHeatmap({
   cells,
@@ -670,7 +672,7 @@ export function MarketSeasonGradeHeatmap({
 }) {
   if (!cells || cells.length === 0) {
     return (
-      <div className="bg-slate-900/80 border border-slate-800 p-5 text-xs text-slate-400">
+      <div className="bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-xl p-5 text-xs text-slate-500 dark:text-slate-400">
         시즌/강화별 히트맵 표본이 없습니다.
       </div>
     );
@@ -678,54 +680,48 @@ export function MarketSeasonGradeHeatmap({
 
   // -5% (파란색/하락) ~ 0% (슬레이트 중립) ~ +5% (빨간색/상승) 컬러 매핑
   const getHeatmapCellTone = (changePct: number) => {
-    if (changePct >= 4.0) {
-      return "bg-rose-600/35 border-rose-400/70 text-rose-100";
+    if (changePct >= 3.5) {
+      return "bg-rose-500/20 dark:bg-rose-600/35 border-rose-400 dark:border-rose-400/70 text-rose-950 dark:text-rose-100";
     }
-    if (changePct >= 2.0) {
-      return "bg-rose-500/25 border-rose-500/50 text-rose-200";
+    if (changePct >= 1.5) {
+      return "bg-rose-500/12 dark:bg-rose-500/25 border-rose-300 dark:border-rose-500/50 text-rose-900 dark:text-rose-200";
     }
-    if (changePct >= 0.5) {
-      return "bg-rose-500/15 border-rose-500/30 text-rose-200";
+    if (changePct >= 0.35) {
+      return "bg-rose-500/8 dark:bg-rose-500/15 border-rose-200 dark:border-rose-500/30 text-rose-900 dark:text-rose-200";
     }
-    if (changePct <= -4.0) {
-      return "bg-sky-600/35 border-sky-400/70 text-sky-100";
+    if (changePct <= -3.5) {
+      return "bg-sky-500/20 dark:bg-sky-600/35 border-sky-400 dark:border-sky-400/70 text-sky-950 dark:text-sky-100";
     }
-    if (changePct <= -2.0) {
-      return "bg-sky-500/25 border-sky-500/50 text-sky-200";
+    if (changePct <= -1.5) {
+      return "bg-sky-500/12 dark:bg-sky-500/25 border-sky-300 dark:border-sky-500/50 text-sky-900 dark:text-sky-200";
     }
-    if (changePct <= -0.5) {
-      return "bg-sky-500/15 border-sky-500/30 text-sky-200";
+    if (changePct <= -0.35) {
+      return "bg-sky-500/8 dark:bg-sky-500/15 border-sky-200 dark:border-sky-500/30 text-sky-900 dark:text-sky-200";
     }
-    return "bg-slate-800/70 border-slate-700 text-slate-200";
+    return "bg-slate-50 dark:bg-slate-800/70 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200";
   };
 
   return (
-    <div className="bg-slate-900/90 border border-slate-800 p-5 space-y-4">
+    <div className="bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4 shadow-xs">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
-          <h3 className="text-base font-bold text-white">
-            시즌 · 강화단계별 시가총액 & 등락률 히트맵 (Treemap Grid)
+          <h3 className="text-base font-bold text-slate-900 dark:text-white">
+            시즌 · 강화단계별 시가총액 & 등락률 히트맵
           </h3>
-          <p className="text-xs text-slate-400 mt-0.5">
-            시가총액(평균가×표본수) 순 상위 시즌·강화 섹터의 7일 등락률을 색상 농도(-5% 파랑 ~ +5% 빨강)로 시각화합니다.
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            각 시즌 공식 카드 아이콘과 최근 7일 등락률(-5% 파랑 ~ +5% 빨강)을 한눈에 비교합니다.
           </p>
         </div>
         {/* Color scale legend */}
         <div className="flex items-center gap-1.5 text-[10px] font-mono shrink-0">
-          <span className="px-1.5 py-0.5 bg-sky-600/35 border border-sky-400/60 text-sky-200">
-            -5%↓ 급락
+          <span className="px-1.5 py-0.5 rounded bg-sky-500/20 dark:bg-sky-600/35 border border-sky-400/60 text-sky-800 dark:text-sky-200 font-bold">
+            -4%↓ 하락
           </span>
-          <span className="px-1.5 py-0.5 bg-sky-500/15 border border-sky-500/30 text-sky-300">
-            -2%
-          </span>
-          <span className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 text-slate-300">
+          <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300">
             0% 보합
           </span>
-          <span className="px-1.5 py-0.5 bg-rose-500/15 border border-rose-500/30 text-rose-300">
-            +2%
-          </span>
-          <span className="px-1.5 py-0.5 bg-rose-600/35 border border-rose-400/60 text-rose-200">
-            +5%↑ 급등
+          <span className="px-1.5 py-0.5 rounded bg-rose-500/20 dark:bg-rose-600/35 border border-rose-400/60 text-rose-800 dark:text-rose-200 font-bold">
+            +4%↑ 상승
           </span>
         </div>
       </div>
@@ -741,23 +737,30 @@ export function MarketSeasonGradeHeatmap({
               onClick={() =>
                 onSelectCell && onSelectCell(cell.seasonCode, cell.grade)
               }
-              className={`p-3 border text-left transition hover:brightness-110 flex flex-col justify-between ${toneClass} ${
+              className={`p-3 rounded-lg border text-left transition hover:brightness-105 cursor-pointer flex flex-col justify-between ${toneClass} ${
                 isLargeTile ? "sm:col-span-2 lg:col-span-2" : ""
               }`}
             >
-              <div className="flex items-center justify-between gap-1">
-                <span className="font-mono font-bold text-xs text-white">
-                  [{cell.seasonCode}] +{cell.grade}강
-                </span>
+              <div className="flex items-center justify-between gap-1.5">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <SeasonBadge
+                    seasonImg={cell.seasonImg}
+                    seasonCode={cell.seasonCode}
+                    className="h-4.5"
+                  />
+                  <span className="font-mono font-black text-xs text-slate-900 dark:text-white truncate">
+                    {cell.seasonCode} +{cell.grade}강
+                  </span>
+                </div>
                 {cell.signalTag && (
-                  <span className="text-[10px] font-semibold px-1.5 py-0.5 bg-slate-950/70 border border-white/10 truncate">
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/80 dark:bg-slate-950/70 border border-slate-300/60 dark:border-white/10 text-slate-800 dark:text-slate-200 truncate shrink-0">
                     {cell.signalTag}
                   </span>
                 )}
               </div>
 
               <div className="my-2">
-                <div className="text-base font-mono font-bold tabular-nums">
+                <div className="text-base font-mono font-black tabular-nums">
                   {cell.changePct7d >= 0 ? "+" : ""}
                   {cell.changePct7d.toFixed(2)}%
                 </div>
@@ -767,7 +770,7 @@ export function MarketSeasonGradeHeatmap({
                 </div>
               </div>
 
-              <div className="text-[11px] font-mono text-amber-300 font-semibold border-t border-white/10 pt-1.5 truncate">
+              <div className="text-[11px] font-mono text-amber-700 dark:text-amber-300 font-bold border-t border-slate-300/50 dark:border-white/10 pt-1.5 truncate">
                 평균 {formatBpKorean(cell.avgBp)} BP
               </div>
             </button>

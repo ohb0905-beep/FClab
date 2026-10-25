@@ -3841,14 +3841,15 @@ export async function analyzeSquadAsync(
     );
     if (!spid) continue;
 
-    let card: PlayerCard | null = store.cards[spid] || null;
-    if (!card || !card.has_full_ability) {
-      card = await crawlPlayerAbility(spid);
+    let rawCard: PlayerCard | null = store.cards[spid] || null;
+    if (!rawCard || !rawCard.has_full_ability) {
+      rawCard = await crawlPlayerAbility(spid);
     }
-    if (!card || !card.salary) {
-      card = await ensurePlayerSalaryAndMeta(spid);
+    if (!rawCard || !rawCard.salary) {
+      rawCard = await ensurePlayerSalaryAndMeta(spid);
     }
-    if (!card) continue;
+    if (!rawCard) continue;
+    const card = enrichPlayerCardMetaSync(rawCard);
 
     const evalRes = evaluateCardEfficiencySync(
       card,
@@ -3861,11 +3862,14 @@ export async function analyzeSquadAsync(
     totalSalary += Number(card.salary || 20);
     totalBp += Number(evalRes.bp || 0);
 
-    if (card.team) teamCounter[card.team] = (teamCounter[card.team] || 0) + 1;
-    if (card.nation)
-      teamCounter[card.nation] = (teamCounter[card.nation] || 0) + 1;
+    const seenForCard = new Set<string>();
+    if (card.team) seenForCard.add(card.team.trim());
+    if (card.nation) seenForCard.add(card.nation.trim());
     for (const tc of card.team_colors || []) {
-      if (tc.name) teamCounter[tc.name] = (teamCounter[tc.name] || 0) + 1;
+      if (tc.name && tc.type !== "관계") seenForCard.add(tc.name.trim());
+    }
+    for (const tcName of seenForCard) {
+      if (tcName) teamCounter[tcName] = (teamCounter[tcName] || 0) + 1;
     }
 
     const core = evalRes.core_score;
@@ -3884,8 +3888,27 @@ export async function analyzeSquadAsync(
       }
     }
 
-    const feelMetrics = evalRes.feelMetrics ||
+    const feelMetrics =
+      evalRes.feelMetrics ||
       computePlayerFeelMetricsSync(card, slotPos, grade, teamColorBonus, true);
+
+    const NEW_TRAIT_NAMES_SET = new Set([
+      "크로스 포쳐",
+      "아크로바틱 피니셔",
+      "레이저 슈터",
+      "스피드스터",
+      "타이탄",
+      "블로커",
+      "패스 마스터",
+      "택배 크로스",
+      "스위퍼 키퍼",
+      "초장거리 슈터",
+      "진공청소기",
+      "철벽",
+    ]);
+    const cardNewTraits = (card.traits || [])
+      .map((t) => t.name)
+      .filter((tName) => NEW_TRAIT_NAMES_SET.has(tName));
 
     placedEvaluations.push({
       slot_id: slot.slot_id || slotPos,
@@ -3894,6 +3917,7 @@ export async function analyzeSquadAsync(
       pid: card.pid,
       name: card.name,
       season_code: card.season_code,
+      season_img: card.season_img,
       thumb_url: card.thumb_url,
       grade,
       salary: card.salary,
@@ -3906,6 +3930,10 @@ export async function analyzeSquadAsync(
       feelScore: feelMetrics.feelScore,
       positionSalaryEfficiency: feelMetrics.positionSalaryEfficiency,
       statTrapBadge: feelMetrics.statTrapBadge,
+      foot: card.foot,
+      traits: card.traits || [],
+      new_traits: cardNewTraits,
+      team_colors: card.team_colors || [],
     });
   }
 
@@ -4372,6 +4400,7 @@ export async function analyzeSquadAsync(
   return {
     formation,
     player_count: placedEvaluations.length,
+    avg_ovr: avg(placedEvaluations.map((x) => x.ovr)),
     total_salary: totalSalary,
     salary_cap: effectiveSalaryCap,
     salary_valid: totalSalary <= effectiveSalaryCap,
@@ -4887,6 +4916,7 @@ const KNOWN_PLAYER_TEAM_COLORS: Record<
     team: string;
     clubs: string[];
     defaultTraits?: string[];
+    newTraits?: string[];
   }
 > = {
   손흥민: {
@@ -4894,90 +4924,105 @@ const KNOWN_PLAYER_TEAM_COLORS: Record<
     team: "토트넘 홋스퍼",
     clubs: ["토트넘 홋스퍼", "바이어 04 레버쿠젠", "함부르크 SV"],
     defaultTraits: ["예리한 감아차기", "스피드 드리블러", "중거리 슛 선호"],
+    newTraits: ["레이저 슈터", "스피드스터"],
   },
   차범근: {
     nation: "대한민국",
     team: "바이어 04 레버쿠젠",
     clubs: ["바이어 04 레버쿠젠", "아인트라흐트 프랑크푸르트", "SV 다름슈타트 98"],
     defaultTraits: ["스피드 드리블러", "파워 헤더", "강철몸"],
+    newTraits: ["스피드스터", "크로스 포쳐"],
   },
   박지성: {
     nation: "대한민국",
     team: "맨체스터 유나이티드",
     clubs: ["맨체스터 유나이티드", "PSV 에인트호번", "퀸즈 파크 레인저스"],
     defaultTraits: ["강철몸", "승부욕", "예리한 감아차기"],
+    newTraits: ["패스 마스터"],
   },
   김민재: {
     nation: "대한민국",
     team: "바이에른 뮌헨",
     clubs: ["바이에른 뮌헨", "SSC 나폴리", "페네르바체 SK", "전북 현대 모터스"],
     defaultTraits: ["파워 헤더", "강철몸", "긴 패스 선호"],
+    newTraits: ["타이탄", "블로커"],
   },
   이강인: {
     nation: "대한민국",
     team: "파리 생제르맹",
     clubs: ["파리 생제르맹", "RCD 마요르카", "발렌시아 CF"],
     defaultTraits: ["테크니컬 드리블러", "플레이메이커", "예리한 감아차기"],
+    newTraits: ["패스 마스터", "택배 크로스"],
   },
   벨링엄: {
     nation: "잉글랜드",
     team: "레알 마드리드",
     clubs: ["레알 마드리드", "보루시아 도르트문트", "버밍엄 시티"],
     defaultTraits: ["플레이메이커", "테크니컬 드리블러", "강철몸"],
+    newTraits: ["패스 마스터", "타이탄"],
   },
   발베르데: {
     nation: "우루과이",
     team: "레알 마드리드",
     clubs: ["레알 마드리드", "데포르티보 라코루냐", "CA 페냐롤"],
     defaultTraits: ["중거리 슛 선호", "스피드 드리블러", "강철몸"],
+    newTraits: ["레이저 슈터", "스피드스터"],
   },
   굴리트: {
     nation: "네덜란드",
     team: "AC 밀란",
     clubs: ["AC 밀란", "첼시 FC", "PSV 에인트호번", "삼프도리아"],
     defaultTraits: ["파워 헤더", "중거리 슛 선호", "플레이메이커", "스피드 드리블러"],
+    newTraits: ["레이저 슈터", "타이탄"],
   },
   로드리: {
     nation: "스페인",
     team: "맨체스터 시티",
     clubs: ["맨체스터 시티", "아틀레티코 마드리드", "비야레알 CF"],
     defaultTraits: ["긴 패스 선호", "중거리 슛 선호", "파워 헤더", "강철몸"],
+    newTraits: ["블로커", "패스 마스터"],
   },
   반데이크: {
     nation: "네덜란드",
     team: "리버풀 FC",
     clubs: ["리버풀 FC", "사우샘프턴 FC", "셀틱 FC", "FC 흐로닝언"],
     defaultTraits: ["파워 헤더", "긴 패스 선호", "강철몸"],
+    newTraits: ["타이탄", "블로커"],
   },
   "테오 에르난데스": {
     nation: "프랑스",
     team: "AC 밀란",
     clubs: ["AC 밀란", "레알 마드리드", "레알 소시에다드", "아틀레티코 마드리드"],
     defaultTraits: ["스피드 드리블러", "얼리 크로스 선호", "강철몸"],
+    newTraits: ["스피드스터", "택배 크로스"],
   },
   테오: {
     nation: "프랑스",
     team: "AC 밀란",
     clubs: ["AC 밀란", "레알 마드리드", "레알 소시에다드"],
     defaultTraits: ["스피드 드리블러", "얼리 크로스 선호", "강철몸"],
+    newTraits: ["스피드스터", "택배 크로스"],
   },
   하키미: {
     nation: "모로코",
     team: "파리 생제르맹",
     clubs: ["파리 생제르맹", "인터 밀란", "보루시아 도르트문트", "레알 마드리드"],
     defaultTraits: ["스피드 드리블러", "얼리 크로스 선호"],
+    newTraits: ["스피드스터", "택배 크로스"],
   },
   쿠르투아: {
     nation: "벨기에",
     team: "레알 마드리드",
     clubs: ["레알 마드리드", "첼시 FC", "아틀레티코 마드리드", "KRC 헹크"],
     defaultTraits: ["GK 적극적 크로스 수비", "GK 멀리 던지기", "GK 1:1 수비"],
+    newTraits: ["스위퍼 키퍼"],
   },
   호나우두: {
     nation: "브라질",
     team: "레알 마드리드",
     clubs: ["레알 마드리드", "인터 밀란", "FC 바르셀로나", "AC 밀란", "PSV 에인트호번"],
     defaultTraits: ["예리한 감아차기", "스피드 드리블러", "테크니컬 드리블러", "아웃사이드 슈팅"],
+    newTraits: ["아크로바틱 피니셔", "스피드스터"],
   },
 };
 
@@ -5031,6 +5076,59 @@ export function enrichPlayerCardMetaSync(card: PlayerCard): PlayerCard {
       icon: "",
       name: tName,
     }));
+  }
+
+  const seenTraitNames = new Set(traits.map((t) => t.name));
+
+  // 신규 특성(집중훈련/고유 신규 특성) 보강
+  const inferredNewTraits: string[] = [];
+  if (matchedInfo?.newTraits) {
+    inferredNewTraits.push(...matchedInfo.newTraits);
+  } else {
+    const pos = (card.primary_position || "ST").toUpperCase();
+    const st = card.stats || {};
+    if (pos === "GK") {
+      inferredNewTraits.push("스위퍼 키퍼");
+    } else if (["ST", "CF"].includes(pos)) {
+      if ((st["헤더"] || 0) >= 110 || (st["위치 선정"] || 0) >= 114) {
+        inferredNewTraits.push("크로스 포쳐");
+      }
+      if ((st["골 결정력"] || 0) >= 113 || (st["발리 슛"] || st["발리슛"] || 0) >= 110) {
+        inferredNewTraits.push("아크로바틱 피니셔");
+      }
+      if ((st["속력"] || 0) >= 114 && inferredNewTraits.length < 2) {
+        inferredNewTraits.push("스피드스터");
+      }
+    } else if (["LW", "RW", "LM", "RM"].includes(pos)) {
+      if ((st["속력"] || 0) >= 112 || seenTraitNames.has("스피드 드리블러")) {
+        inferredNewTraits.push("스피드스터");
+      }
+      if ((st["크로스"] || 0) >= 110 || seenTraitNames.has("얼리 크로스 선호")) {
+        inferredNewTraits.push("택배 크로스");
+      } else if ((st["중거리 슛"] || 0) >= 110 || seenTraitNames.has("예리한 감아차기")) {
+        inferredNewTraits.push("레이저 슈터");
+      }
+    } else if (["CAM", "CM", "CDM"].includes(pos)) {
+      if (pos === "CDM" || (st["가로채기"] || 0) >= 112 || (st["태클"] || 0) >= 112) {
+        inferredNewTraits.push("블로커");
+      }
+      if ((st["중거리 슛"] || 0) >= 112 || (st["슛 파워"] || 0) >= 114) {
+        inferredNewTraits.push("레이저 슈터");
+      } else if ((st["짧은 패스"] || 0) >= 112 || (st["시야"] || 0) >= 112) {
+        inferredNewTraits.push("패스 마스터");
+      }
+    } else if (["CB", "SW"].includes(pos)) {
+      inferredNewTraits.push("타이탄", "블로커");
+    } else if (["LB", "RB", "LWB", "RWB"].includes(pos)) {
+      inferredNewTraits.push("스피드스터", "블로커");
+    }
+  }
+
+  for (const nt of inferredNewTraits.slice(0, 2)) {
+    if (!seenTraitNames.has(nt)) {
+      traits.unshift({ icon: "", name: nt });
+      seenTraitNames.add(nt);
+    }
   }
 
   return {
