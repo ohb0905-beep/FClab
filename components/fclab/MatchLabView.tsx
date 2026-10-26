@@ -26,6 +26,7 @@ import { PlayerAvatar, SeasonBadge } from "./VisualCharts";
 interface MatchLabViewProps {
   nexonKeyConfigured: boolean;
   nexonKeyPreview: string;
+  initialNickname?: string;
   rules?: SystemRules;
   onRulesUpdated?: (rules: SystemRules) => void;
   onImportStartingXIToSquadLab: (slots: SquadSlot[]) => void;
@@ -42,12 +43,13 @@ const MATCH_TYPES = [
 export default function MatchLabView({
   nexonKeyConfigured,
   nexonKeyPreview,
+  initialNickname = "",
   rules = DEFAULT_SYSTEM_RULES,
   onRulesUpdated,
   onImportStartingXIToSquadLab,
   onInspectPlayerInLab,
 }: MatchLabViewProps) {
-  const [nickname, setNickname] = useState("");
+  const [nickname, setNickname] = useState(initialNickname || "");
   const [matchType, setMatchType] = useState<number>(50);
   const [limit, setLimit] = useState<number>(15);
 
@@ -59,56 +61,73 @@ export default function MatchLabView({
   } | null>(null);
   const [result, setResult] = useState<MatchAnalysisResponse | null>(null);
 
-  const handleAnalyzeMatches = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!nickname.trim()) {
-      setErrorInfo({
-        message: "조회할 FC 온라인 구단주 닉네임을 입력해 주세요.",
-      });
-      return;
-    }
+  const executeMatchAnalysis = React.useCallback(
+    async (targetName: string, mType: number, lim: number) => {
+      if (!targetName.trim()) {
+        setErrorInfo({
+          message: "조회할 FC 온라인 구단주 닉네임을 입력해 주세요.",
+        });
+        return;
+      }
 
-    setLoading(true);
-    setErrorInfo(null);
+      setLoading(true);
+      setErrorInfo(null);
 
-    try {
-      const params = new URLSearchParams({
-        nickname: nickname.trim(),
-        matchtype: String(matchType),
-        limit: String(limit),
-      });
-      const res = await fetch(`/api/fclab/v1/match/analyze?${params.toString()}`);
-      const json = await res.json();
+      try {
+        const params = new URLSearchParams({
+          nickname: targetName.trim(),
+          matchtype: String(mType),
+          limit: String(lim),
+        });
+        const res = await fetch(
+          `/api/fclab/v1/match/analyze?${params.toString()}`
+        );
+        const json = await res.json();
 
-      if (!res.ok || !json.ok) {
+        if (!res.ok || !json.ok) {
+          setErrorInfo({
+            message:
+              json.error ||
+              "넥슨 Open API 전적 조회 중 오류가 발생했습니다.",
+            code: json.code,
+            requiresApiKey: Boolean(json.requires_api_key),
+          });
+          setResult(null);
+        } else {
+          setResult({
+            user: json.user,
+            analysis: json.analysis,
+            systemRules: json.systemRules,
+          });
+          if (json.systemRules && onRulesUpdated) {
+            onRulesUpdated(json.systemRules);
+          }
+        }
+      } catch (err) {
         setErrorInfo({
           message:
-            json.error ||
-            "넥슨 Open API 전적 조회 중 오류가 발생했습니다.",
-          code: json.code,
-          requiresApiKey: Boolean(json.requires_api_key),
+            err instanceof Error
+              ? err.message
+              : "서버 측 매치 분석 라우트 호출에 실패했습니다.",
         });
-        setResult(null);
-      } else {
-        setResult({
-          user: json.user,
-          analysis: json.analysis,
-          systemRules: json.systemRules,
-        });
-        if (json.systemRules && onRulesUpdated) {
-          onRulesUpdated(json.systemRules);
-        }
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      setErrorInfo({
-        message:
-          err instanceof Error
-            ? err.message
-            : "서버 측 매치 분석 라우트 호출에 실패했습니다.",
-      });
-    } finally {
-      setLoading(false);
+    },
+    [onRulesUpdated]
+  );
+
+  React.useEffect(() => {
+    if (initialNickname && initialNickname.trim()) {
+      setNickname(initialNickname.trim());
+      executeMatchAnalysis(initialNickname.trim(), matchType, limit);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialNickname]);
+
+  const handleAnalyzeMatches = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await executeMatchAnalysis(nickname, matchType, limit);
   };
 
   const handleExportStartingXI = () => {

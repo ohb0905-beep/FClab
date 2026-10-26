@@ -18,6 +18,14 @@ import {
   PlayerAvatar,
   SeasonBadge,
 } from "./VisualCharts";
+import PlayerSearchFilter, {
+  PlayerFilterState,
+  DEFAULT_PLAYER_FILTER_STATE,
+  PlayerSearchFilterToggleButton,
+  appendFilterParamsToUrl,
+  hasActiveDetailFilters,
+  matchesPlayerFilter,
+} from "./PlayerSearchFilter";
 import {
   UserCheck,
   Compass,
@@ -75,16 +83,6 @@ const POS_LINE_STYLES: Record<
   },
 };
 
-const QUICK_POPULAR_KEYWORDS = [
-  { label: "로드리 (수비형 MF 검증)", query: "로드리" },
-  { label: "굴리트 (육각형 MF 검증)", query: "굴리트" },
-  { label: "벨링엄 (중앙 MF 검증)", query: "벨링엄" },
-  { label: "외데고르 (공격형 MF 검증)", query: "외데고르" },
-  { label: "손흥민 (좋은 체감 검증)", query: "손흥민" },
-  { label: "음바페", query: "음바페" },
-  { label: "호날두", query: "호날두" },
-];
-
 function getPosLine(pos: string): "FW" | "MF" | "DF" | "GK" {
   const p = (pos || "").toUpperCase();
   if (["ST", "CF", "LW", "RW"].includes(p)) return "FW";
@@ -116,7 +114,7 @@ function getFeelBadgeInfo(
       style:
         "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/35",
       dotColor: "bg-emerald-500",
-      desc: "체형(비건장)·피지컬(<186cm·<80kg) 통과 + 8강 5대 체감 평균 128 이상 & 민·밸 124 이상",
+      desc: "체형·피지컬 조건과 인게임 방향 전환·볼 컨트롤 핵심 지표가 모두 최상위권인 부드러운 체감",
     };
   }
   if (resolved === "보통 체감") {
@@ -125,7 +123,7 @@ function getFeelBadgeInfo(
       style:
         "bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/35",
       dotColor: "bg-sky-500",
-      desc: "준수한 방향 전환 반응성 (신장 186cm↑·몸무게 80kg↑·건장 체형은 최대 보통 체감 제한)",
+      desc: "준수한 방향 전환 반응성과 경합 밸런스를 갖춘 표준 체감 등급",
     };
   }
   return {
@@ -133,7 +131,7 @@ function getFeelBadgeInfo(
     style:
       "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/35",
     dotColor: "bg-rose-500",
-    desc: "역동작 및 선회 반경이 큰 피지컬/체형 또는 체감 스탯 하위 구간",
+    desc: "선회 반경이 크거나 방향 전환 시 역동작이 체감되는 유형",
   };
 }
 
@@ -175,8 +173,8 @@ export default function PlayerProfileLabView({
   const systemRules = systemRulesProp || rules || DEFAULT_SYSTEM_RULES;
   const handleInspect = onInspectPlayer || onInspectInPlayerLab;
 
-  const [cardsPool, setCardsPool] = useState<PlayerCard[]>(initialCards);
-  // 요구사항 1: 강화 단계 기본값 8강, 적응도 기본값 0, 초기 진입 시 검색 선수 비워둠
+  const [cardsPool, setCardsPool] = useState<PlayerCard[]>([]);
+  // 강화 단계 기본값 8강, 적응도 기본값 0, 초기 진입 시 빈 상태(Empty State)
   const [selectedSpid, setSelectedSpid] = useState<number>(initialSpid || 0);
   const [compareSpid, setCompareSpid] = useState<number>(
     initialCompareSpid || 0
@@ -185,8 +183,13 @@ export default function PlayerProfileLabView({
   const [teamColorBonus, setTeamColorBonus] = useState<number>(0);
   const [targetPosition, setTargetPosition] = useState<string>("");
 
-  // 초기 검색창 비워둠
+  // 초기 검색창 및 상세 필터 상태
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [filterOpen, setFilterOpen] = useState<boolean>(false);
+  const [detailFilter, setDetailFilter] = useState<PlayerFilterState>({
+    ...DEFAULT_PLAYER_FILTER_STATE,
+  });
+  const [hasSearched, setHasSearched] = useState<boolean>(false);
   const [searchingCards, setSearchingCards] = useState<boolean>(false);
   const [feelFilter, setFeelFilter] = useState<
     "ALL" | "좋은 체감" | "보통 체감" | "무거운 체감"
@@ -207,36 +210,6 @@ export default function PlayerProfileLabView({
   const [showFeelDetail, setShowFeelDetail] = useState<boolean>(false);
   const [showArchetypeDetail, setShowArchetypeDetail] = useState<boolean>(false);
 
-  // 초기 카드 풀 로드 (자동 선수 선택은 하지 않음)
-  useEffect(() => {
-    if (initialCards && initialCards.length > 0) {
-      setCardsPool((prev) => {
-        const map = new Map<number, PlayerCard>();
-        for (const c of prev) map.set(c.spid, c);
-        for (const c of initialCards) map.set(c.spid, c);
-        return Array.from(map.values());
-      });
-      return;
-    }
-    let mounted = true;
-    fetch("/api/fclab/v1/players/search?q=")
-      .then((r) => r.json())
-      .then((data) => {
-        if (mounted && data.ok && Array.isArray(data.cards)) {
-          setCardsPool((prev) => {
-            const map = new Map<number, PlayerCard>();
-            for (const c of prev) map.set(c.spid, c);
-            for (const c of data.cards) map.set(c.spid, c);
-            return Array.from(map.values());
-          });
-        }
-      })
-      .catch(() => {});
-    return () => {
-      mounted = false;
-    };
-  }, [initialCards]);
-
   // 외부에서 initialSpid가 전달된 경우에만 선택
   useEffect(() => {
     if (initialSpid && initialSpid > 0) {
@@ -250,33 +223,38 @@ export default function PlayerProfileLabView({
     }
   }, [initialCompareSpid]);
 
-  // 선수 키워드 검색 핸들러
+  // 선수 키워드 + 상세 필터 검색 핸들러
   const handleSearchPlayers = useCallback(
-    async (overrideKeyword?: string) => {
+    async (overrideKeyword?: string, overrideFilter?: PlayerFilterState) => {
       const q = (
         overrideKeyword !== undefined ? overrideKeyword : searchQuery
       ).trim();
-      if (!q) return;
+      const activeFilter = overrideFilter || detailFilter;
+      if (!q && !hasActiveDetailFilters(activeFilter)) {
+        setCardsPool([]);
+        setHasSearched(false);
+        return;
+      }
       setSearchingCards(true);
+      setHasSearched(true);
       setError(null);
       try {
+        const params = new URLSearchParams({
+          q,
+          crawl: "1",
+        });
+        appendFilterParamsToUrl(params, activeFilter);
         const res = await fetch(
-          `/api/fclab/v1/players/search?q=${encodeURIComponent(q)}`
+          `/api/fclab/v1/players/search?${params.toString()}`
         );
         const data = await res.json();
         if (data.ok && Array.isArray(data.cards) && data.cards.length > 0) {
-          setCardsPool((prev) => {
-            const map = new Map<number, PlayerCard>();
-            for (const c of data.cards) map.set(c.spid, c);
-            for (const c of prev) {
-              if (!map.has(c.spid)) map.set(c.spid, c);
-            }
-            return Array.from(map.values());
-          });
+          setCardsPool(data.cards);
           setSelectedSpid(data.cards[0].spid);
           setTargetPosition("");
         } else {
-          setError(`'${q}' 검색 결과가 없습니다. 다른 선수명을 입력해보세요.`);
+          setCardsPool([]);
+          setError("검색 조건에 일치하는 선수 카드가 없습니다.");
         }
       } catch (err: any) {
         setError(err.message || "선수 검색 중 오류가 발생했습니다.");
@@ -284,7 +262,7 @@ export default function PlayerProfileLabView({
         setSearchingCards(false);
       }
     },
-    [searchQuery]
+    [searchQuery, detailFilter]
   );
 
   // 프로필 분석 API 호출
@@ -334,6 +312,11 @@ export default function PlayerProfileLabView({
   const filteredCardsPool = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return cardsPool.filter((c) => {
+      if (
+        !matchesPlayerFilter(c, detailFilter, systemRules.enhanceOvrBoosts)
+      ) {
+        return false;
+      }
       if (!q) return true;
       return (
         c.name.toLowerCase().includes(q) ||
@@ -341,7 +324,7 @@ export default function PlayerProfileLabView({
         c.primary_position.toLowerCase().includes(q)
       );
     });
-  }, [cardsPool, searchQuery]);
+  }, [cardsPool, searchQuery, detailFilter, systemRules.enhanceOvrBoosts]);
 
   const topArchetype: ArchetypeFitItem | null =
     primaryProfile?.primary_archetype ||
@@ -386,10 +369,10 @@ export default function PlayerProfileLabView({
               </span>
             </div>
             <h2 className="text-xl font-extrabold text-slate-900 dark:text-white mt-1.5 tracking-tight">
-              체형·선회반경 기반 3단계 체감 판정 & 포지션별 유형 분류
+              체형·선회반경 기반 3단계 체감 판정 &amp; 포지션별 유형 분류
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              건장·186cm↑·80kg↑ 피지컬 필터와 8강 5대 체감 컷오프(평균 128·민밸 124)를 적용해 실제 인게임 체감과 선수 유형을 정확히 판별합니다.
+              체형·피지컬 조건과 인게임 핵심 방향 전환 지표를 종합 반영해 실제 인게임 체감 등급과 선수 유형을 정확히 판별합니다.
             </p>
           </div>
 
@@ -487,15 +470,15 @@ export default function PlayerProfileLabView({
           </div>
         </div>
 
-        {/* 선수 실시간 검색 + 메인/비교 선수 선택 */}
+        {/* 선수 실시간 검색 + 상세 필터 + 메인/비교 선수 선택 */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 pt-4">
           {/* 선수 검색창 (초기 비워둠) */}
-          <div className="lg:col-span-4 space-y-1.5">
+          <div className="lg:col-span-5 space-y-1.5">
             <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-              <Search className="w-3.5 h-3.5 text-emerald-500" />
-              선수 검색 (이름 · 시즌 입력)
+              <Search className="w-3.5 h-3.5 text-blue-400" />
+              선수 검색 및 상세 조건 필터
             </label>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap sm:flex-nowrap gap-2">
               <input
                 type="text"
                 value={searchQuery}
@@ -503,14 +486,14 @@ export default function PlayerProfileLabView({
                 onKeyDown={(e) => {
                   if (e.key === "Enter") handleSearchPlayers();
                 }}
-                placeholder="예: 로드리, 굴리트, 손흥민, 벨링엄..."
-                className="flex-1 bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-emerald-500/60"
+                placeholder="선수 이름 입력 후 검색 또는 상세 필터 선택..."
+                className="flex-1 min-w-[160px] bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
               />
               <button
                 type="button"
                 onClick={() => handleSearchPlayers()}
                 disabled={searchingCards}
-                className="px-3.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center gap-1.5 shrink-0 disabled:opacity-50 cursor-pointer"
+                className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition flex items-center gap-1.5 shrink-0 disabled:opacity-50 cursor-pointer"
               >
                 {searchingCards ? (
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -519,6 +502,11 @@ export default function PlayerProfileLabView({
                 )}
                 검색
               </button>
+              <PlayerSearchFilterToggleButton
+                isOpen={filterOpen}
+                onToggle={() => setFilterOpen((v) => !v)}
+                filter={detailFilter}
+              />
             </div>
           </div>
 
@@ -534,9 +522,9 @@ export default function PlayerProfileLabView({
                 setSelectedSpid(Number(e.target.value));
                 setTargetPosition("");
               }}
-              className="w-full bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500/60"
+              className="w-full bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-sm font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500/60"
             >
-              <option value={0}>-- 분석할 선수를 선택하거나 검색하세요 --</option>
+              <option value={0}>-- 분석할 선수를 검색하여 선택하세요 --</option>
               {filteredCardsPool.map((c) => (
                 <option key={c.spid} value={c.spid}>
                   [{c.season_code}] {c.name} ({c.primary_position} · 기본 OVR{" "}
@@ -547,11 +535,11 @@ export default function PlayerProfileLabView({
           </div>
 
           {/* 1:1 비교 선수 선택 */}
-          <div className="lg:col-span-4 space-y-1.5">
+          <div className="lg:col-span-3 space-y-1.5">
             <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
               <span className="flex items-center gap-1.5">
                 <ArrowLeftRight className="w-3.5 h-3.5 text-amber-500" />
-                1:1 비교 대상 카드 (선택사항)
+                1:1 비교 대상 (선택)
               </span>
               {compareSpid > 0 && (
                 <button
@@ -559,7 +547,7 @@ export default function PlayerProfileLabView({
                   onClick={() => setCompareSpid(0)}
                   className="text-[11px] text-rose-500 hover:underline font-semibold cursor-pointer"
                 >
-                  비교 해제
+                  해제
                 </button>
               )}
             </label>
@@ -567,40 +555,49 @@ export default function PlayerProfileLabView({
               value={compareSpid}
               onChange={(e) => setCompareSpid(Number(e.target.value))}
               disabled={!selectedSpid}
-              className="w-full bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-amber-500/60 disabled:opacity-50"
+              className="w-full bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-sm font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-amber-500/60 disabled:opacity-50"
             >
-              <option value={0}>-- 비교 선수 없음 (단독 정밀 진단) --</option>
+              <option value={0}>-- 비교 선수 없음 --</option>
               {cardsPool
                 .filter((c) => c.spid !== selectedSpid)
                 .map((c) => (
                   <option key={c.spid} value={c.spid}>
-                    [{c.season_code}] {c.name} ({c.primary_position} · 기본 OVR{" "}
-                    {c.ovr} · 급여 {c.salary})
+                    [{c.season_code}] {c.name} ({c.primary_position} · OVR{" "}
+                    {c.ovr})
                   </option>
                 ))}
             </select>
           </div>
         </div>
 
-        {/* 빠른 검증용 추천 선수 칩 */}
-        <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-slate-100 dark:border-slate-800/60">
-          <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
-            빠른 선수 불러오기:
-          </span>
-          {QUICK_POPULAR_KEYWORDS.map((item) => (
-            <button
-              key={item.query}
-              type="button"
-              onClick={() => {
-                setSearchQuery(item.query);
-                handleSearchPlayers(item.query);
-              }}
-              className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-indigo-500/15 text-slate-700 hover:text-indigo-600 dark:bg-slate-800/80 dark:text-slate-300 dark:hover:text-indigo-300 border border-slate-200/80 dark:border-slate-700/70 transition cursor-pointer"
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+        <PlayerSearchFilter
+          isOpen={filterOpen}
+          filter={detailFilter}
+          onChange={(next) => {
+            setDetailFilter(next);
+            if (next.grade !== grade) setGrade(next.grade);
+            if (next.adaptBonus !== teamColorBonus) {
+              setTeamColorBonus(next.adaptBonus);
+            }
+          }}
+          onApply={(applied) => {
+            const target = applied || detailFilter;
+            setGrade(target.grade || 8);
+            setTeamColorBonus(target.adaptBonus || 0);
+            handleSearchPlayers(searchQuery, target);
+          }}
+          onReset={() => {
+            setGrade(8);
+            setTeamColorBonus(0);
+            setCardsPool([]);
+            setSelectedSpid(0);
+            setCompareSpid(0);
+            setPrimaryCard(null);
+            setPrimaryProfile(null);
+            setHasSearched(false);
+          }}
+          maxEnhanceLevel={systemRules.maxEnhanceLevel}
+        />
       </div>
 
       {/* 에러 배너 */}
@@ -613,89 +610,92 @@ export default function PlayerProfileLabView({
 
       {/* 초기 빈 상태 (선수 미선택 시) */}
       {selectedSpid === 0 && !loading && (
-        <div className="bg-white dark:bg-[#131B2E] border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center shadow-sm">
-          <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mx-auto mb-3">
-            <Compass className="w-6 h-6 text-indigo-500" />
+        <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-2xl p-10 text-center shadow-sm">
+          <div className="w-12 h-12 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center mx-auto mb-3">
+            <Compass className="w-6 h-6 text-blue-400" />
           </div>
           <h3 className="text-lg font-extrabold text-slate-900 dark:text-white">
-            분석할 선수를 검색하거나 선택해주세요
+            분석할 선수를 검색하거나 상세 필터로 조회해 주세요
           </h3>
           <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xl mx-auto mt-1.5 leading-relaxed">
-            초기 설정은 <strong>+8강 · 적응도 0</strong> 기준입니다. 상단 검색창에서{" "}
-            <strong>로드리, 굴리트, 손흥민, 벨링엄</strong> 등을 검색하거나 아래 카드를 클릭해 즉시 체감 등급과 포지션 유형을 확인하세요.
+            초기 설정은 <strong>+8강 · 적응도 0</strong> 기준입니다. 상단 검색창 또는{" "}
+            <strong>[상세 필터 ▾]</strong>를 통해 선수를 검색하면 인게임 3단계 체감 등급, 포지션별 유형 적합도, 그리고 동일 팀컬러 가성비 대체재를 즉시 진단합니다.
           </p>
 
-          {/* 체감 등급 필터 & 빠른 카드 그리드 */}
-          <div className="flex flex-wrap items-center justify-center gap-2 mt-5">
-            {(["ALL", "좋은 체감", "보통 체감", "무거운 체감"] as const).map(
-              (f) => (
-                <button
-                  key={f}
-                  type="button"
-                  onClick={() => setFeelFilter(f)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer ${
-                    feelFilter === f
-                      ? "bg-indigo-600 text-white border-indigo-600"
-                      : "bg-slate-50 dark:bg-[#0B0F17] text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-indigo-400"
-                  }`}
-                >
-                  {f === "ALL" ? "전체 선수 보기" : f}
-                </button>
-              )
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-5 text-left">
-            {cardsPool
-              .filter((c) => {
-                if (feelFilter === "ALL") return true;
-                return computeCardQuickFeelLabel(c, boost8) === feelFilter;
-              })
-              .slice(0, 8)
-              .map((c) => {
-                const label = computeCardQuickFeelLabel(c, boost8);
-                const bInfo = getFeelBadgeInfo(label);
-
-                return (
-                  <button
-                    key={c.spid}
-                    type="button"
-                    onClick={() => setSelectedSpid(c.spid)}
-                    className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 hover:border-indigo-500/50 transition flex items-center justify-between gap-2 group cursor-pointer"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <PlayerAvatar
-                        spid={c.spid}
-                        pid={c.pid}
-                        thumbUrl={c.thumb_url}
-                        name={c.name}
-                        size={38}
-                      />
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <SeasonBadge
-                            seasonImg={c.season_img}
-                            seasonCode={c.season_code}
-                          />
-                          <span className="text-sm font-extrabold text-slate-900 dark:text-white truncate group-hover:text-indigo-500 transition">
-                            {c.name}
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                          {c.primary_position} · {c.height}cm/{c.weight}kg (
-                          {c.body_type})
-                        </div>
-                      </div>
-                    </div>
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 ${bInfo.style}`}
+          {hasSearched && filteredCardsPool.length > 0 && (
+            <>
+              <div className="flex flex-wrap items-center justify-center gap-2 mt-5">
+                {(["ALL", "좋은 체감", "보통 체감", "무거운 체감"] as const).map(
+                  (f) => (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => setFeelFilter(f)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                        feelFilter === f
+                          ? "bg-blue-600 text-white border-blue-600"
+                          : "bg-slate-50 dark:bg-[#0B1120] text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-blue-400"
+                      }`}
                     >
-                      {bInfo.label}
-                    </span>
-                  </button>
-                );
-              })}
-          </div>
+                      {f === "ALL" ? "전체 검색 결과" : f}
+                    </button>
+                  )
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-5 text-left">
+                {filteredCardsPool
+                  .filter((c) => {
+                    if (feelFilter === "ALL") return true;
+                    return computeCardQuickFeelLabel(c, boost8) === feelFilter;
+                  })
+                  .slice(0, 8)
+                  .map((c) => {
+                    const label = computeCardQuickFeelLabel(c, boost8);
+                    const bInfo = getFeelBadgeInfo(label);
+
+                    return (
+                      <button
+                        key={c.spid}
+                        type="button"
+                        onClick={() => setSelectedSpid(c.spid)}
+                        className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-800 hover:border-blue-500/50 transition flex items-center justify-between gap-2 group cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <PlayerAvatar
+                            spid={c.spid}
+                            pid={c.pid}
+                            thumbUrl={c.thumb_url}
+                            name={c.name}
+                            size={38}
+                          />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <SeasonBadge
+                                seasonImg={c.season_img}
+                                seasonCode={c.season_code}
+                              />
+                              <span className="text-sm font-extrabold text-slate-900 dark:text-white truncate group-hover:text-blue-400 transition">
+                                {c.name}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                              {c.primary_position} · {c.height}cm/{c.weight}kg (
+                              {c.body_type})
+                            </div>
+                          </div>
+                        </div>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 ${bInfo.style}`}
+                        >
+                          {bInfo.label}
+                        </span>
+                      </button>
+                    );
+                  })}
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -906,7 +906,7 @@ export default function PlayerProfileLabView({
                         인게임 체감 3단계 판정 (좋은 체감 / 보통 체감 / 무거운 체감)
                       </span>
                       <h3 className="text-lg font-extrabold text-slate-900 dark:text-white mt-0.5">
-                        체형·피지컬 필터 & 8강 5대 체감 컷오프 검증
+                        체형·피지컬 &amp; 방향 전환 반응성 종합 진단
                       </h3>
                     </div>
                     <span
@@ -928,15 +928,15 @@ export default function PlayerProfileLabView({
                     >
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                          ① 체형·피지컬 필터
+                          ① 체형·피지컬 적합성
                         </span>
                         {!feelMetrics.isPhysicalExcludedFromGoodFeel ? (
                           <span className="text-[11px] font-extrabold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> 통과
+                            <CheckCircle2 className="w-3.5 h-3.5" /> 경쾌한 선회
                           </span>
                         ) : (
                           <span className="text-[11px] font-extrabold text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                            <XCircle className="w-3.5 h-3.5" /> 좋은 체감 제외
+                            <XCircle className="w-3.5 h-3.5" /> 중량급 선회 제한
                           </span>
                         )}
                       </div>
@@ -945,11 +945,11 @@ export default function PlayerProfileLabView({
                         {primaryCard.weight}kg
                       </div>
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                        기준: 비건장 체형 & 신장 186cm 미만 & 몸무게 80kg 미만
+                        신장·체중·체형에 따른 인게임 물리 선회 반경 반영
                       </p>
                     </div>
 
-                    {/* 관문 2: 8강(적응도 0) 5대 체감 스탯 컷오프 */}
+                    {/* 관문 2: 체감 코어 밸런스 */}
                     <div
                       className={`p-3.5 rounded-xl border ${
                         (feelMetrics.feel5Avg8 ?? 0) >= 128 &&
@@ -961,22 +961,22 @@ export default function PlayerProfileLabView({
                     >
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                          ② 8강 체감 스탯 컷오프
+                          ② 코어 체감 스탯 밸런스
                         </span>
                         {(feelMetrics.feel5Avg8 ?? 0) >= 128 &&
                         (feelMetrics.agility8 ?? 0) >= 124 &&
                         (feelMetrics.balance8 ?? 0) >= 124 ? (
                           <span className="text-[11px] font-extrabold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> 통과
+                            <CheckCircle2 className="w-3.5 h-3.5" /> 최상위권 충족
                           </span>
                         ) : (
                           <span className="text-[11px] font-extrabold text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                            <XCircle className="w-3.5 h-3.5" /> 기준 미달
+                            <CheckCircle2 className="w-3.5 h-3.5" /> 표준 밸런스
                           </span>
                         )}
                       </div>
                       <div className="text-xs font-semibold text-slate-900 dark:text-white mt-1.5">
-                        5대 평균{" "}
+                        체감 코어 평균{" "}
                         <span className="text-indigo-600 dark:text-indigo-400 font-extrabold">
                           {feelMetrics.feel5Avg8 ?? "-"}
                         </span>{" "}
@@ -984,7 +984,7 @@ export default function PlayerProfileLabView({
                         {feelMetrics.balance8 ?? "-"})
                       </div>
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                        기준: 8강 평균 128↑ & 민첩성 124↑ & 밸런스 124↑
+                        민첩성·밸런스·드리블·볼컨트롤·반응속도 종합 평가
                       </p>
                     </div>
                   </div>
@@ -1058,7 +1058,7 @@ export default function PlayerProfileLabView({
                     className="text-xs font-bold text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-300 flex items-center gap-1 cursor-pointer"
                   >
                     <Info className="w-3.5 h-3.5" />
-                    체감 판정 기준 자세히 보기
+                    체감 판정 기준 안내 보기
                     {showFeelDetail ? (
                       <ChevronUp className="w-3.5 h-3.5" />
                     ) : (
@@ -1068,13 +1068,13 @@ export default function PlayerProfileLabView({
                   {showFeelDetail && (
                     <div className="mt-2.5 p-3 rounded-xl bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 space-y-1.5 leading-relaxed">
                       <p>
-                        • <strong>좋은 체감:</strong> 체형이 마름/고유이거나 경량 보통(신장 186cm 미만 & 몸무게 80kg 미만)이면서, 8강 기준 5대 체감 스탯(민첩성·밸런스·드리블·볼컨트롤·반응속도) 가중 평균이 <strong>128 이상</strong>이고 민첩성·밸런스가 모두 <strong>124 이상</strong>일 때만 부여됩니다.
+                        • <strong>좋은 체감:</strong> 체형과 피지컬 조건이 유연하며 민첩성·밸런스·드리블·볼컨트롤·반응속도가 모두 최상위권을 충족할 때 부여됩니다.
                       </p>
                       <p>
-                        • <strong>보통 체감:</strong> 건장 체형이거나 186cm 이상/80kg 이상인 선수는 스탯이 아무리 높아도 인게임 선회 반경 한계로 인해 최대 <strong>보통 체감</strong>까지만 부여됩니다.
+                        • <strong>보통 체감:</strong> 장신·중량급 피지컬이거나 건장 체형인 선수는 스탯이 높아도 인게임 선회 반경 특성상 최대 <strong>보통 체감</strong>으로 판정됩니다.
                       </p>
                       <p>
-                        • <strong>무거운 체감:</strong> 장신·중량 피지컬에 민첩/밸런스가 낮아 방향 전환 시 역동작이 체감되는 유형입니다.
+                        • <strong>무거운 체감:</strong> 큰 체격 조건에 방향 전환 지표가 낮아 급격한 턴 동작 시 묵직한 역동작이 체감되는 유형입니다.
                       </p>
                     </div>
                   )}
@@ -1140,7 +1140,7 @@ export default function PlayerProfileLabView({
                                 </span>
                                 {arch.is_complete_type && (
                                   <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
-                                    민·밸 124↑ 필수
+                                    완성형
                                   </span>
                                 )}
                               </div>
@@ -1189,7 +1189,7 @@ export default function PlayerProfileLabView({
                   className="text-xs font-bold text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-300 flex items-center gap-1 cursor-pointer"
                 >
                   <Info className="w-3.5 h-3.5" />
-                  유형 판별 및 완성형(민·밸 124↑) 기준 자세히 보기
+                  유형 판별 및 완성형 진단 상세 보기
                   {showArchetypeDetail ? (
                     <ChevronUp className="w-3.5 h-3.5" />
                   ) : (
@@ -1201,10 +1201,10 @@ export default function PlayerProfileLabView({
               {showArchetypeDetail && (
                 <div className="mt-2.5 p-3.5 rounded-xl bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 space-y-2 leading-relaxed">
                   <p>
-                    • <strong>수비형 미드필더 (CDM 특화):</strong> 주포지션(CDM) 가중치 + 수비 핵심 스탯(가로채기·태클·대인수비·몸싸움) + 피지컬(신장·체중)을 종합 반영합니다. 로드리처럼 패스/중거리 스탯이 높아도 수비·피지컬 비중이 높고 체감이 묵직한 홀딩 MF는 공격형 미드필더로 오분류되지 않고 <strong>수비형 미드필더</strong>로 정확히 판정됩니다.
+                    • <strong>수비형 미드필더 (CDM 특화):</strong> 주포지션(CDM) 가중치 + 수비 핵심 스탯(가로채기·태클·대인수비·몸싸움) + 피지컬을 종합 반영합니다. 로드리처럼 패스/중거리 스탯이 높아도 수비·피지컬 비중이 높은 홀딩 MF는 <strong>수비형 미드필더</strong>가 1순위로 판정됩니다.
                   </p>
                   <p>
-                    • <strong>육각형 미드필더 / 완성형 판정:</strong> 공·수·패스·피지컬·스태미너 기준 통과뿐만 아니라 <strong>8강 기준 민첩성 ≥ 124 & 밸런스 ≥ 124</strong>를 동시에 충족해야 진정한 완성형(육각형)으로 인정됩니다.
+                    • <strong>육각형 미드필더 / 완성형 판정:</strong> 공·수·패스·피지컬·스태미너 밸런스와 인게임 탈압박 체감 코어 요건을 동시에 충족할 때 완성형으로 인정됩니다.
                   </p>
                   <div className="pt-2 border-t border-slate-200 dark:border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {primaryProfile.complete_evaluation.criteria.map((c) => (

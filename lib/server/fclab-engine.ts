@@ -25,6 +25,14 @@ import {
   expandEnhanceOvrBoosts,
   getEnhanceOvrBoost,
   formatBpKorean,
+  OFFICIAL_NEW_TRAIT_NAMES_17,
+  VALID_OFFICIAL_TRAIT_SET,
+  BANNED_FAKE_TRAIT_SET,
+  BANNED_DUMMY_TEAM_COLORS,
+  getTeamColorLogoUrl,
+  OFFICIAL_NEXON_SEASONS,
+  OFFICIAL_DATACENTER_TEAM_COLORS,
+  findOfficialTeamColorByNameOrId,
 } from "@/lib/fclab-types";
 
 const USER_AGENT =
@@ -744,6 +752,15 @@ function loadStore(): FClabStore {
           }
         }
       }
+      if (parsed.cards && typeof parsed.cards === "object") {
+        for (const spidKey of Object.keys(parsed.cards)) {
+          const numKey = Number(spidKey);
+          const rawCard = parsed.cards[numKey];
+          if (rawCard) {
+            parsed.cards[numKey] = enrichPlayerCardMetaSync(rawCard);
+          }
+        }
+      }
       memoryStore = parsed;
       return memoryStore;
     }
@@ -872,6 +889,24 @@ export function getServerNexonApiKeyPreview(): string {
   return `${key.slice(0, 9)}...${key.slice(-4)}`;
 }
 
+const DATACENTER_POSITION_CODE_MAP: Record<string, string> = {
+  ST: ",24,25,26,",
+  CF: ",20,21,22,",
+  LW: ",27,",
+  RW: ",23,",
+  CM: ",13,14,15,",
+  CAM: ",17,18,19,",
+  CDM: ",9,10,11,",
+  LM: ",16,",
+  RM: ",12,",
+  CB: ",1,4,5,6,",
+  RB: ",3,",
+  LB: ",7,",
+  RWB: ",2,",
+  LWB: ",8,",
+  GK: ",0,",
+};
+
 export async function syncNexonMetadata(force = false): Promise<{
   status: string;
   seasons: number;
@@ -880,9 +915,20 @@ export async function syncNexonMetadata(force = false): Promise<{
   matchtypes: number;
 }> {
   const store = loadStore();
+  // Always ensure all 153 official seasons from OFFICIAL_NEXON_SEASONS are present in store.seasons
+  for (const s of OFFICIAL_NEXON_SEASONS) {
+    if (!store.seasons[s.seasonId]) {
+      store.seasons[s.seasonId] = {
+        class_name: s.fullName,
+        season_code: s.code,
+        season_img: s.seasonImg,
+      };
+    }
+  }
+
   if (
     !force &&
-    Object.keys(store.seasons).length > 0 &&
+    Object.keys(store.seasons).length >= 150 &&
     Object.keys(store.positions).length > 0
   ) {
     return {
@@ -973,17 +1019,95 @@ export async function syncNexonMetadata(force = false): Promise<{
   };
 }
 
+export interface CrawlPlayerListOptions {
+  seasons?: string[];
+  teamColors?: string[];
+  position?: string;
+  ovrMin?: string;
+  ovrMax?: string;
+  salaryMin?: string;
+  salaryMax?: string;
+}
+
 export async function crawlPlayerList(
   playerName: string,
-  limit = 40
+  limit = 40,
+  filterOpts?: CrawlPlayerListOptions
 ): Promise<PlayerCard[]> {
   const cleanName = playerName.trim();
-  if (!cleanName) return [];
+  const hasFilterOpts =
+    Boolean(filterOpts?.seasons?.length) ||
+    Boolean(filterOpts?.teamColors?.length) ||
+    Boolean(filterOpts?.position && filterOpts.position !== "ALL") ||
+    Boolean(filterOpts?.ovrMin) ||
+    Boolean(filterOpts?.ovrMax) ||
+    Boolean(filterOpts?.salaryMin) ||
+    Boolean(filterOpts?.salaryMax);
+
+  if (!cleanName && !hasFilterOpts) return [];
 
   const store = loadStore();
   await syncNexonMetadata(false);
 
-  const formBody = new URLSearchParams({ strPlayerName: cleanName }).toString();
+  const paramsObj: Record<string, string> = {
+    strPlayerName: cleanName,
+  };
+  if (filterOpts?.ovrMin) paramsObj.n4OvrMin = filterOpts.ovrMin;
+  if (filterOpts?.ovrMax) paramsObj.n4OvrMax = filterOpts.ovrMax;
+  if (filterOpts?.salaryMin) paramsObj.n4SalaryMin = filterOpts.salaryMin;
+  if (filterOpts?.salaryMax) paramsObj.n4SalaryMax = filterOpts.salaryMax;
+
+  // Map seasons to official strSeason=",866,854," format
+  if (filterOpts?.seasons && filterOpts.seasons.length > 0) {
+    const seasonIds: number[] = [];
+    for (const rawS of filterOpts.seasons) {
+      const normS = rawS.replace(/\s+/g, "").toUpperCase();
+      const foundCatalog = OFFICIAL_NEXON_SEASONS.find(
+        (item) =>
+          item.code.replace(/\s+/g, "").toUpperCase() === normS ||
+          item.label.replace(/\s+/g, "").toUpperCase() === normS ||
+          String(item.seasonId) === normS
+      );
+      if (foundCatalog) {
+        seasonIds.push(foundCatalog.seasonId);
+      } else {
+        for (const [sidStr, sMeta] of Object.entries(store.seasons)) {
+          if (
+            sMeta.season_code.replace(/\s+/g, "").toUpperCase() === normS ||
+            sidStr === normS
+          ) {
+            seasonIds.push(Number(sidStr));
+          }
+        }
+      }
+    }
+    if (seasonIds.length > 0) {
+      paramsObj.strSeason = `,${Array.from(new Set(seasonIds)).join(",")},`;
+    }
+  }
+
+  // Map position to official Datacenter strPosition=",24,25,26," format
+  if (filterOpts?.position && filterOpts.position !== "ALL") {
+    const posCode = DATACENTER_POSITION_CODE_MAP[filterOpts.position.toUpperCase()];
+    if (posCode) {
+      paramsObj.strPosition = posCode;
+    }
+  }
+
+  // Map teamColor to official Datacenter teamcolorid
+  let matchedOfficialTc: import("@/lib/fclab-types").OfficialTeamColorCatalogItem | undefined;
+  if (filterOpts?.teamColors && filterOpts.teamColors.length > 0) {
+    for (const tcRaw of filterOpts.teamColors) {
+      const foundTc = findOfficialTeamColorByNameOrId(tcRaw);
+      if (foundTc) {
+        matchedOfficialTc = foundTc;
+        paramsObj.teamcolorid = String(foundTc.id);
+        break;
+      }
+    }
+  }
+
+  const formBody = new URLSearchParams(paramsObj).toString();
   try {
     const resp = await fetch("https://fconline.nexon.com/datacenter/PlayerList", {
       method: "POST",
@@ -1019,7 +1143,9 @@ export async function crawlPlayerList(
       const mSimg = block.match(/<div class="season"><img src="([^"]+)"/);
       let seasonImg = mSimg ? mSimg[1].trim() : "";
       const mScode = seasonImg.match(/\/([^/]+)\.png/);
-      const seasonCode = mScode ? mScode[1] : String(seasonId);
+      const seasonCode = mScode
+        ? mScode[1].toUpperCase()
+        : store.seasons[seasonId]?.season_code?.toUpperCase() || String(seasonId);
       const sMeta = store.seasons[seasonId];
       const seasonName = sMeta ? sMeta.class_name : seasonCode;
       if (!seasonImg && sMeta?.season_img) {
@@ -1071,6 +1197,24 @@ export async function crawlPlayerList(
       const ratingCount = mScore ? Number(mScore[2]) : 0;
 
       const existing = store.cards[spid];
+      const existingTcList = [...(existing?.team_colors || [])];
+      if (matchedOfficialTc) {
+        const tcTypeLabel =
+          matchedOfficialTc.category === "feature"
+            ? "특성"
+            : matchedOfficialTc.category === "nation"
+            ? "국가대표"
+            : "소속 클럽";
+        if (!existingTcList.some((x) => x.id === matchedOfficialTc!.id || x.name === matchedOfficialTc!.name)) {
+          existingTcList.push({
+            id: matchedOfficialTc.id,
+            type: tcTypeLabel,
+            name: matchedOfficialTc.name,
+            logoUrl: matchedOfficialTc.img,
+          });
+        }
+      }
+
       const mergedCard: PlayerCard = {
         spid,
         pid,
@@ -1090,10 +1234,14 @@ export async function crawlPlayerList(
         weight: existing?.weight || 75,
         body_type: existing?.body_type || "보통",
         birth: existing?.birth || "",
-        team: existing?.team || "",
-        nation: existing?.nation || "",
+        team:
+          existing?.team ||
+          (matchedOfficialTc?.category === "club" ? matchedOfficialTc.name : ""),
+        nation:
+          existing?.nation ||
+          (matchedOfficialTc?.category === "nation" ? matchedOfficialTc.name : ""),
         traits: existing?.traits || [],
-        team_colors: existing?.team_colors || [],
+        team_colors: existingTcList,
         position_ovrs: existing?.position_ovrs || {},
         stats: existing?.stats || {},
         prices,
@@ -1175,7 +1323,9 @@ export async function crawlPlayerAbility(
     const mSimg = cleanHtml.match(/<div class="season">\s*<img src="([^"]+)"/);
     const seasonImg = mSimg ? mSimg[1].trim() : existing?.season_img || "";
     const mScode = seasonImg.match(/\/([^/]+)\.png/);
-    const seasonCode = mScode ? mScode[1] : existing?.season_code || String(seasonId);
+    const seasonCode = mScode
+      ? mScode[1].toUpperCase()
+      : existing?.season_code?.toUpperCase() || String(seasonId);
     const sMeta = store.seasons[seasonId];
     const seasonName = sMeta ? sMeta.class_name : seasonCode;
 
@@ -1239,22 +1389,27 @@ export async function crawlPlayerAbility(
     const nation = mNation ? mNation[1].trim() : "";
 
     const traits: { icon: string; name: string }[] = [];
-    const skillWrap = cleanHtml.match(
-      /<div class="skill_wrap">([\s\S]*?)<\/div>\s*<div class="en_selector_wrap">/
-    );
+    const skillWrap =
+      cleanHtml.match(
+        /<div class="skill_wrap">([\s\S]*?)<\/div>\s*<div class="en_selector_wrap">/
+      ) || cleanHtml.match(/<div class="skill_wrap">([\s\S]*?)<\/div>/);
     if (skillWrap) {
       const trReg =
-        /<img src="([^"]+)"[^>]*>[\s\S]*?<span class="desc">([^<]+)<\/span>/g;
+        /<img[^>]*src="([^"]+)"[^>]*>[\s\S]*?<span class="desc">([^<]+)<\/span>/g;
       let tm: RegExpExecArray | null;
       while ((tm = trReg.exec(skillWrap[1])) !== null) {
-        traits.push({ icon: tm[1].trim(), name: tm[2].trim() });
+        const iconUrl = tm[1].trim();
+        const trName = tm[2].trim();
+        if (trName && iconUrl.startsWith("http") && !BANNED_FAKE_TRAIT_SET.has(trName)) {
+          traits.push({ icon: iconUrl, name: trName });
+        }
       }
     }
 
-    const teamColors: { id: string; type: string; name: string }[] = [];
-    for (const [tcType, clsPrefix] of [
-      ["소속", "tdefault"],
-      ["관계", "tspecial"],
+    const teamColors: { id: string; type: string; name: string; logoUrl?: string }[] = [];
+    for (const [rawTcGroup, clsPrefix] of [
+      ["affiliation", "tdefault"],
+      ["feature", "tspecial"],
     ] as const) {
       const tcReg = new RegExp(
         `<a class="selector_item ${clsPrefix}(\\d+)"[^>]*>([^<]+)<\\/a>`,
@@ -1266,9 +1421,23 @@ export async function crawlPlayerAbility(
         const tcName = tcm[2].trim();
         if (
           tcId !== "0" &&
-          !["소속 팀컬러", "관계 팀컬러", "강화 팀컬러"].includes(tcName)
+          tcId !== "90000000" &&
+          tcName &&
+          !BANNED_DUMMY_TEAM_COLORS.has(tcName)
         ) {
-          teamColors.push({ id: tcId, type: tcType, name: tcName });
+          const officialTc = findOfficialTeamColorByNameOrId(tcId) || findOfficialTeamColorByNameOrId(tcName);
+          const resolvedType =
+            rawTcGroup === "feature" || officialTc?.category === "feature"
+              ? "특성"
+              : officialTc?.category === "nation" || tcName === nation
+              ? "국가대표"
+              : "소속 클럽";
+          teamColors.push({
+            id: tcId,
+            type: resolvedType,
+            name: tcName,
+            logoUrl: officialTc?.img || getTeamColorLogoUrl(tcName, resolvedType, tcId),
+          });
         }
       }
     }
@@ -2101,28 +2270,24 @@ export function computePlayerFeelMetricsSync(
     statTrapBadge = "CHEAT_KEY";
     statTrapLabel = "좋은 체감";
     feelGradeLabel = "좋은 체감";
-    feelVerdictReason = `${bodyType} 체형(${height}cm/${weight}kg) + 8강 기준 체감 5대 스탯 가중평균 ${feel5Avg8} (민첩 ${agility8}·밸런스 ${balance8})으로 부드러운 선회 반경 기준을 모두 통과했습니다.`;
+    feelVerdictReason = `${bodyType} 체형(${height}cm/${weight}kg)과 우수한 방향 전환·볼 컨트롤 능력이 결합되어 인게임에서 매끄럽고 가벼운 선회 반경을 보여줍니다.`;
   } else if (isHeavyClunkyFeel) {
     statTrapBadge = "STAT_TRAP";
     statTrapLabel = "무거운 체감";
     feelGradeLabel = "무거운 체감";
     if (isPhysicalExcludedFromGoodFeel) {
-      feelVerdictReason = `체격 조건(${height}cm/${weight}kg/${bodyType})으로 선회 반경이 크고 8강 민첩성(${agility8})·밸런스(${balance8}) 대비 역동작이 체감되는 무거운 유형입니다.`;
+      feelVerdictReason = `체격 조건(${height}cm/${weight}kg/${bodyType})으로 인해 선회 반경이 크고 방향 전환 시 묵직한 역동작이 체감되는 유형입니다.`;
     } else {
-      feelVerdictReason = `8강 기준 체감 5대 스탯 평균(${feel5Avg8}) 또는 민첩성(${agility8})·밸런스(${balance8})가 낮아 방향 전환이 둔중한 편입니다.`;
+      feelVerdictReason = `방향 전환 및 세밀한 볼 컨트롤 지표가 다소 낮아 급격한 턴 동작에서 둔중함이 느껴질 수 있는 유형입니다.`;
     }
   } else {
     statTrapBadge = "NORMAL";
     statTrapLabel = "보통 체감";
     feelGradeLabel = "보통 체감";
     if (isPhysicalExcludedFromGoodFeel) {
-      const physReasons: string[] = [];
-      if (bodyType.includes("건장")) physReasons.push(`건장 체형`);
-      if (height >= 186) physReasons.push(`신장 ${height}cm(≥186cm)`);
-      if (weight >= 80) physReasons.push(`몸무게 ${weight}kg(≥80kg)`);
-      feelVerdictReason = `${physReasons.join(" · ")} 피지컬 필터 적용으로 '좋은 체감'에서 제외되어 최대 등급인 '보통 체감'(8강 5대 체감 평균 ${feel5Avg8})으로 판정되었습니다.`;
+      feelVerdictReason = `탄탄한 체격 조건(${height}cm/${weight}kg/${bodyType})을 갖추고 있어 경합은 안정적이며, 인게임 방향 전환은 무난한 보통 체감을 보여줍니다.`;
     } else {
-      feelVerdictReason = `체격(${height}cm/${weight}kg/${bodyType})은 준수하나 8강 체감 5대 평균(${feel5Avg8}, 기준 ≥128) 또는 민첩(${agility8})·밸런스(${balance8}, 기준 ≥124) 컷오프에 소폭 미달하여 '보통 체감'으로 분류됩니다.`;
+      feelVerdictReason = `체격(${height}cm/${weight}kg/${bodyType})과 기본 드리블 밸런스가 고르게 잡혀 있어 실전에서 표준적인 보통 체감을 보여줍니다.`;
     }
   }
 
@@ -2734,15 +2899,15 @@ function computePhysicalAndFootModifier(
       );
     }
 
-    // 3. 신장/체형/체감 점수 반영 (186cm 이상, 80kg 이상, 건장 체형은 2선 선회 반경 페널티)
+    // 3. 신장/체형/체감 점수 반영 (장신·중량급·건장 체형은 2선 선회 반경 페널티)
     if (height >= 186 || weightKg >= 80 || isStrongBody) {
       delta -= 4.5;
       notes.push(
-        `장신·중량급 피지컬(${height}cm/${weightKg}kg/${bodyType}) 2선 체감 페널티 -4.5`
+        `장신·중량급 피지컬(${height}cm/${weightKg}kg/${bodyType}) 2선 선회 반경 감점 -4.5`
       );
     } else if ((isLeanBody || isUniqueBody) && agilityStat >= 124 && balanceStat >= 124) {
       delta += 2.5;
-      notes.push("부드러운 체감(민첩·밸런스 124+) 2선 탈압박 보정 +2.5");
+      notes.push("부드러운 선회 체감 및 2선 탈압박 보정 +2.5");
     }
 
     if (isTwoFooted) {
@@ -2918,7 +3083,7 @@ function evaluateCompleteCriteria(
         passed: linkup >= effOvr - 7.5 && linkup >= 95,
       },
       {
-        name: "체감 코어(8강 민첩·밸런스)",
+        name: "체감 코어 밸런스",
         score: agilityBalanceAvg8,
         threshold: 124,
         passed: agilityBalancePassed && control >= effOvr - 6.5,
@@ -2949,20 +3114,16 @@ function evaluateCompleteCriteria(
         (weakFoot >= 4 && linkup >= effOvr - 4.5 && control >= effOvr - 4.5);
       const heightOk = height >= 184 || (physical >= effOvr - 3 && aerial >= effOvr - 3);
       physicalPassed = footOk && heightOk && agilityBalancePassed;
-      physicalScoreText = `${height}cm · 약발 ${weakFoot} · 8강 민첩 ${agility8}/밸런스 ${balance8}`;
+      physicalScoreText = `${height}cm · 약발 ${weakFoot} · ${bodyType}`;
       if (physicalPassed) {
-        physicalDetail = `양발/약발(${weakFoot}), 신장(${height}cm), 그리고 8강 기준 민첩성(${agility8})·밸런스(${balance8}) ≥ 124 상위권 기준을 모두 충족합니다.`;
+        physicalDetail = `양발/약발(${weakFoot}), 신장(${height}cm), 그리고 부드러운 체감·밸런스 요건을 모두 충족합니다.`;
       } else {
         const reasons: string[] = [];
         if (!agilityBalancePassed) {
-          reasons.push(
-            `8강 기준 민첩성(${agility8})·밸런스(${balance8})가 완성형 필수 컷오프(각 124 이상) 미달`
-          );
+          reasons.push(`방향 전환 및 체감 밸런스 요건 미달`);
         }
         if (!footOk) {
-          reasons.push(
-            `약발(${weakFoot}) 조건 또는 비양발 공격수의 연계·볼컨트롤 최소 기준 미달`
-          );
+          reasons.push(`약발(${weakFoot}) 또는 연계·볼컨트롤 안정성 미달`);
         }
         if (!heightOk) {
           reasons.push(`신장(${height}cm) 및 공중볼 경합 조건 미달`);
@@ -2988,7 +3149,7 @@ function evaluateCompleteCriteria(
         passed: dribble >= effOvr - 5.0 && dribble >= 100,
       },
       {
-        name: "체감 코어(8강 민첩·밸런스)",
+        name: "체감 코어 밸런스",
         score: agilityBalanceAvg8,
         threshold: 124,
         passed: agilityBalancePassed,
@@ -3020,11 +3181,11 @@ function evaluateCompleteCriteria(
     ];
     maxSpreadAllowed = 15.0;
     physicalPassed = hasFullData && weakFoot >= 4 && agilityBalancePassed;
-    physicalScoreText = `${height}cm · 약발 ${weakFoot} · 8강 민첩 ${agility8}/밸런스 ${balance8}`;
+    physicalScoreText = `${height}cm · 약발 ${weakFoot} · ${bodyType}`;
     physicalDetail = physicalPassed
-      ? `약발(${weakFoot}) 이상 및 8강 민첩성(${agility8})·밸런스(${balance8}) ≥ 124 기준을 통과해 양방향 돌파·크로스·슈팅이 모두 가능합니다.`
+      ? `약발(${weakFoot}) 활용도와 부드러운 체감 밸런스를 갖춰 양방향 돌파·크로스·슈팅이 모두 가능합니다.`
       : !agilityBalancePassed
-      ? `8강 기준 민첩성(${agility8})·밸런스(${balance8})가 완성형 필수 기준(각 124 이상)에 미달합니다.`
+      ? `방향 전환 및 체감 밸런스가 완성형 기준에 다소 미달합니다.`
       : `약발(${weakFoot}) 제약으로 측면 양방향 선택지가 제한됩니다.`;
   } else if (positionGroup === "CENTRAL_MF") {
     const passing = avg(["짧은 패스", "긴 패스", "시야"]);
@@ -3041,7 +3202,7 @@ function evaluateCompleteCriteria(
         passed: passing >= effOvr - 5.5 && passing >= 98,
       },
       {
-        name: "체감 코어(8강 민첩·밸런스)",
+        name: "체감 코어 밸런스",
         score: agilityBalanceAvg8,
         threshold: 124,
         passed: agilityBalancePassed && carrying >= effOvr - 6.5,
@@ -3080,12 +3241,12 @@ function evaluateCompleteCriteria(
         : height >= 178 || getStat("몸싸움") >= effOvr - 5.0);
     physicalPassed =
       hasFullData && footOk && mobilityAndBodyOk && agilityBalancePassed;
-    physicalScoreText = `약발 ${weakFoot} · 8강 민첩 ${agility8}/밸런스 ${balance8} · 속가 ${speedVal}`;
+    physicalScoreText = `${height}cm · 약발 ${weakFoot} · ${bodyType}`;
     physicalDetail = physicalPassed
-      ? `육각형 미드필더에 요구되는 8강 민첩성(${agility8})·밸런스(${balance8}) ≥ 124, 양발 활용도(약발 ${weakFoot}), 기동력·경합 밸런스를 모두 충족합니다.`
+      ? `육각형 미드필더에 요구되는 부드러운 탈압박 체감, 양발 활용도(약발 ${weakFoot}), 기동력·경합 밸런스를 모두 충족합니다.`
       : !agilityBalancePassed
-      ? `공격/패스/수비/피지컬은 준수하나 8강 기준 민첩성(${agility8})·밸런스(${balance8})가 상위권 필수 기준(각 124 이상)에 미달하여 '육각형 미드필더(완성형)'에서 제외되었습니다.`
-      : `약발(${weakFoot}) 또는 기동력(속가 ${speedVal})/피지컬 경합 조건이 육각형 미드필더 기준에 미달합니다.`;
+      ? `공격/패스/수비/피지컬은 준수하나 중원 탈압박 체감 밸런스 요건에 미달하여 특화형 미드필더로 분류되었습니다.`
+      : `약발(${weakFoot}) 또는 기동력·피지컬 경합 조건이 육각형 미드필더 기준에 미달합니다.`;
   } else if (positionGroup === "CB") {
     const defending = avg(["대인 수비", "태클", "가로채기"]);
     const physicalAerial = avg(["몸싸움", "헤더", "점프"]);
@@ -3112,7 +3273,7 @@ function evaluateCompleteCriteria(
         passed: speedCover >= effOvr - 6.5 && speedCover >= 96,
       },
       {
-        name: "체감 코어(8강 민첩·밸런스)",
+        name: "체감 코어 밸런스",
         score: agilityBalanceAvg8,
         threshold: 124,
         passed: agilityBalancePassed && buildup >= effOvr - 6.5,
@@ -3121,12 +3282,12 @@ function evaluateCompleteCriteria(
     maxSpreadAllowed = 11.5;
     physicalPassed =
       hasFullData && height >= 185 && weakFoot >= 4 && agilityBalancePassed;
-    physicalScoreText = `${height}cm · 약발 ${weakFoot} · 8강 민첩 ${agility8}/밸런스 ${balance8}`;
+    physicalScoreText = `${height}cm · 약발 ${weakFoot} · ${bodyType}`;
     physicalDetail = physicalPassed
-      ? `신장(${height}cm), 양발 빌드업(약발 ${weakFoot}), 8강 민첩(${agility8})·밸런스(${balance8}) ≥ 124 조건이 완성형 센터백 기준에 부합합니다.`
+      ? `신장(${height}cm), 양발 빌드업(약발 ${weakFoot}), 역동작 없는 수비 전환 체감이 완성형 센터백 기준에 부합합니다.`
       : !agilityBalancePassed
-      ? `8강 기준 민첩성(${agility8})·밸런스(${balance8})가 완성형 필수 기준(각 124 이상)에 미달하여 특화형 센터백으로 분류됩니다.`
-      : `센터백 완성형 필수 신장(185cm 이상, 현재 ${height}cm) 또는 후방 양발 빌드업(약발 4 이상) 조건 미달입니다.`;
+      ? `수비 전환 체감 밸런스 요건에 미달하여 특화형 센터백으로 분류됩니다.`
+      : `센터백 제공권 신장 또는 후방 양발 빌드업 조건이 다소 부족합니다.`;
   } else if (positionGroup === "FB_WB") {
     const isWb = analyzedPos === "LWB" || analyzedPos === "RWB";
     const speedStamina = avg(["속력", "가속력", "스태미너"]);
@@ -3148,7 +3309,7 @@ function evaluateCompleteCriteria(
         passed: defending >= effOvr - (isWb ? 6.5 : 5.0) && defending >= 96,
       },
       {
-        name: "체감 코어(8강 민첩·밸런스)",
+        name: "체감 코어 밸런스",
         score: agilityBalanceAvg8,
         threshold: 124,
         passed: agilityBalancePassed && attacking >= effOvr - 5.5,
@@ -3170,12 +3331,12 @@ function evaluateCompleteCriteria(
       agilityBalancePassed &&
       getStat("스태미너") >= effOvr - 5 &&
       !bodyType.includes("마름");
-    physicalScoreText = `${height}cm · 약발 ${weakFoot} · 8강 민첩 ${agility8}/밸런스 ${balance8}`;
+    physicalScoreText = `${height}cm · 약발 ${weakFoot} · ${bodyType}`;
     physicalDetail = physicalPassed
-      ? `왕성한 활동량, 8강 민첩(${agility8})·밸런스(${balance8}) ≥ 124, 경합 체형(${bodyType}), 약발(${weakFoot}) 조건을 모두 충족합니다.`
+      ? `왕성한 활동량, 부드러운 공수 전환 체감, 경합 체형(${bodyType}), 약발(${weakFoot}) 조건을 모두 충족합니다.`
       : !agilityBalancePassed
-      ? `8강 기준 민첩성(${agility8})·밸런스(${balance8})가 완성형 필수 기준(각 124 이상)에 미달합니다.`
-      : `풀백/윙백 완성형 기준(대인 경합 체형·몸싸움 또는 약발 4 이상)에 미달하여 공/수 특화형으로 분류됩니다.`;
+      ? `공수 전환 체감 밸런스 요건에 미달하여 특화형 풀백/윙백으로 분류됩니다.`
+      : `풀백/윙백 완성형 기준(대인 경합 체형·몸싸움 또는 양발 활용도)에 미달하여 공/수 특화형으로 분류됩니다.`;
   } else {
     // GK
     const saving = avg(["GK 다이빙", "GK 반응속도", "GK 핸들링"]);
@@ -3863,10 +4024,17 @@ export async function analyzeSquadAsync(
     totalBp += Number(evalRes.bp || 0);
 
     const seenForCard = new Set<string>();
-    if (card.team) seenForCard.add(card.team.trim());
-    if (card.nation) seenForCard.add(card.nation.trim());
+    if (card.team && !BANNED_DUMMY_TEAM_COLORS.has(card.team.trim())) {
+      seenForCard.add(card.team.trim());
+    }
+    if (card.nation && !BANNED_DUMMY_TEAM_COLORS.has(card.nation.trim())) {
+      seenForCard.add(card.nation.trim());
+    }
     for (const tc of card.team_colors || []) {
-      if (tc.name && tc.type !== "관계") seenForCard.add(tc.name.trim());
+      const tcClean = (tc.name || "").trim();
+      if (tcClean && !BANNED_DUMMY_TEAM_COLORS.has(tcClean)) {
+        seenForCard.add(tcClean);
+      }
     }
     for (const tcName of seenForCard) {
       if (tcName) teamCounter[tcName] = (teamCounter[tcName] || 0) + 1;
@@ -3892,20 +4060,7 @@ export async function analyzeSquadAsync(
       evalRes.feelMetrics ||
       computePlayerFeelMetricsSync(card, slotPos, grade, teamColorBonus, true);
 
-    const NEW_TRAIT_NAMES_SET = new Set([
-      "크로스 포쳐",
-      "아크로바틱 피니셔",
-      "레이저 슈터",
-      "스피드스터",
-      "타이탄",
-      "블로커",
-      "패스 마스터",
-      "택배 크로스",
-      "스위퍼 키퍼",
-      "초장거리 슈터",
-      "진공청소기",
-      "철벽",
-    ]);
+    const NEW_TRAIT_NAMES_SET = new Set<string>(OFFICIAL_NEW_TRAIT_NAMES_17);
     const cardNewTraits = (card.traits || [])
       .map((t) => t.name)
       .filter((tName) => NEW_TRAIT_NAMES_SET.has(tName));
@@ -4476,10 +4631,22 @@ function ensureRodriBaselineCards(store: FClabStore): void {
     team: "맨체스터 시티",
     nation: "스페인",
     traits: [
-      { icon: "", name: "긴 패스 선호" },
-      { icon: "", name: "중거리 슛 선호" },
-      { icon: "", name: "파워 헤더" },
-      { icon: "", name: "강철몸" },
+      {
+        icon: "https://ssl.nexon.com/s2/game/fo4/obt/externalAssets/new/trait/trait_icon_10.png",
+        name: "긴 패스 선호",
+      },
+      {
+        icon: "https://ssl.nexon.com/s2/game/fo4/obt/externalAssets/new/trait/trait_icon_11.png",
+        name: "중거리 슛 선호",
+      },
+      {
+        icon: "https://ssl.nexon.com/s2/game/fo4/obt/externalAssets/new/trait/trait_icon_18.png",
+        name: "파워 헤더",
+      },
+      {
+        icon: "https://ssl.nexon.com/s2/game/fo4/obt/externalAssets/new/trait/trait_icon_06.png",
+        name: "강철몸",
+      },
     ],
     team_colors: [
       { id: "nat_스페인", type: "국가대표", name: "스페인" },
@@ -4915,114 +5082,82 @@ const KNOWN_PLAYER_TEAM_COLORS: Record<
     nation: string;
     team: string;
     clubs: string[];
-    defaultTraits?: string[];
-    newTraits?: string[];
   }
 > = {
   손흥민: {
     nation: "대한민국",
     team: "토트넘 홋스퍼",
     clubs: ["토트넘 홋스퍼", "바이어 04 레버쿠젠", "함부르크 SV"],
-    defaultTraits: ["예리한 감아차기", "스피드 드리블러", "중거리 슛 선호"],
-    newTraits: ["레이저 슈터", "스피드스터"],
   },
   차범근: {
     nation: "대한민국",
     team: "바이어 04 레버쿠젠",
     clubs: ["바이어 04 레버쿠젠", "아인트라흐트 프랑크푸르트", "SV 다름슈타트 98"],
-    defaultTraits: ["스피드 드리블러", "파워 헤더", "강철몸"],
-    newTraits: ["스피드스터", "크로스 포쳐"],
   },
   박지성: {
     nation: "대한민국",
     team: "맨체스터 유나이티드",
-    clubs: ["맨체스터 유나이티드", "PSV 에인트호번", "퀸즈 파크 레인저스"],
-    defaultTraits: ["강철몸", "승부욕", "예리한 감아차기"],
-    newTraits: ["패스 마스터"],
+    clubs: ["맨체스터 유나이티드", "PSV", "퀸즈 파크 레인저스"],
   },
   김민재: {
     nation: "대한민국",
     team: "바이에른 뮌헨",
     clubs: ["바이에른 뮌헨", "SSC 나폴리", "페네르바체 SK", "전북 현대 모터스"],
-    defaultTraits: ["파워 헤더", "강철몸", "긴 패스 선호"],
-    newTraits: ["타이탄", "블로커"],
   },
   이강인: {
     nation: "대한민국",
     team: "파리 생제르맹",
     clubs: ["파리 생제르맹", "RCD 마요르카", "발렌시아 CF"],
-    defaultTraits: ["테크니컬 드리블러", "플레이메이커", "예리한 감아차기"],
-    newTraits: ["패스 마스터", "택배 크로스"],
   },
   벨링엄: {
     nation: "잉글랜드",
     team: "레알 마드리드",
     clubs: ["레알 마드리드", "보루시아 도르트문트", "버밍엄 시티"],
-    defaultTraits: ["플레이메이커", "테크니컬 드리블러", "강철몸"],
-    newTraits: ["패스 마스터", "타이탄"],
   },
   발베르데: {
     nation: "우루과이",
     team: "레알 마드리드",
     clubs: ["레알 마드리드", "데포르티보 라코루냐", "CA 페냐롤"],
-    defaultTraits: ["중거리 슛 선호", "스피드 드리블러", "강철몸"],
-    newTraits: ["레이저 슈터", "스피드스터"],
   },
   굴리트: {
     nation: "네덜란드",
     team: "AC 밀란",
-    clubs: ["AC 밀란", "첼시 FC", "PSV 에인트호번", "삼프도리아"],
-    defaultTraits: ["파워 헤더", "중거리 슛 선호", "플레이메이커", "스피드 드리블러"],
-    newTraits: ["레이저 슈터", "타이탄"],
+    clubs: ["AC 밀란", "첼시", "PSV", "삼프도리아"],
   },
   로드리: {
     nation: "스페인",
     team: "맨체스터 시티",
     clubs: ["맨체스터 시티", "아틀레티코 마드리드", "비야레알 CF"],
-    defaultTraits: ["긴 패스 선호", "중거리 슛 선호", "파워 헤더", "강철몸"],
-    newTraits: ["블로커", "패스 마스터"],
   },
   반데이크: {
     nation: "네덜란드",
-    team: "리버풀 FC",
-    clubs: ["리버풀 FC", "사우샘프턴 FC", "셀틱 FC", "FC 흐로닝언"],
-    defaultTraits: ["파워 헤더", "긴 패스 선호", "강철몸"],
-    newTraits: ["타이탄", "블로커"],
+    team: "리버풀",
+    clubs: ["리버풀", "사우샘프턴 FC", "셀틱 FC", "FC 흐로닝언"],
   },
   "테오 에르난데스": {
     nation: "프랑스",
     team: "AC 밀란",
     clubs: ["AC 밀란", "레알 마드리드", "레알 소시에다드", "아틀레티코 마드리드"],
-    defaultTraits: ["스피드 드리블러", "얼리 크로스 선호", "강철몸"],
-    newTraits: ["스피드스터", "택배 크로스"],
   },
   테오: {
     nation: "프랑스",
     team: "AC 밀란",
     clubs: ["AC 밀란", "레알 마드리드", "레알 소시에다드"],
-    defaultTraits: ["스피드 드리블러", "얼리 크로스 선호", "강철몸"],
-    newTraits: ["스피드스터", "택배 크로스"],
   },
   하키미: {
     nation: "모로코",
     team: "파리 생제르맹",
     clubs: ["파리 생제르맹", "인터 밀란", "보루시아 도르트문트", "레알 마드리드"],
-    defaultTraits: ["스피드 드리블러", "얼리 크로스 선호"],
-    newTraits: ["스피드스터", "택배 크로스"],
   },
   쿠르투아: {
     nation: "벨기에",
     team: "레알 마드리드",
-    clubs: ["레알 마드리드", "첼시 FC", "아틀레티코 마드리드", "KRC 헹크"],
-    defaultTraits: ["GK 적극적 크로스 수비", "GK 멀리 던지기", "GK 1:1 수비"],
-    newTraits: ["스위퍼 키퍼"],
+    clubs: ["레알 마드리드", "첼시", "아틀레티코 마드리드", "KRC 헹크"],
   },
   호나우두: {
     nation: "브라질",
     team: "레알 마드리드",
-    clubs: ["레알 마드리드", "인터 밀란", "FC 바르셀로나", "AC 밀란", "PSV 에인트호번"],
-    defaultTraits: ["예리한 감아차기", "스피드 드리블러", "테크니컬 드리블러", "아웃사이드 슈팅"],
-    newTraits: ["아크로바틱 피니셔", "스피드스터"],
+    clubs: ["레알 마드리드", "인터 밀란", "FC 바르셀로나", "AC 밀란", "PSV"],
   },
 };
 
@@ -5035,119 +5170,96 @@ export function enrichPlayerCardMetaSync(card: PlayerCard): PlayerCard {
     }
   }
 
-  const team = card.team || matchedInfo?.team || "";
-  const nation = card.nation || matchedInfo?.nation || "";
+  const rawTeam = (card.team || matchedInfo?.team || "").trim();
+  const team = BANNED_DUMMY_TEAM_COLORS.has(rawTeam) ? (matchedInfo?.team || "") : rawTeam;
+  const rawNation = (card.nation || matchedInfo?.nation || "").trim();
+  const nation = BANNED_DUMMY_TEAM_COLORS.has(rawNation) ? (matchedInfo?.nation || "") : rawNation;
 
-  const existingTc = Array.isArray(card.team_colors) ? [...card.team_colors] : [];
-  const seenNames = new Set(existingTc.map((t) => t.name.trim()));
+  // 1. 팀컬러 정화: '단일팀', '발롱도르', '트레블' 등 비공식·더미 문자열 전면 삭제 및 데이터센터 공식 로고(logoUrl) 매핑
+  const rawTcList = Array.isArray(card.team_colors) ? card.team_colors : [];
+  const purifiedTc: import("@/lib/fclab-types").TeamColorItem[] = [];
+  const seenNames = new Set<string>();
 
-  if (nation && !seenNames.has(nation)) {
-    existingTc.unshift({
-      id: `nat_${nation}`,
-      type: "국가대표",
-      name: nation,
+  const pushTeamColor = (id: string, type: string, name: string, existingLogo?: string) => {
+    const cleanName = (name || "").trim();
+    if (!cleanName || BANNED_DUMMY_TEAM_COLORS.has(cleanName)) return;
+    if (seenNames.has(cleanName)) return;
+    seenNames.add(cleanName);
+    const officialTc = findOfficialTeamColorByNameOrId(id) || findOfficialTeamColorByNameOrId(cleanName);
+    const resolvedType =
+      officialTc?.category === "feature" || type === "특성" || type === "관계"
+        ? "특성"
+        : officialTc?.category === "nation" || type === "국가대표" || cleanName === nation
+        ? "국가대표"
+        : "소속 클럽";
+    purifiedTc.push({
+      id: officialTc?.id || id,
+      type: resolvedType,
+      name: cleanName,
+      logoUrl: officialTc?.img || existingLogo || getTeamColorLogoUrl(cleanName, resolvedType, id),
     });
-    seenNames.add(nation);
+  };
+
+  if (nation) {
+    pushTeamColor(`nat_${nation}`, "국가대표", nation);
   }
-  if (team && !seenNames.has(team)) {
-    existingTc.push({
-      id: `club_${team}`,
-      type: "소속 클럽",
-      name: team,
-    });
-    seenNames.add(team);
+  if (team) {
+    pushTeamColor(`club_${team}`, "소속 클럽", team);
   }
   if (matchedInfo?.clubs) {
     for (const cl of matchedInfo.clubs) {
-      if (!seenNames.has(cl)) {
-        existingTc.push({
-          id: `club_${cl}`,
-          type: "소속 클럽",
-          name: cl,
-        });
-        seenNames.add(cl);
-      }
+      pushTeamColor(`club_${cl}`, "소속 클럽", cl);
     }
   }
-
-  let traits = Array.isArray(card.traits) ? [...card.traits] : [];
-  if (traits.length === 0 && matchedInfo?.defaultTraits) {
-    traits = matchedInfo.defaultTraits.map((tName) => ({
-      icon: "",
-      name: tName,
-    }));
+  for (const tc of rawTcList) {
+    const tcType =
+      tc.type === "국가대표" || tc.name === nation
+        ? "국가대표"
+        : tc.type === "특성" || tc.type === "관계"
+        ? "특성"
+        : "소속 클럽";
+    pushTeamColor(tc.id || `tc_${tc.name}`, tcType, tc.name, tc.logoUrl);
   }
 
-  const seenTraitNames = new Set(traits.map((t) => t.name));
+  // 2. 선수 특성(Traits) 정화:
+  // - 스탯 기반 추론 특성이나 선수 이름 기반 임의 주입(모먼트 아이콘 굴리트에 레이저 슈터/타이탄 임의 부여 등)을 전면 금지
+  // - 오직 FC 온라인 공식 데이터센터(PlayerAbility)에서 수집된 실제 인게임 특성(공식 아이콘 URL 보유)만 정확히 표시
+  const rawTraits = Array.isArray(card.traits) ? card.traits : [];
+  const purifiedTraits: { icon: string; name: string }[] = [];
+  const seenTraitNames = new Set<string>();
 
-  // 신규 특성(집중훈련/고유 신규 특성) 보강
-  const inferredNewTraits: string[] = [];
-  if (matchedInfo?.newTraits) {
-    inferredNewTraits.push(...matchedInfo.newTraits);
-  } else {
-    const pos = (card.primary_position || "ST").toUpperCase();
-    const st = card.stats || {};
-    if (pos === "GK") {
-      inferredNewTraits.push("스위퍼 키퍼");
-    } else if (["ST", "CF"].includes(pos)) {
-      if ((st["헤더"] || 0) >= 110 || (st["위치 선정"] || 0) >= 114) {
-        inferredNewTraits.push("크로스 포쳐");
-      }
-      if ((st["골 결정력"] || 0) >= 113 || (st["발리 슛"] || st["발리슛"] || 0) >= 110) {
-        inferredNewTraits.push("아크로바틱 피니셔");
-      }
-      if ((st["속력"] || 0) >= 114 && inferredNewTraits.length < 2) {
-        inferredNewTraits.push("스피드스터");
-      }
-    } else if (["LW", "RW", "LM", "RM"].includes(pos)) {
-      if ((st["속력"] || 0) >= 112 || seenTraitNames.has("스피드 드리블러")) {
-        inferredNewTraits.push("스피드스터");
-      }
-      if ((st["크로스"] || 0) >= 110 || seenTraitNames.has("얼리 크로스 선호")) {
-        inferredNewTraits.push("택배 크로스");
-      } else if ((st["중거리 슛"] || 0) >= 110 || seenTraitNames.has("예리한 감아차기")) {
-        inferredNewTraits.push("레이저 슈터");
-      }
-    } else if (["CAM", "CM", "CDM"].includes(pos)) {
-      if (pos === "CDM" || (st["가로채기"] || 0) >= 112 || (st["태클"] || 0) >= 112) {
-        inferredNewTraits.push("블로커");
-      }
-      if ((st["중거리 슛"] || 0) >= 112 || (st["슛 파워"] || 0) >= 114) {
-        inferredNewTraits.push("레이저 슈터");
-      } else if ((st["짧은 패스"] || 0) >= 112 || (st["시야"] || 0) >= 112) {
-        inferredNewTraits.push("패스 마스터");
-      }
-    } else if (["CB", "SW"].includes(pos)) {
-      inferredNewTraits.push("타이탄", "블로커");
-    } else if (["LB", "RB", "LWB", "RWB"].includes(pos)) {
-      inferredNewTraits.push("스피드스터", "블로커");
-    }
-  }
-
-  for (const nt of inferredNewTraits.slice(0, 2)) {
-    if (!seenTraitNames.has(nt)) {
-      traits.unshift({ icon: "", name: nt });
-      seenTraitNames.add(nt);
-    }
+  for (const t of rawTraits) {
+    const tName = (t.name || "").trim();
+    const tIcon = (t.icon || "").trim();
+    if (!tName || BANNED_FAKE_TRAIT_SET.has(tName)) continue;
+    if (!tIcon.startsWith("http")) continue;
+    if (seenTraitNames.has(tName)) continue;
+    purifiedTraits.push({ icon: tIcon, name: tName });
+    seenTraitNames.add(tName);
   }
 
   return {
     ...card,
     team,
     nation,
-    team_colors: existingTc,
-    traits,
+    team_colors: purifiedTc,
+    traits: purifiedTraits,
   };
 }
 
 function getCardCoreTeamColorSet(card: PlayerCard): Set<string> {
   const enriched = enrichPlayerCardMetaSync(card);
   const set = new Set<string>();
-  if (enriched.nation) set.add(enriched.nation.trim());
-  if (enriched.team) set.add(enriched.team.trim());
+  if (enriched.nation && !BANNED_DUMMY_TEAM_COLORS.has(enriched.nation.trim())) {
+    set.add(enriched.nation.trim());
+  }
+  if (enriched.team && !BANNED_DUMMY_TEAM_COLORS.has(enriched.team.trim())) {
+    set.add(enriched.team.trim());
+  }
   for (const tc of enriched.team_colors || []) {
-    if (tc.name && tc.type !== "관계") {
-      set.add(tc.name.trim());
+    const tcClean = (tc.name || "").trim();
+    if (tcClean && !BANNED_DUMMY_TEAM_COLORS.has(tcClean) && tc.type !== "특성") {
+      set.add(tcClean);
     }
   }
   return set;

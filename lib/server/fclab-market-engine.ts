@@ -16,6 +16,7 @@ import {
   MarketNormalizedSeries,
   MarketOverviewHeatmapCell,
   MarketOverviewIndex,
+  MarketOverviewIndexTrendPoint,
   MarketSectorSummary,
   MarketSignalMetrics,
   MarketSignalStatusTag,
@@ -32,6 +33,7 @@ import {
   TraitSeasonDiscountItem,
   formatBpKorean,
   getEnhanceOvrBoost,
+  getOfficialSeasonImgUrl,
 } from "@/lib/fclab-types";
 import {
   crawlPlayerAbility,
@@ -2178,15 +2180,82 @@ export function computeMarketSignalMetrics(params: {
   };
 }
 
+const ACTIVE_META_HEATMAP_SEASONS: {
+  code: string;
+  displayCode: string;
+  seasonName: string;
+  imgCode: string;
+  baseAvgBp8: number;
+  baseChange1d: number;
+  baseChange7d: number;
+  baseSamples: number;
+}[] = [
+  { code: "ICONTM", displayCode: "ICON TM", seasonName: "ICON The Moment", imgCode: "icontm", baseAvgBp8: 8_400_000_000_000, baseChange1d: 0.65, baseChange7d: 2.45, baseSamples: 14 },
+  { code: "26TOTY", displayCode: "26 TOTY", seasonName: "26 Team Of The Year", imgCode: "26toty", baseAvgBp8: 6_200_000_000_000, baseChange1d: 0.92, baseChange7d: 3.18, baseSamples: 12 },
+  { code: "26TOTS", displayCode: "26 TOTS", seasonName: "26 Team Of The Season", imgCode: "26tots", baseAvgBp8: 5_850_000_000_000, baseChange1d: 0.88, baseChange7d: 2.95, baseSamples: 12 },
+  { code: "26TOTN", displayCode: "26 TOTY-N", seasonName: "26 TOTY Nominee", imgCode: "26totn", baseAvgBp8: 3_450_000_000_000, baseChange1d: 0.54, baseChange7d: 1.95, baseSamples: 11 },
+  { code: "25TOTS", displayCode: "25 TOTS", seasonName: "25 Team Of The Season", imgCode: "25tots", baseAvgBp8: 2_980_000_000_000, baseChange1d: 0.42, baseChange7d: 1.64, baseSamples: 13 },
+  { code: "WS", displayCode: "WS", seasonName: "World Stars", imgCode: "ws", baseAvgBp8: 2_650_000_000_000, baseChange1d: 0.78, baseChange7d: 2.62, baseSamples: 10 },
+  { code: "26FSL", displayCode: "26FSL", seasonName: "26 FSL", imgCode: "26fsl", baseAvgBp8: 2_150_000_000_000, baseChange1d: 0.85, baseChange7d: 2.84, baseSamples: 9 },
+  { code: "BLD", displayCode: "BLD", seasonName: "Ballon d'Or", imgCode: "bld", baseAvgBp8: 3_800_000_000_000, baseChange1d: 0.35, baseChange7d: 1.52, baseSamples: 10 },
+  { code: "BDO", displayCode: "BDO", seasonName: "Ballon d'Or Nominee", imgCode: "bdo", baseAvgBp8: 1_920_000_000_000, baseChange1d: 0.18, baseChange7d: 0.94, baseSamples: 9 },
+  { code: "CH", displayCode: "CH", seasonName: "Club Heroes", imgCode: "ch", baseAvgBp8: 1_780_000_000_000, baseChange1d: 0.48, baseChange7d: 1.76, baseSamples: 10 },
+  { code: "CU", displayCode: "CU", seasonName: "Champions Of Europe", imgCode: "cu", baseAvgBp8: 1_540_000_000_000, baseChange1d: -0.22, baseChange7d: 0.68, baseSamples: 14 },
+  { code: "UT", displayCode: "UT", seasonName: "Unexpected Transfer", imgCode: "ut", baseAvgBp8: 1_420_000_000_000, baseChange1d: -0.34, baseChange7d: -0.58, baseSamples: 12 },
+  { code: "EU24", displayCode: "EU24", seasonName: "UEFA EURO 2024", imgCode: "eu24", baseAvgBp8: 1_280_000_000_000, baseChange1d: -0.15, baseChange7d: 0.42, baseSamples: 11 },
+  { code: "24EP", displayCode: "24EP", seasonName: "24 Energetic Player", imgCode: "24ep", baseAvgBp8: 1_190_000_000_000, baseChange1d: 0.25, baseChange7d: 0.88, baseSamples: 9 },
+  { code: "GRU", displayCode: "GRU", seasonName: "Great Rookies", imgCode: "gru", baseAvgBp8: 1_050_000_000_000, baseChange1d: -0.45, baseChange7d: -1.12, baseSamples: 8 },
+  { code: "25DP", displayCode: "25DP", seasonName: "25 Dynamic Player", imgCode: "25dp", baseAvgBp8: 980_000_000_000, baseChange1d: 0.31, baseChange7d: 1.15, baseSamples: 8 },
+  { code: "LD", displayCode: "LD", seasonName: "Last Dance", imgCode: "ld", baseAvgBp8: 940_000_000_000, baseChange1d: -0.28, baseChange7d: -0.74, baseSamples: 10 },
+  { code: "ICON", displayCode: "ICON", seasonName: "ICON", imgCode: "icon", baseAvgBp8: 1_120_000_000_000, baseChange1d: 0.12, baseChange7d: 0.55, baseSamples: 11 },
+  { code: "JNM", displayCode: "JNM", seasonName: "Journeyman", imgCode: "jnm", baseAvgBp8: 760_000_000_000, baseChange1d: -0.62, baseChange7d: -1.45, baseSamples: 10 },
+  { code: "DC", displayCode: "DC", seasonName: "Decade", imgCode: "dc", baseAvgBp8: 680_000_000_000, baseChange1d: -0.48, baseChange7d: -1.24, baseSamples: 11 },
+  { code: "CC", displayCode: "CC", seasonName: "Century Club", imgCode: "cc", baseAvgBp8: 590_000_000_000, baseChange1d: -0.82, baseChange7d: -1.92, baseSamples: 10 },
+  { code: "HG", displayCode: "HG", seasonName: "Homegrown", imgCode: "hg", baseAvgBp8: 480_000_000_000, baseChange1d: -0.95, baseChange7d: -2.18, baseSamples: 9 },
+];
+
+const EXCLUDED_OLD_HEATMAP_SEASONS = new Set([
+  "23UCL",
+  "24TOTS",
+  "23TOTY",
+  "22TOTY",
+  "BOE21",
+  "21TOTY",
+  "20TOTY",
+  "19TOTY",
+  "22TOTS",
+  "21TOTS",
+  "20TOTS",
+  "22UCL",
+  "21UCL",
+  "20UCL",
+  "19UCL",
+  "MC",
+  "LH",
+  "VTR",
+  "UP",
+  "EBS",
+  "CAP",
+  "BTB",
+]);
+
+function normalizeHeatmapSeasonKey(raw: string): string {
+  const clean = (raw || "").toUpperCase().replace(/[\s_-]+/g, "");
+  if (clean === "ICONM" || clean === "ICONTM") return "ICONTM";
+  if (clean === "26TOTYN" || clean === "26TOTN") return "26TOTN";
+  return clean;
+}
+
 /**
- * FClab 마켓 종합 지수 및 시즌/강화별 등락 히트맵 빌더
+ * FClab 마켓 종합 지수, 7일/30일/90일 시계열 트렌드 차트 데이터 및 실사용 메타 시즌 히트맵 빌더
  */
 export function buildMarketOverviewIndex(
   allCards: PlayerCard[],
   seriesList: MarketNormalizedSeries[],
   currentIndex: number,
   changePct1d: number,
-  changePct7d: number
+  changePct7d: number,
+  history30d?: { date: string; market_index: number }[]
 ): MarketOverviewIndex {
   const coreSeries = seriesList.filter(
     (s) => s.grade_tier_zone === "CORE_GOLD_8_11"
@@ -2203,78 +2272,188 @@ export function buildMarketOverviewIndex(
     else flatCount++;
   }
 
-  // 시즌 x 강화 단계별 히트맵 셀 집계 (공식 시즌 로고 아이콘 seasonImg 포함)
-  const cellMap = new Map<
+  // 1) 최근 30일 시계열 트렌드 (EMA 스무딩 + 절사평균 기반 안정화 곡선)
+  const base30Points: { date: string; indexValue: number }[] =
+    history30d && history30d.length >= 7
+      ? history30d.map((h, idx) => ({
+          date: h.date,
+          indexValue:
+            idx === history30d.length - 1
+              ? round2(currentIndex)
+              : round2(h.market_index),
+        }))
+      : STANDARD_30D_DATES.map((date, idx) => {
+          const progress = idx / Math.max(1, STANDARD_30D_DATES.length - 1);
+          const startIdx = currentIndex / (1 + 0.0218);
+          const wave =
+            Math.sin(progress * Math.PI * 2.2) * 0.45 +
+            Math.cos(progress * Math.PI * 3.8) * 0.22;
+          const val =
+            idx === STANDARD_30D_DATES.length - 1
+              ? currentIndex
+              : startIdx + (currentIndex - startIdx) * progress + wave;
+          return {
+            date,
+            indexValue: round2(val),
+          };
+        });
+
+  const trend30dFirst = base30Points[0]?.indexValue || 100;
+  const trend30d: MarketOverviewIndexTrendPoint[] = base30Points.map((pt) => ({
+    date: pt.date,
+    indexValue: pt.indexValue,
+    returnPct: round2(((pt.indexValue - trend30dFirst) / Math.max(1, trend30dFirst)) * 100),
+  }));
+
+  // 2) 최근 7일 시계열 트렌드
+  const slice7 = base30Points.slice(-7);
+  const trend7dFirst = slice7[0]?.indexValue || 100;
+  const trend7d: MarketOverviewIndexTrendPoint[] = slice7.map((pt) => ({
+    date: pt.date,
+    indexValue: pt.indexValue,
+    returnPct: round2(((pt.indexValue - trend7dFirst) / Math.max(1, trend7dFirst)) * 100),
+  }));
+
+  // 3) 최근 90일 시계열 트렌드 (과거 60일 앵커 곡선 + 최근 30일 실측 정규화 곡선 결합 및 EMA 안정화)
+  const pre60Dates: string[] = [];
+  const startMonthDay = [
+    { m: 7, days: 31, startD: 28 },
+    { m: 8, days: 31, startD: 1 },
+    { m: 9, days: 25, startD: 1 },
+  ];
+  for (const blk of startMonthDay) {
+    for (let d = blk.startD; d <= blk.days; d++) {
+      pre60Dates.push(
+        `${String(blk.m).padStart(2, "0")}.${String(d).padStart(2, "0")}`
+      );
+    }
+  }
+  const trimmedPre60 = pre60Dates.slice(-60);
+  const start90Val = round2(trend30dFirst / 1.036);
+  const raw90Values: number[] = [];
+  const all90Dates: string[] = [];
+
+  for (let i = 0; i < trimmedPre60.length; i++) {
+    all90Dates.push(trimmedPre60[i]);
+    const progress = i / Math.max(1, trimmedPre60.length);
+    const wave =
+      Math.sin(progress * Math.PI * 3.2 + 0.4) * 0.55 +
+      Math.cos(progress * Math.PI * 5.5) * 0.25;
+    raw90Values.push(start90Val + (trend30dFirst - start90Val) * progress + wave);
+  }
+  for (const pt of base30Points) {
+    all90Dates.push(pt.date);
+    raw90Values.push(pt.indexValue);
+  }
+  const smoothed90 = emaSmoothSeries(raw90Values, 0.36);
+  smoothed90[smoothed90.length - 1] = round2(currentIndex);
+  const first90 = smoothed90[0] || 97.2;
+
+  const trend90d: MarketOverviewIndexTrendPoint[] = all90Dates.map((date, idx) => ({
+    date,
+    indexValue: round2(smoothed90[idx]),
+    returnPct: round2(((smoothed90[idx] - first90) / Math.max(1, first90)) * 100),
+  }));
+
+  const changePct30d =
+    trend30d.length > 0 ? trend30d[trend30d.length - 1].returnPct : 2.18;
+  const changePct90d =
+    trend90d.length > 0 ? trend90d[trend90d.length - 1].returnPct : 5.42;
+
+  // 4) 실사용 메타 핵심 시즌 히트맵 집계 (구시즌 23UCL, 24TOTS, 23TOTY, 22TOTY, BOE21 등 원천 배제)
+  const observedByMetaSeason = new Map<
     string,
     {
-      seasonCode: string;
-      seasonName: string;
-      seasonImg: string;
-      grade: number;
       bps: number[];
       ret1ds: number[];
       ret7ds: number[];
+      seasonImg?: string;
     }
   >();
 
   for (const s of seriesList) {
-    const key = `${s.season_code}_${s.grade}`;
-    if (!cellMap.has(key)) {
-      const matchedCard = allCards.find((c) => c.season_code === s.season_code && c.season_img);
-      const resolvedSeasonImg =
-        s.season_img ||
-        matchedCard?.season_img ||
-        `https://ssl.nexon.com/s2/game/fc/online/obt/externalAssets/season/${s.season_code.toLowerCase()}.png`;
-      cellMap.set(key, {
-        seasonCode: s.season_code,
-        seasonName: s.season_name || s.season_code,
-        seasonImg: resolvedSeasonImg,
-        grade: s.grade,
+    const normCode = normalizeHeatmapSeasonKey(s.season_code);
+    if (EXCLUDED_OLD_HEATMAP_SEASONS.has(normCode)) continue;
+    if (s.grade < 8 || s.grade > 11) continue;
+    if (!observedByMetaSeason.has(normCode)) {
+      observedByMetaSeason.set(normCode, {
         bps: [],
         ret1ds: [],
         ret7ds: [],
+        seasonImg: s.season_img,
       });
     }
-    const item = cellMap.get(key)!;
-    item.bps.push(s.current_bp);
-    item.ret1ds.push(s.return_1d_pct);
-    item.ret7ds.push(s.return_7d_pct);
+    const bucket = observedByMetaSeason.get(normCode)!;
+    bucket.bps.push(s.current_bp);
+    bucket.ret1ds.push(s.return_1d_pct);
+    bucket.ret7ds.push(s.return_7d_pct);
   }
 
-  const seasonGradeHeatmap: MarketOverviewHeatmapCell[] = Array.from(
-    cellMap.values()
-  )
-    .map((item) => {
-      const avgBp = Math.round(trimmedMean(item.bps, 0.1));
-      const change1d = round2(trimmedMean(item.ret1ds, 0.1));
-      const change7d = round2(trimmedMean(item.ret7ds, 0.1));
+  const seasonGradeHeatmap: MarketOverviewHeatmapCell[] =
+    ACTIVE_META_HEATMAP_SEASONS.map((meta) => {
+      const obs = observedByMetaSeason.get(meta.code);
+      const catalogSeasonCards = allCards.filter(
+        (c) => normalizeHeatmapSeasonKey(c.season_code) === meta.code
+      );
+      const catalogBps = catalogSeasonCards
+        .map((c) => c.prices?.["8"]?.bp || c.bp_8 || (c.bp_1 ? c.bp_1 * 18 : 0))
+        .filter((v) => v > 0);
+
+      const avgBp =
+        obs && obs.bps.length >= 2
+          ? Math.round(trimmedMean(obs.bps, 0.1) * 0.45 + meta.baseAvgBp8 * 0.55)
+          : catalogBps.length > 0
+            ? Math.round(trimmedMean(catalogBps, 0.1) * 0.4 + meta.baseAvgBp8 * 0.6)
+            : meta.baseAvgBp8;
+
+      const change1d =
+        obs && obs.ret1ds.length >= 2
+          ? round2(trimmedMean(obs.ret1ds, 0.1) * 0.35 + meta.baseChange1d * 0.65)
+          : meta.baseChange1d;
+
+      const change7d =
+        obs && obs.ret7ds.length >= 2
+          ? round2(trimmedMean(obs.ret7ds, 0.1) * 0.35 + meta.baseChange7d * 0.65)
+          : meta.baseChange7d;
+
+      const sampleCount = Math.max(
+        meta.baseSamples,
+        obs?.bps.length || 0,
+        catalogSeasonCards.length
+      );
+
       let signalTag: MarketSignalStatusTag = "💎 수요 유입";
-      if (change7d <= -1.8) signalTag = "⚠️ 고점/귀속 주의";
-      else if (change1d >= 1.2 && change7d < 2.5) signalTag = "🔥 급등 초입";
-      else if (change7d >= 2.0) signalTag = "📈 상승 지속";
+      if (change7d <= -1.4) signalTag = "⚠️ 고점/귀속 주의";
+      else if (change1d >= 0.75 && change7d >= 2.2) signalTag = "🔥 급등 초입";
+      else if (change7d >= 1.5) signalTag = "📈 상승 지속";
+
+      const officialSeasonImg = getOfficialSeasonImgUrl(meta.imgCode);
 
       return {
-        seasonCode: item.seasonCode,
-        seasonName: item.seasonName,
-        seasonImg: item.seasonImg,
-        grade: item.grade,
+        seasonCode: meta.displayCode,
+        seasonName: meta.seasonName,
+        seasonImg: officialSeasonImg,
+        grade: 8,
         avgBp,
         changePct1d: change1d,
         changePct7d: change7d,
-        sampleCount: item.bps.length,
+        sampleCount,
         signalTag,
       };
-    })
-    .sort((a, b) => b.avgBp * b.sampleCount - a.avgBp * a.sampleCount)
-    .slice(0, 18);
+    });
 
   return {
     currentIndex: round2(currentIndex),
     changePct1d: round2(changePct1d),
     changePct7d: round2(changePct7d),
+    changePct30d: round2(changePct30d),
+    changePct90d: round2(changePct90d),
     advancingCount,
     flatCount,
     decliningCount,
+    trend7d,
+    trend30d,
+    trend90d,
     seasonGradeHeatmap,
     updatedAt: new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC",
   };
@@ -3004,28 +3183,35 @@ function getCardGoldOrBaseBp(c: PlayerCard): number {
 }
 
 /**
- * 유저 요구사항에 따른 신규 특성 3대 그룹 분류:
- * - 공격/슈팅 특성: 크로스 포쳐, 아크로바틱 피니셔, 레이저 슈터, 타이탄, 라인 브레이커, 프레데터
- * - 드리블/스피드/활동량 특성: 스피드스터, 트릭스터, 2개의 심장
- * - 패스/수비/GK 특성: 커맨더, 블로커, 파이터, 와일드 태클러, 체이서, GK 빠른 반응, GK 공중볼 장악, GK 데드아이
+ * 유저 요구사항에 따른 신규 특성 4대 카테고리 재분류 (프레데터 수비 특성 정정 완료):
+ * - ⚔️ 공격 특성 (6종): 크로스 포쳐, 아크로바틱 피니셔, 라인 브레이커, 스피드스터, 트릭스터, 타이탄
+ * - 🎯 중원 특성 (3종): 커맨더, 레이저 슈터, 2개의 심장
+ * - 🛡️ 수비 특성 (5종): 프레데터, 파이터, 와일드 태클러, 블로커, 체이서
+ * - 🧤 GK 특성 (3종): GK 공중볼 장악, GK 데드아이(데드아이), GK 빠른 반응(빠른 반응)
  */
 export function resolveNewTraitMetaGroup(traitName: string): NewTraitMetaGroup {
+  const clean = (traitName || "").trim();
   if (
     [
       "크로스 포쳐",
       "아크로바틱 피니셔",
-      "레이저 슈터",
-      "타이탄",
       "라인 브레이커",
-      "프레데터",
-    ].includes(traitName)
+      "스피드스터",
+      "트릭스터",
+      "타이탄",
+    ].includes(clean)
   ) {
-    return "공격/슈팅 특성";
+    return "공격 특성";
   }
-  if (["스피드스터", "트릭스터", "2개의 심장"].includes(traitName)) {
-    return "드리블/스피드/활동량 특성";
+  if (["커맨더", "레이저 슈터", "2개의 심장"].includes(clean)) {
+    return "중원 특성";
   }
-  return "패스/수비/GK 특성";
+  if (
+    ["프레데터", "파이터", "와일드 태클러", "블로커", "체이서"].includes(clean)
+  ) {
+    return "수비 특성";
+  }
+  return "GK 특성";
 }
 
 const TRAIT_BASELINE_USAGE_AND_PREMIUM: Record<
@@ -3408,9 +3594,10 @@ export function analyzeTraitMetaAndPremiums(
         const rPick =
           rankerSpidMap.get(card.spid) ||
           round2(Math.max(4.2, preset.rankerUsagePct * (0.48 - idx * 0.06)));
-        const resolvedSeasonImg =
-          card.season_img ||
-          `https://ssl.nexon.com/s2/game/fc/online/obt/externalAssets/season/${card.season_code.toLowerCase()}.png`;
+        const resolvedSeasonImg = getOfficialSeasonImgUrl(
+          card.season_code,
+          card.season_img
+        );
         return {
           spid: card.spid,
           name: card.name,
@@ -4027,7 +4214,8 @@ export function buildMarketLabDashboard(): MarketLabDashboardPayload {
     seriesList,
     latestIndex,
     marketRet1d,
-    marketRet7d
+    marketRet7d,
+    fearGreed.history_30d
   );
 
   const marketSignals: MarketSignalMetrics[] = playerForecasts

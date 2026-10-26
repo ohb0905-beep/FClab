@@ -47,6 +47,7 @@ import {
   getEnhanceOvrBoost,
   formatBpKorean,
   getPositionToneClass,
+  getTeamColorLogoUrl,
 } from "@/lib/fclab-types";
 import { PlayerAvatar, SeasonBadge, HexRadarChart } from "./VisualCharts";
 
@@ -432,7 +433,7 @@ const POSITION_COMPATIBILITY_ORDER: Record<string, string[]> = {
   GK: ["GK"],
 };
 
-// 신규 특성(집중훈련/고유 신규 특성) 전용 시각 스타일 및 아이콘 매핑
+// 공식 신규 특성 17종 전용 시각 스타일 및 아이콘 매핑 (가상/추론 특성 제외)
 const NEW_TRAITS_CONFIG: Record<
   string,
   {
@@ -464,6 +465,27 @@ const NEW_TRAITS_CONFIG: Record<
     borderClass: "border-fuchsia-400/80",
     iconColor: "text-fuchsia-300",
   },
+  타이탄: {
+    shortLabel: "타이탄",
+    Icon: Shield,
+    bgClass: "bg-orange-950/95",
+    borderClass: "border-orange-400/80",
+    iconColor: "text-orange-300",
+  },
+  "라인 브레이커": {
+    shortLabel: "라인 브레이커",
+    Icon: Zap,
+    bgClass: "bg-cyan-950/95",
+    borderClass: "border-cyan-400/80",
+    iconColor: "text-cyan-300",
+  },
+  프레데터: {
+    shortLabel: "프레데터",
+    Icon: Crosshair,
+    bgClass: "bg-red-950/95",
+    borderClass: "border-red-400/80",
+    iconColor: "text-red-300",
+  },
   스피드스터: {
     shortLabel: "스피드스터",
     Icon: Zap,
@@ -471,12 +493,26 @@ const NEW_TRAITS_CONFIG: Record<
     borderClass: "border-yellow-400/80",
     iconColor: "text-yellow-300",
   },
-  타이탄: {
-    shortLabel: "타이탄",
-    Icon: Shield,
-    bgClass: "bg-orange-950/95",
-    borderClass: "border-orange-400/80",
-    iconColor: "text-orange-300",
+  트릭스터: {
+    shortLabel: "트릭스터",
+    Icon: Sparkles,
+    bgClass: "bg-purple-950/95",
+    borderClass: "border-purple-400/80",
+    iconColor: "text-purple-300",
+  },
+  "2개의 심장": {
+    shortLabel: "2개의 심장",
+    Icon: Flame,
+    bgClass: "bg-emerald-950/95",
+    borderClass: "border-emerald-400/80",
+    iconColor: "text-emerald-300",
+  },
+  커맨더: {
+    shortLabel: "커맨더",
+    Icon: Compass,
+    bgClass: "bg-sky-950/95",
+    borderClass: "border-sky-400/80",
+    iconColor: "text-sky-300",
   },
   블로커: {
     shortLabel: "블로커",
@@ -485,23 +521,44 @@ const NEW_TRAITS_CONFIG: Record<
     borderClass: "border-emerald-400/80",
     iconColor: "text-emerald-300",
   },
-  "패스 마스터": {
-    shortLabel: "패스 마스터",
-    Icon: Compass,
-    bgClass: "bg-sky-950/95",
-    borderClass: "border-sky-400/80",
-    iconColor: "text-sky-300",
-  },
-  "택배 크로스": {
-    shortLabel: "택배 크로스",
-    Icon: Compass,
-    bgClass: "bg-cyan-950/95",
-    borderClass: "border-cyan-400/80",
-    iconColor: "text-cyan-300",
-  },
-  "스위퍼 키퍼": {
-    shortLabel: "스위퍼 키퍼",
+  파이터: {
+    shortLabel: "파이터",
     Icon: Shield,
+    bgClass: "bg-rose-950/95",
+    borderClass: "border-rose-400/80",
+    iconColor: "text-rose-300",
+  },
+  "와일드 태클러": {
+    shortLabel: "와일드 태클러",
+    Icon: Shield,
+    bgClass: "bg-teal-950/95",
+    borderClass: "border-teal-400/80",
+    iconColor: "text-teal-300",
+  },
+  체이서: {
+    shortLabel: "체이서",
+    Icon: Zap,
+    bgClass: "bg-blue-950/95",
+    borderClass: "border-blue-400/80",
+    iconColor: "text-blue-300",
+  },
+  "GK 빠른 반응": {
+    shortLabel: "GK 빠른 반응",
+    Icon: Zap,
+    bgClass: "bg-indigo-950/95",
+    borderClass: "border-indigo-400/80",
+    iconColor: "text-indigo-300",
+  },
+  "GK 공중볼 장악": {
+    shortLabel: "GK 공중볼",
+    Icon: Shield,
+    bgClass: "bg-indigo-950/95",
+    borderClass: "border-indigo-400/80",
+    iconColor: "text-indigo-300",
+  },
+  "GK 데드아이": {
+    shortLabel: "GK 데드아이",
+    Icon: Compass,
     bgClass: "bg-indigo-950/95",
     borderClass: "border-indigo-400/80",
     iconColor: "text-indigo-300",
@@ -551,6 +608,7 @@ function TeamColorLogoBadge({
   count?: number;
   bonus?: string;
 }) {
+  const [imgErr, setImgErr] = useState(false);
   const cleanName = name.trim();
   const nationStyle = NATION_CREST_MAP[cleanName];
   const clubStyle =
@@ -575,6 +633,11 @@ function TeamColorLogoBadge({
       "이탈리아",
     ].includes(cleanName);
 
+  const resolvedLogo = getTeamColorLogoUrl(
+    cleanName,
+    isNation ? "국가대표" : "소속 클럽"
+  );
+
   const badgeCode =
     nationStyle?.code ||
     clubStyle?.code ||
@@ -586,25 +649,36 @@ function TeamColorLogoBadge({
   const crestBg =
     nationStyle?.bg ||
     clubStyle?.bg ||
-    (isNation ? "bg-rose-600 text-white" : "bg-emerald-600 text-white");
+    (isNation ? "bg-rose-600 text-white" : "bg-blue-600 text-white");
 
   return (
-    <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 text-xs">
-      <span
-        className={`inline-flex items-center justify-center rounded px-1 py-0.5 text-[9px] font-mono font-extrabold leading-none tracking-tighter shrink-0 ${crestBg}`}
-      >
-        {isNation ? (
-          <Flag className="w-2.5 h-2.5 mr-0.5 inline" />
-        ) : (
-          <Trophy className="w-2.5 h-2.5 mr-0.5 inline" />
-        )}
-        {badgeCode}
-      </span>
+    <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-800 text-xs">
+      {resolvedLogo && !imgErr ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={resolvedLogo}
+          alt={cleanName}
+          referrerPolicy="no-referrer"
+          onError={() => setImgErr(true)}
+          className="w-4 h-4 object-contain rounded-xs shrink-0"
+        />
+      ) : (
+        <span
+          className={`inline-flex items-center justify-center rounded px-1 py-0.5 text-[9px] font-mono font-extrabold leading-none tracking-tighter shrink-0 ${crestBg}`}
+        >
+          {isNation ? (
+            <Flag className="w-2.5 h-2.5 mr-0.5 inline" />
+          ) : (
+            <Trophy className="w-2.5 h-2.5 mr-0.5 inline" />
+          )}
+          {badgeCode}
+        </span>
+      )}
       <span className="font-bold text-slate-800 dark:text-slate-100">
         {cleanName}
       </span>
       {count !== undefined && (
-        <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400 font-bold">
+        <span className="text-[11px] font-mono text-cyan-600 dark:text-cyan-400 font-bold">
           {count}명{bonus ? ` (${bonus.replace("전체 능력치 ", "")})` : ""}
         </span>
       )}

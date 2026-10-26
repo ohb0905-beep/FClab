@@ -36,8 +36,53 @@ import {
   syncCoreGradesPriceHistory,
 } from "@/lib/server/fclab-market-engine";
 
+import {
+  PlayerFilterState,
+  DEFAULT_PLAYER_FILTER_STATE,
+  matchesPlayerFilter,
+  hasActiveDetailFilters,
+} from "@/lib/fclab-types";
+
 function nowUtc(): string {
   return new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
+}
+
+function parseFilterStateFromParams(sp: URLSearchParams): PlayerFilterState {
+  const seasonsRaw = (sp.get("seasons") || "").trim();
+  const teamColorsRaw = (sp.get("team_colors") || "").trim();
+  const bodyTypesRaw = (sp.get("body_types") || "").trim();
+  const traitsRaw = (sp.get("traits") || "").trim();
+  const pos = (sp.get("position") || "ALL").trim().toUpperCase();
+  const prefFoot = (sp.get("preferred_foot") || "ALL").trim().toUpperCase();
+  const weakFoot = (sp.get("weak_foot") || "ALL").trim();
+
+  return {
+    seasons: seasonsRaw ? seasonsRaw.split(",").map((s) => s.trim()).filter(Boolean) : [],
+    teamColors: teamColorsRaw
+      ? teamColorsRaw.split(",").map((s) => s.trim()).filter(Boolean)
+      : [],
+    salaryMin: (sp.get("salary_min") || "").trim(),
+    salaryMax: (sp.get("salary_max") || "").trim(),
+    ovrMin: (sp.get("ovr_min") || "").trim(),
+    ovrMax: (sp.get("ovr_max") || "").trim(),
+    grade: Math.max(1, Math.min(13, Number(sp.get("grade") || 8))),
+    adaptBonus: Math.max(0, Number(sp.get("adapt_bonus") || 0)),
+    position: pos || "ALL",
+    preferredFoot:
+      prefFoot === "RIGHT" || prefFoot === "LEFT" ? prefFoot : "ALL",
+    weakFoot:
+      weakFoot === "3" || weakFoot === "4" || weakFoot === "5"
+        ? weakFoot
+        : "ALL",
+    heightMin: (sp.get("height_min") || "").trim(),
+    heightMax: (sp.get("height_max") || "").trim(),
+    weightMin: (sp.get("weight_min") || "").trim(),
+    weightMax: (sp.get("weight_max") || "").trim(),
+    bodyTypes: bodyTypesRaw
+      ? bodyTypesRaw.split(",").map((s) => s.trim()).filter(Boolean)
+      : [],
+    traits: traitsRaw ? traitsRaw.split(",").map((s) => s.trim()).filter(Boolean) : [],
+  };
 }
 
 export async function GET(
@@ -124,18 +169,35 @@ export async function GET(
 
     // 2. GET /api/fclab/v1/players/search
     if (subPath === "v1/players/search") {
+      const rules = getSystemRules();
       const q = (sp.get("q") || "").trim();
       const pos = (sp.get("position") || "").trim().toUpperCase();
       const season = (sp.get("season") || "").trim();
       const sortBy = sp.get("sort") || "ovr_desc";
       const forceCrawl = sp.get("crawl") === "1";
+      const detailFilter = parseFilterStateFromParams(sp);
 
-      if (q) {
-        const existingMatches = Object.values(store.cards).filter((c) =>
-          c.name.includes(q)
-        );
-        if (existingMatches.length < 3 || forceCrawl) {
-          await crawlPlayerList(q, 40);
+      const hasDetail = hasActiveDetailFilters(detailFilter);
+
+      if (q || hasDetail) {
+        const currentMatches = Object.values(store.cards).filter((c) => {
+          if (q && !c.name.toLowerCase().includes(q.toLowerCase())) return false;
+          return matchesPlayerFilter(
+            enrichPlayerCardMetaSync(c),
+            detailFilter,
+            rules.enhanceOvrBoosts
+          );
+        });
+        if (currentMatches.length < 4 || forceCrawl) {
+          await crawlPlayerList(q, 40, {
+            seasons: detailFilter.seasons,
+            teamColors: detailFilter.teamColors,
+            position: detailFilter.position,
+            ovrMin: detailFilter.ovrMin,
+            ovrMax: detailFilter.ovrMax,
+            salaryMin: detailFilter.salaryMin,
+            salaryMax: detailFilter.salaryMax,
+          });
         }
       }
 
@@ -148,28 +210,64 @@ export async function GET(
       if (pos && pos !== "ALL") {
         filtered = filtered.filter(
           (c) =>
-            c.primary_position === pos ||
-            (c.positions || []).some((p) => p.pos === pos)
+            c.primary_position?.toUpperCase() === pos ||
+            (c.positions || []).some((p) => p.pos?.toUpperCase() === pos)
         );
       }
       if (season && season !== "ALL") {
-        filtered = filtered.filter((c) => c.season_code === season);
+        const normSeason = season.replace(/\s+/g, "").toUpperCase();
+        filtered = filtered.filter(
+          (c) =>
+            (c.season_code || "").replace(/\s+/g, "").toUpperCase() ===
+            normSeason
+        );
+      }
+
+      // 특성/체형/신장/몸무게 필터가 있거나 검색어(q)가 입력된 경우 상위 후보들의 데이터센터 상세 정보(특성 포함) 병렬 수집 보강
+      const needsDetailAbility =
+        detailFilter.traits.length > 0 ||
+        detailFilter.bodyTypes.length > 0 ||
+        detailFilter.heightMin !== "" ||
+        detailFilter.heightMax !== "" ||
+        detailFilter.weightMin !== "" ||
+        detailFilter.weightMax !== "";
+
+      if (needsDetailAbility || q) {
+        const topToCrawl = filtered
+          .filter((c) => !c.has_full_ability)
+          .sort((a, b) => b.ovr - a.ovr)
+          .slice(0, q ? 8 : 6);
+        if (topToCrawl.length > 0) {
+          await Promise.all(
+            topToCrawl.map((cand) => crawlPlayerAbility(cand.spid))
+          );
+        }
+        filtered = Object.values(store.cards);
+        if (q) {
+          filtered = filtered.filter((c) =>
+            c.name.toLowerCase().includes(q.toLowerCase())
+          );
+        }
       }
 
       const trapBadgeFilter = (sp.get("trap_badge") || "ALL").trim().toUpperCase();
-      let enriched = filtered.map((rawCard) => {
-        const c = enrichPlayerCardMetaSync(rawCard);
-        return {
-          ...c,
-          feelMetrics: computePlayerFeelMetricsSync(
-            c,
-            pos && pos !== "ALL" ? pos : c.primary_position,
-            8,
-            0,
-            false
-          ),
-        };
-      });
+      let enriched = filtered
+        .map((rawCard) => {
+          const c = enrichPlayerCardMetaSync(rawCard);
+          return {
+            ...c,
+            feelMetrics: computePlayerFeelMetricsSync(
+              c,
+              pos && pos !== "ALL" ? pos : c.primary_position,
+              detailFilter.grade || 8,
+              detailFilter.adaptBonus || 0,
+              false
+            ),
+          };
+        })
+        .filter((c) =>
+          matchesPlayerFilter(c, detailFilter, rules.enhanceOvrBoosts)
+        );
 
       if (trapBadgeFilter !== "ALL") {
         enriched = enriched.filter(
@@ -540,44 +638,66 @@ export async function POST(
         | Record<string, number>
         | undefined;
 
-      if (playerQuery) {
-        const existing = Object.values(store.cards).filter((c) =>
-          c.name.includes(playerQuery)
-        );
-        if (existing.length < 3) {
-          await crawlPlayerList(playerQuery, 30);
+      const filterObj: PlayerFilterState = {
+        ...DEFAULT_PLAYER_FILTER_STATE,
+        ...(body.filter || {}),
+        grade,
+        adaptBonus: teamColor,
+        position: targetPos === "ALL" ? "ALL" : targetPos,
+      };
+
+      if (playerQuery || hasActiveDetailFilters(filterObj)) {
+        const existing = Object.values(store.cards).filter((c) => {
+          if (playerQuery && !c.name.toLowerCase().includes(playerQuery.toLowerCase())) {
+            return false;
+          }
+          return matchesPlayerFilter(
+            enrichPlayerCardMetaSync(c),
+            filterObj,
+            rules.enhanceOvrBoosts
+          );
+        });
+        if (existing.length < 4) {
+          await crawlPlayerList(playerQuery, 36, {
+            seasons: filterObj.seasons,
+            teamColors: filterObj.teamColors,
+            position: filterObj.position,
+            ovrMin: filterObj.ovrMin,
+            ovrMax: filterObj.ovrMax,
+            salaryMin: filterObj.salaryMin,
+            salaryMax: filterObj.salaryMax,
+          });
         }
       }
 
-      let candidates = Object.values(store.cards);
+      let candidates = Object.values(store.cards).map((c) =>
+        enrichPlayerCardMetaSync(c)
+      );
       if (playerQuery) {
-        candidates = candidates
-          .filter((c) =>
-            c.name.toLowerCase().includes(playerQuery.toLowerCase())
-          )
-          .sort((a, b) => b.ovr - a.ovr)
-          .slice(0, 15);
-      } else {
-        candidates = candidates
-          .filter(
-            (c) =>
-              c.primary_position === targetPos ||
-              (c.positions || []).some((p) => p.pos === targetPos)
-          )
-          .sort((a, b) => b.ovr - a.ovr)
-          .slice(0, 20);
+        candidates = candidates.filter((c) =>
+          c.name.toLowerCase().includes(playerQuery.toLowerCase())
+        );
       }
+      candidates = candidates
+        .filter((c) => matchesPlayerFilter(c, filterObj, rules.enhanceOvrBoosts))
+        .sort((a, b) => b.ovr - a.ovr)
+        .slice(0, 24);
 
       const evaluations = [];
       for (let i = 0; i < candidates.length; i++) {
         let card = candidates[i];
-        if (i < 8 && !card.has_full_ability) {
+        if (i < 10 && !card.has_full_ability) {
           const crawled = await crawlPlayerAbility(card.spid);
-          if (crawled) card = crawled;
+          if (crawled) card = enrichPlayerCardMetaSync(crawled);
         }
+        if (!matchesPlayerFilter(card, filterObj, rules.enhanceOvrBoosts)) {
+          continue;
+        }
+        const evalPos =
+          targetPos === "ALL" ? card.primary_position || "ST" : targetPos;
         const ev = evaluateCardEfficiencySync(
           card,
-          targetPos,
+          evalPos,
           grade,
           teamColor,
           customWeights

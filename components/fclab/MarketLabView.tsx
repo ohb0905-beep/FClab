@@ -70,24 +70,75 @@ const META_GROUP_ORDER: {
   {
     key: "ALL",
     label: "전체 신규 특성 (17종)",
-    shortDesc: "공격·드리블·수비·GK 전체 신규 특성 개별 목록",
+    shortDesc: "공격·중원·수비·GK 전체 신규 특성 개별 목록",
   },
   {
-    key: "공격/슈팅 특성",
-    label: "공격/슈팅 특성 (6종)",
+    key: "공격 특성",
+    label: "⚔️ 공격 특성 (6종)",
     shortDesc:
-      "크로스 포쳐 · 아크로바틱 피니셔 · 레이저 슈터 · 타이탄 · 라인 브레이커 · 프레데터",
+      "크로스 포쳐 · 아크로바틱 피니셔 · 라인 브레이커 · 스피드스터 · 트릭스터 · 타이탄",
   },
   {
-    key: "드리블/스피드/활동량 특성",
-    label: "드리블/스피드/활동량 특성 (3종)",
-    shortDesc: "스피드스터 · 트릭스터 · 2개의 심장",
+    key: "중원 특성",
+    label: "🎯 중원 특성 (3종)",
+    shortDesc: "커맨더 · 레이저 슈터 · 2개의 심장",
   },
   {
-    key: "패스/수비/GK 특성",
-    label: "패스/수비/GK 특성 (8종)",
-    shortDesc:
-      "커맨더 · 블로커 · 파이터 · 와일드 태클러 · 체이서 · GK 빠른 반응 · GK 공중볼 장악 · GK 데드아이",
+    key: "수비 특성",
+    label: "🛡️ 수비 특성 (5종)",
+    shortDesc: "프레데터 · 파이터 · 와일드 태클러 · 블로커 · 체이서",
+  },
+  {
+    key: "GK 특성",
+    label: "🧤 GK 특성 (3종)",
+    shortDesc: "GK 공중볼 장악 · 데드아이 · 빠른 반응",
+  },
+];
+
+const NEW_TRAIT_TIER_ROWS: Array<{
+  tier: "S" | "A" | "B" | "C";
+  title: string;
+  subtitle: string;
+  badgeCls: string;
+  rowBorderCls: string;
+  headerBgCls: string;
+  traits: string[];
+}> = [
+  {
+    tier: "S",
+    title: "S티어 (메타 필수)",
+    subtitle: "상위 랭커 채택률 및 8강 시세 프리미엄 최상위 1티어 코어 특성",
+    badgeCls: "bg-rose-600 text-white",
+    rowBorderCls: "border-rose-500/40 bg-rose-950/10",
+    headerBgCls: "bg-rose-500/15 border-rose-500/30 text-rose-200",
+    traits: ["라인 브레이커", "레이저 슈터", "2개의 심장", "스피드스터", "파이터"],
+  },
+  {
+    tier: "A",
+    title: "A티어 (고성능 주류)",
+    subtitle: "포지션별 확실한 체감 우위와 높은 시세 방어력을 지닌 주류 특성",
+    badgeCls: "bg-amber-500 text-slate-950",
+    rowBorderCls: "border-amber-500/40 bg-amber-950/10",
+    headerBgCls: "bg-amber-500/15 border-amber-500/30 text-amber-200",
+    traits: ["아크로바틱 피니셔", "타이탄", "커맨더", "프레데터", "블로커", "체이서"],
+  },
+  {
+    tier: "B",
+    title: "B티어 (상황별 유효)",
+    subtitle: "전술 스타일(크로스·개인기·강압박) 및 GK 세팅에 따라 유효한 특성",
+    badgeCls: "bg-sky-500 text-slate-950",
+    rowBorderCls: "border-sky-500/35 bg-sky-950/10",
+    headerBgCls: "bg-sky-500/15 border-sky-500/30 text-sky-200",
+    traits: ["크로스 포쳐", "트릭스터", "와일드 태클러", "GK 빠른 반응"],
+  },
+  {
+    tier: "C",
+    title: "C티어 (비주류)",
+    subtitle: "특정 상황 한정 발동으로 시세 프리미엄 영향도가 상대적으로 낮은 특성",
+    badgeCls: "bg-slate-600 text-slate-100",
+    rowBorderCls: "border-slate-700 bg-slate-900/40",
+    headerBgCls: "bg-slate-800/80 border-slate-700 text-slate-300",
+    traits: ["GK 공중볼 장악", "GK 데드아이"],
   },
 ];
 
@@ -432,11 +483,21 @@ export default function MarketLabView({
       const metaGroup: NewTraitMetaGroup =
         cat.meta_group ??
         p?.meta_group ??
-        (cat.category === "슈팅·득점" || cat.category === "침투·오프더볼"
-          ? "공격/슈팅 특성"
-          : cat.category === "드리블·탈압박"
-          ? "드리블/스피드/활동량 특성"
-          : "패스/수비/GK 특성");
+        (cat.trait_name === "프레데터" ||
+        cat.trait_name === "파이터" ||
+        cat.trait_name === "와일드 태클러" ||
+        cat.trait_name === "블로커" ||
+        cat.trait_name === "체이서"
+          ? "수비 특성"
+          : cat.trait_name === "커맨더" ||
+            cat.trait_name === "레이저 슈터" ||
+            cat.trait_name === "2개의 심장"
+          ? "중원 특성"
+          : cat.trait_name.includes("GK") ||
+            cat.trait_name === "데드아이" ||
+            cat.trait_name === "빠른 반응"
+          ? "GK 특성"
+          : "공격 특성");
 
       const rankerUsage =
         p?.ranker_usage_pct ??
@@ -1199,10 +1260,131 @@ export default function MarketLabView({
       )}
 
       {/* =====================================================================
-          MODE 2: [🔥 신규 특성 메타 분석] (17종 개별 분리 + 유저 맞춤형 다중 비교)
+          MODE 2: [🔥 신규 특성 메타 분석] (4대 카테고리 재분류 + 티어표 + 유저 맞춤형 다중 비교)
       ===================================================================== */}
       {dashboard && mainSubTab === "NEW_TRAIT_META" && (
         <div className="space-y-6">
+          {/* 0. 신규 특성 티어표 (Trait Tier List: S / A / B / C) */}
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-xs space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30 mb-1">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  TRAIT TIER LIST · 신규 특성 17종 메타 티어표
+                </div>
+                <h3 className="text-lg font-extrabold text-slate-900 dark:text-white">
+                  신규 특성 17종 인게임 가치 &amp; 메타 위상 티어표 (S / A / B / C)
+                </h3>
+                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                  공격(6종) · 중원(3종) · 수비(5종, 프레데터 포함) · GK(3종) 각 특성의 공식 아이콘과 평균 시세 프리미엄(%)을 한눈에 파악하고 클릭하여 비교 대상에 추가할 수 있습니다.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                <span className="px-2 py-0.5 rounded border border-rose-500/40 bg-rose-950/40 text-rose-300 font-bold">
+                  ⚔️ 공격 특성 6종
+                </span>
+                <span className="px-2 py-0.5 rounded border border-amber-500/40 bg-amber-950/40 text-amber-300 font-bold">
+                  🎯 중원 특성 3종
+                </span>
+                <span className="px-2 py-0.5 rounded border border-sky-500/40 bg-sky-950/40 text-sky-300 font-bold">
+                  🛡️ 수비 특성 5종
+                </span>
+                <span className="px-2 py-0.5 rounded border border-emerald-500/40 bg-emerald-950/40 text-emerald-300 font-bold">
+                  🧤 GK 특성 3종
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              {NEW_TRAIT_TIER_ROWS.map((row) => {
+                const rowTraits = row.traits
+                  .map((tName) =>
+                    combinedTraits.find((ct) => ct.trait_name === tName)
+                  )
+                  .filter((item): item is CombinedTraitItem => Boolean(item));
+
+                return (
+                  <div
+                    key={row.tier}
+                    className={`rounded-xl border ${row.rowBorderCls} overflow-hidden flex flex-col md:flex-row`}
+                  >
+                    {/* Tier Header */}
+                    <div
+                      className={`md:w-52 shrink-0 p-3.5 border-b md:border-b-0 md:border-r ${row.headerBgCls} flex flex-col justify-center`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`inline-flex h-6 w-6 items-center justify-center rounded-md text-xs font-black ${row.badgeCls}`}
+                        >
+                          {row.tier}
+                        </span>
+                        <span className="text-xs font-black tracking-tight">
+                          {row.title}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[10px] opacity-85 leading-snug">
+                        {row.subtitle}
+                      </p>
+                    </div>
+
+                    {/* Trait Badges */}
+                    <div className="flex-1 p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-2 bg-slate-950/50">
+                      {rowTraits.map((t) => {
+                        const isSelected = selectedCompareTraits.includes(
+                          t.trait_name
+                        );
+                        const groupTagCls =
+                          t.meta_group === "공격 특성"
+                            ? "border-rose-500/40 bg-rose-950/50 text-rose-300"
+                            : t.meta_group === "중원 특성"
+                            ? "border-amber-500/40 bg-amber-950/50 text-amber-300"
+                            : t.meta_group === "수비 특성"
+                            ? "border-sky-500/40 bg-sky-950/50 text-sky-300"
+                            : "border-emerald-500/40 bg-emerald-950/50 text-emerald-300";
+
+                        return (
+                          <button
+                            key={t.trait_id}
+                            type="button"
+                            onClick={() => toggleCompareTrait(t.trait_name)}
+                            className={`rounded-xl border p-2.5 text-left transition-all flex items-center gap-2.5 cursor-pointer ${
+                              isSelected
+                                ? "border-sky-400 bg-sky-950/40 ring-1 ring-sky-400/50"
+                                : "border-slate-800 bg-slate-900/90 hover:border-slate-700"
+                            }`}
+                          >
+                            {t.icon_url && (
+                              <img
+                                src={t.icon_url}
+                                alt={t.trait_name}
+                                className="w-8 h-8 rounded-lg bg-slate-950 border border-slate-800 p-1 object-contain shrink-0"
+                              />
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-extrabold text-white truncate">
+                                {t.trait_name}
+                              </div>
+                              <div className="mt-0.5 flex items-center gap-1.5 flex-wrap">
+                                <span
+                                  className={`rounded border px-1 py-0.2 text-[9px] font-bold ${groupTagCls}`}
+                                >
+                                  {t.meta_group.replace(" 특성", "")}
+                                </span>
+                                <span className="text-[10px] font-mono font-bold text-rose-400">
+                                  +{t.controlled_premium_pct.toFixed(1)}%
+                                </span>
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           {/* 1. 유저 맞춤형 다중 특성 비교 인터랙티브 패널 */}
           <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-xs space-y-5">
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
@@ -1212,10 +1394,10 @@ export default function MarketLabView({
                   유저 맞춤형 신규 특성 1:1 / 다중 비교기
                 </div>
                 <h3 className="text-lg font-extrabold text-slate-900 dark:text-white">
-                  비교할 신규 특성을 2개 이상 선택해 실사용률·프리미엄·30일 시세를 비교하세요
+                  비교할 신규 특성을 선택해 랭커 사용률(%)과 가격 프리미엄(%)을 1:1 및 다중 비교하세요
                 </h3>
                 <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-                  크로스 포쳐 · 아크로바틱 피니셔 · 레이저 슈터 등 17종 신규 특성이 절대 하나로 묶이지 않고 개별 단위로 정밀 비교됩니다.
+                  공격 특성(6종) · 중원 특성(3종) · 수비 특성(5종) · GK 특성(3종)이 절대 하나로 묶이지 않고 개별 단위로 정밀 비교됩니다.
                 </p>
               </div>
 
@@ -1227,50 +1409,52 @@ export default function MarketLabView({
                     setSelectedCompareTraits([
                       "크로스 포쳐",
                       "아크로바틱 피니셔",
-                      "레이저 슈터",
+                      "라인 브레이커",
+                      "스피드스터",
                     ])
                   }
                   className="px-3 py-1.5 rounded-xl text-xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800 transition-colors cursor-pointer"
                 >
-                  ⚡ 슈팅 3대장 비교 (크로스 포쳐·아크로바틱·레이저 슈터)
+                  ⚔️ 공격 코어 비교 (크로스 포쳐·아크로바틱·라인 브레이커·스피드스터)
                 </button>
                 <button
                   type="button"
                   onClick={() =>
                     setSelectedCompareTraits([
-                      "라인 브레이커",
-                      "타이탄",
-                      "프레데터",
+                      "커맨더",
+                      "레이저 슈터",
+                      "2개의 심장",
                     ])
                   }
                   className="px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 transition-colors cursor-pointer"
                 >
-                  🎯 침투·피지컬 비교 (라인 브레이커·타이탄·프레데터)
+                  🎯 중원 3종 비교 (커맨더·레이저 슈터·2개의 심장)
                 </button>
                 <button
                   type="button"
                   onClick={() =>
                     setSelectedCompareTraits([
-                      "스피드스터",
-                      "2개의 심장",
-                      "커맨더",
+                      "프레데터",
+                      "파이터",
                       "블로커",
+                      "체이서",
                     ])
                   }
                   className="px-3 py-1.5 rounded-xl text-xs font-bold bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800 transition-colors cursor-pointer"
                 >
-                  🛡️ 2선·수비 코어 비교 (스피드스터·2개의 심장·커맨더·블로커)
+                  🛡️ 수비 코어 비교 (프레데터·파이터·블로커·체이서)
                 </button>
               </div>
             </div>
 
-            {/* 17종 전체 개별 특성 선택 칩 (3대 그룹별 구분) */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800">
+            {/* 17종 전체 개별 특성 선택 칩 (4대 카테고리 구분) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800">
               {(
                 [
-                  "공격/슈팅 특성",
-                  "드리블/스피드/활동량 특성",
-                  "패스/수비/GK 특성",
+                  "공격 특성",
+                  "중원 특성",
+                  "수비 특성",
+                  "GK 특성",
                 ] as NewTraitMetaGroup[]
               ).map((groupName) => {
                 const groupTraits = combinedTraits.filter(
@@ -1555,7 +1739,7 @@ export default function MarketLabView({
                   FC 온라인 17종 신규 특성 개별 메타 리포트
                 </h3>
                 <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-                  공격/슈팅(6종) · 드리블/스피드/활동량(3종) · 패스/수비/GK(8종) 각 특성의 개별 프리미엄과 대장 선수를 확인하세요.
+                  ⚔️ 공격 특성(6종) · 🎯 중원 특성(3종) · 🛡️ 수비 특성(5종, 프레데터 포함) · 🧤 GK 특성(3종) 각 특성의 개별 프리미엄과 대장 선수를 확인하세요.
                 </p>
               </div>
 

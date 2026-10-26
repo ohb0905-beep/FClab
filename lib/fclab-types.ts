@@ -114,6 +114,7 @@ export interface TeamColorItem {
   id: string;
   type: string;
   name: string;
+  logoUrl?: string;
 }
 
 export interface PriceGradeInfo {
@@ -508,14 +509,663 @@ export const ENHANCEMENT_BONUS_MAP: Record<number, number> =
 
 export function formatBpKorean(bp: number): string {
   if (!bp || bp <= 0) return "-";
-  const eok = Math.floor(bp / 100_000_000);
+  const jo = Math.floor(bp / 1_000_000_000_000);
+  const eok = Math.floor((bp % 1_000_000_000_000) / 100_000_000);
   const man = Math.floor((bp % 100_000_000) / 10_000);
-  const rest = bp % 10_000;
+  const rest = Math.floor(bp % 10_000);
   const parts: string[] = [];
+  if (jo > 0) parts.push(`${jo.toLocaleString()}조`);
   if (eok > 0) parts.push(`${eok.toLocaleString()}억`);
-  if (man > 0) parts.push(`${man.toLocaleString()}만`);
+  if (jo === 0 && man > 0) parts.push(`${man.toLocaleString()}만`);
   if (parts.length === 0 && rest > 0) parts.push(`${rest.toLocaleString()}`);
-  return parts.join(" ");
+  return `${parts.join(" ")} BP`;
+}
+
+export const OFFICIAL_NEW_TRAIT_NAMES_17 = [
+  "크로스 포쳐",
+  "아크로바틱 피니셔",
+  "라인 브레이커",
+  "스피드스터",
+  "트릭스터",
+  "타이탄",
+  "커맨더",
+  "레이저 슈터",
+  "2개의 심장",
+  "프레데터",
+  "파이터",
+  "와일드 태클러",
+  "블로커",
+  "체이서",
+  "GK 공중볼 장악",
+  "GK 데드아이",
+  "GK 빠른 반응",
+] as const;
+
+export const OFFICIAL_GENERAL_TRAIT_NAMES = [
+  "예리한 감아차기",
+  "아웃사이드 슈팅/크로스",
+  "파워 헤더",
+  "화려한 개인기",
+  "긴 패스 선호",
+  "얼리 크로스 선호",
+  "주발 선호",
+  "유리몸",
+  "강철몸",
+  "승부욕",
+  "슬라이딩 태클 선호",
+  "스위퍼 키퍼",
+  "장거리 스로인",
+  "초 장거리 스로인",
+  "스피드 드리블러",
+  "테크니컬 드리블러",
+  "플레이 메이커",
+  "중거리 슛 선호",
+  "칩슛 선호",
+  "패스 마스터",
+  "화려한 걷어내기",
+  "파울 유도 선호",
+  "개인 플레이 선호",
+  "선호 포지션 고집",
+  "트러블 메이커",
+  "GK 적극적 크로스 수비",
+  "GK 소극적 크로스 수비",
+  "GK 멀리 던지기",
+  "GK 침착한 1:1 수비",
+  "GK 능숙한 펀칭",
+  "GK 공격 가담",
+] as const;
+
+export const OFFICIAL_TRAIT_ICON_ID_MAP: Record<string, string> = {
+  // 공식 신규 특성 17종 (level 8, trait_icon_50 ~ 68)
+  "아크로바틱 피니셔": "50",
+  "크로스 포쳐": "51",
+  "라인 브레이커": "52",
+  "와일드 태클러": "53",
+  "체이서": "54",
+  "2개의 심장": "55",
+  "파이터": "56",
+  "GK 빠른 반응": "57",
+  "빠른 반응": "57",
+  "커맨더": "59",
+  "GK 공중볼 장악": "60",
+  "공중볼 장악": "60",
+  "블로커": "62",
+  "스피드스터": "63",
+  "타이탄": "64",
+  "트릭스터": "65",
+  "레이저 슈터": "66",
+  "프레데터": "67",
+  "GK 데드아이": "68",
+  "데드아이": "68",
+  // 공식 일반 특성 (level 5, trait_icon_00 ~ 49)
+  "선호 포지션 고집": "00",
+  "장거리 스로인": "01",
+  "파울 유도 선호": "03",
+  "유리몸": "04",
+  "강철몸": "05",
+  "주발 선호": "06",
+  "슬라이딩 태클 선호": "07",
+  "개인 플레이 선호": "09",
+  "개인기 선호": "09",
+  "트러블 메이커": "11",
+  "얼리 크로스 선호": "12",
+  "예리한 감아차기": "13",
+  "화려한 개인기": "14",
+  "플레어": "14",
+  "긴 패스 선호": "15",
+  "중거리 슛 선호": "16",
+  "스피드 드리블러": "17",
+  "플레이 메이커": "18",
+  "플레이메이커": "18",
+  "GK 공격 가담": "19",
+  "GK 능숙한 펀칭": "20",
+  "GK 날렵한 펀칭": "20",
+  "GK 멀리 던지기": "21",
+  "파워 헤더": "22",
+  "GK 침착한 1:1 수비": "23",
+  "GK 1:1 수비": "23",
+  "초 장거리 스로인": "24",
+  "초장거리 스로인": "24",
+  "아웃사이드 슈팅/크로스": "25",
+  "아웃사이드 슈팅": "25",
+  "패스 마스터": "27",
+  "승부욕": "28",
+  "능숙한 몸싸움": "28",
+  "화려한 걷어내기": "29",
+  "칩슛 선호": "41",
+  "테크니컬 드리블러": "42",
+  "스위퍼 키퍼": "43",
+  "GK 스위퍼 키퍼": "43",
+  "GK 소극적 크로스 수비": "48",
+  "GK 적극적 크로스 수비": "49",
+};
+
+export function getOfficialTraitIconUrl(traitName: string, existingIcon?: string): string {
+  if (existingIcon && existingIcon.startsWith("http")) {
+    return existingIcon;
+  }
+  const clean = (traitName || "").trim();
+  const id = OFFICIAL_TRAIT_ICON_ID_MAP[clean];
+  if (id) {
+    return `https://fco.dn.nexoncdn.co.kr/live/externalAssets/common/traits/trait_icon_${id}.png`;
+  }
+  return "";
+}
+
+import {
+  OFFICIAL_NEXON_SEASONS,
+  OFFICIAL_DATACENTER_TEAM_COLORS,
+  OfficialSeasonCatalogItem,
+  OfficialTeamColorCatalogItem,
+} from "./fclab-official-catalog";
+
+export {
+  OFFICIAL_NEXON_SEASONS,
+  OFFICIAL_DATACENTER_TEAM_COLORS,
+  type OfficialSeasonCatalogItem,
+  type OfficialTeamColorCatalogItem,
+};
+
+const OFFICIAL_SEASON_BY_CODE = new Map<string, OfficialSeasonCatalogItem>();
+for (const s of OFFICIAL_NEXON_SEASONS) {
+  OFFICIAL_SEASON_BY_CODE.set(s.code.replace(/\s+/g, "").toUpperCase(), s);
+  OFFICIAL_SEASON_BY_CODE.set(s.label.replace(/\s+/g, "").toUpperCase(), s);
+}
+
+const OFFICIAL_TC_BY_NAME = new Map<string, OfficialTeamColorCatalogItem>();
+const OFFICIAL_TC_BY_ID = new Map<string, OfficialTeamColorCatalogItem>();
+for (const tc of OFFICIAL_DATACENTER_TEAM_COLORS) {
+  OFFICIAL_TC_BY_NAME.set(tc.name.trim(), tc);
+  OFFICIAL_TC_BY_ID.set(String(tc.id).trim(), tc);
+}
+
+export function findOfficialTeamColorByNameOrId(
+  nameOrId: string
+): OfficialTeamColorCatalogItem | undefined {
+  const clean = (nameOrId || "").trim();
+  if (!clean) return undefined;
+  return OFFICIAL_TC_BY_ID.get(clean) || OFFICIAL_TC_BY_NAME.get(clean);
+}
+
+export function getOfficialSeasonImgUrl(seasonCode: string, explicitImg?: string): string {
+  if (explicitImg && explicitImg.startsWith("http")) {
+    const codeMatch = explicitImg.match(/\/([^/]+)\.png$/i);
+    if (codeMatch && (explicitImg.includes("/fo4/") || !explicitImg.includes("/new/season/"))) {
+      const low = codeMatch[1].toLowerCase();
+      if (low === "icontm" || low === "icon_m") {
+        return "https://ssl.nexon.com/s2/game/fc/online/obt/externalAssets/new/season/icontm.png";
+      }
+      return `https://ssl.nexon.com/s2/game/fc/online/obt/externalAssets/new/season/${low}.png`;
+    }
+    return explicitImg;
+  }
+  const norm = (seasonCode || "").trim().replace(/\s+/g, "").toUpperCase();
+  if (!norm) return "";
+  const matchedSeason = OFFICIAL_SEASON_BY_CODE.get(norm);
+  if (matchedSeason?.seasonImg) {
+    return matchedSeason.seasonImg;
+  }
+  const raw = norm.toLowerCase();
+  if (raw === "icontm" || raw === "icon_m") {
+    return "https://ssl.nexon.com/s2/game/fc/online/obt/externalAssets/new/season/icontm.png";
+  }
+  if (raw === "26toty-n" || raw === "26totn") {
+    return "https://ssl.nexon.com/s2/game/fc/online/obt/externalAssets/new/season/26totn.png";
+  }
+  if (raw === "25toty-n" || raw === "25totn") {
+    return "https://ssl.nexon.com/s2/game/fc/online/obt/externalAssets/new/season/25totn.png";
+  }
+  return `https://ssl.nexon.com/s2/game/fc/online/obt/externalAssets/new/season/${raw}.png`;
+}
+
+export const VALID_OFFICIAL_TRAIT_SET = new Set<string>([
+  ...OFFICIAL_NEW_TRAIT_NAMES_17,
+  ...OFFICIAL_GENERAL_TRAIT_NAMES,
+  "아웃사이드 슈팅",
+  "플레이메이커",
+  "초장거리 스로인",
+  "GK 1:1 수비",
+  "GK 날렵한 펀칭",
+  "데드아이",
+  "빠른 반응",
+]);
+
+export const BANNED_FAKE_TRAIT_SET = new Set<string>([
+  "택배 크로스",
+  "초장거리 슈터",
+  "진공청소기",
+  "철벽",
+]);
+
+export const BANNED_DUMMY_TEAM_COLORS = new Set<string>([
+  "단일팀",
+  "기본 팀컬러",
+  "올스타",
+  "소속 팀컬러",
+  "관계 팀컬러",
+  "강화 팀컬러",
+  "특성 팀컬러",
+  "기타",
+  "무소속",
+  // 실제 인게임에 존재하지 않는 임의 생성 팀컬러 전면 차단
+  "발롱도르",
+  "트레블",
+  "무패우승",
+  "갈락티코",
+  "유럽 챔피언",
+  "월드컵 우승",
+  "2002 전설",
+]);
+
+const NATION_FLAG_URL_MAP: Record<string, string> = {
+  대한민국: "https://flagcdn.com/w40/kr.png",
+  브라질: "https://flagcdn.com/w40/br.png",
+  프랑스: "https://flagcdn.com/w40/fr.png",
+  잉글랜드: "https://flagcdn.com/w40/gb-eng.png",
+  네덜란드: "https://flagcdn.com/w40/nl.png",
+  스페인: "https://flagcdn.com/w40/es.png",
+  독일: "https://flagcdn.com/w40/de.png",
+  포르투갈: "https://flagcdn.com/w40/pt.png",
+  아르헨티나: "https://flagcdn.com/w40/ar.png",
+  이탈리아: "https://flagcdn.com/w40/it.png",
+  벨기에: "https://flagcdn.com/w40/be.png",
+  우루과이: "https://flagcdn.com/w40/uy.png",
+  모로코: "https://flagcdn.com/w40/ma.png",
+  크로아티아: "https://flagcdn.com/w40/hr.png",
+  노르웨이: "https://flagcdn.com/w40/no.png",
+  폴란드: "https://flagcdn.com/w40/pl.png",
+  스웨덴: "https://flagcdn.com/w40/se.png",
+  코트디부아르: "https://flagcdn.com/w40/ci.png",
+  가나: "https://flagcdn.com/w40/gh.png",
+  카메룬: "https://flagcdn.com/w40/cm.png",
+  이집트: "https://flagcdn.com/w40/eg.png",
+  일본: "https://flagcdn.com/w40/jp.png",
+  웨일스: "https://flagcdn.com/w40/gb-wls.png",
+  세르비아: "https://flagcdn.com/w40/rs.png",
+  스위스: "https://flagcdn.com/w40/ch.png",
+  덴마크: "https://flagcdn.com/w40/dk.png",
+  콜롬비아: "https://flagcdn.com/w40/co.png",
+};
+
+function makeCrestSvgDataUrl(code: string, bgHex: string, fgHex: string, accentHex?: string): string {
+  const ring = accentHex || fgHex;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${bgHex}"/><stop offset="100%" stop-color="#0f172a"/></linearGradient></defs><path d="M20 2 L35 8 L35 21 C35 30 28 36 20 38 C12 36 5 30 5 21 L5 8 Z" fill="url(#g)" stroke="${ring}" stroke-width="2.2"/><text x="20" y="24" text-anchor="middle" fill="${fgHex}" font-family="Arial, sans-serif" font-weight="900" font-size="11">${code}</text></svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+const CLUB_EMBLEM_URL_MAP: Record<string, string> = {
+  "레알 마드리드": makeCrestSvgDataUrl("RMA", "#1e3a8a", "#fde047", "#facc15"),
+  "FC 바르셀로나": makeCrestSvgDataUrl("BAR", "#9f1239", "#fde047", "#1d4ed8"),
+  바르셀로나: makeCrestSvgDataUrl("BAR", "#9f1239", "#fde047", "#1d4ed8"),
+  "인터 밀란": makeCrestSvgDataUrl("INT", "#1d4ed8", "#ffffff", "#60a5fa"),
+  "맨체스터 시티": makeCrestSvgDataUrl("MCI", "#0284c7", "#ffffff", "#bae6fd"),
+  "바이에른 뮌헨": makeCrestSvgDataUrl("FCB", "#dc2626", "#ffffff", "#fca5a5"),
+  "첼시 FC": makeCrestSvgDataUrl("CHE", "#1d4ed8", "#ffffff", "#93c5fd"),
+  첼시: makeCrestSvgDataUrl("CHE", "#1d4ed8", "#ffffff", "#93c5fd"),
+  "AC 밀란": makeCrestSvgDataUrl("ACM", "#b91c1c", "#ffffff", "#f87171"),
+  아스널: makeCrestSvgDataUrl("ARS", "#dc2626", "#ffffff", "#fde047"),
+  "아스널 FC": makeCrestSvgDataUrl("ARS", "#dc2626", "#ffffff", "#fde047"),
+  "토트넘 홋스퍼": makeCrestSvgDataUrl("TOT", "#1e293b", "#f8fafc", "#94a3b8"),
+  "맨체스터 유나이티드": makeCrestSvgDataUrl("MUN", "#b91c1c", "#fde047", "#facc15"),
+  "리버풀 FC": makeCrestSvgDataUrl("LIV", "#991b1b", "#fde047", "#f87171"),
+  리버풀: makeCrestSvgDataUrl("LIV", "#991b1b", "#fde047", "#f87171"),
+  "파리 생제르맹": makeCrestSvgDataUrl("PSG", "#1e3a8a", "#f43f5e", "#93c5fd"),
+  "바이어 04 레버쿠젠": makeCrestSvgDataUrl("B04", "#dc2626", "#ffffff", "#f87171"),
+  "보루시아 도르트문트": makeCrestSvgDataUrl("BVB", "#eab308", "#0f172a", "#fde047"),
+  "SSC 나폴리": makeCrestSvgDataUrl("NAP", "#0284c7", "#ffffff", "#7dd3fc"),
+  "PSV 에인트호번": makeCrestSvgDataUrl("PSV", "#dc2626", "#ffffff", "#fca5a5"),
+  "아틀레티코 마드리드": makeCrestSvgDataUrl("ATM", "#b91c1c", "#ffffff", "#3b82f6"),
+  유벤투스: makeCrestSvgDataUrl("JUV", "#1e293b", "#ffffff", "#cbd5e1"),
+  "아인트라흐트 프랑크푸르트": makeCrestSvgDataUrl("SGE", "#18181b", "#f87171", "#ef4444"),
+  "함부르크 SV": makeCrestSvgDataUrl("HSV", "#1d4ed8", "#ffffff", "#93c5fd"),
+  "비야레알 CF": makeCrestSvgDataUrl("VIL", "#eab308", "#0f172a", "#fde047"),
+  "발렌시아 CF": makeCrestSvgDataUrl("VAL", "#ea580c", "#ffffff", "#fdba74"),
+  "RCD 마요르카": makeCrestSvgDataUrl("MLL", "#b91c1c", "#fde047", "#f87171"),
+  "레알 소시에다드": makeCrestSvgDataUrl("RSO", "#2563eb", "#ffffff", "#93c5fd"),
+  "사우샘프턴 FC": makeCrestSvgDataUrl("SOU", "#dc2626", "#ffffff", "#fca5a5"),
+  "셀틱 FC": makeCrestSvgDataUrl("CEL", "#16a34a", "#ffffff", "#86efac"),
+  "전북 현대 모터스": makeCrestSvgDataUrl("JBH", "#15803d", "#fde047", "#4ade80"),
+  "페네르바체 SK": makeCrestSvgDataUrl("FEN", "#1e3a8a", "#fde047", "#facc15"),
+};
+
+export function getTeamColorLogoUrl(name: string, type?: string, id?: string): string {
+  if (id) {
+    const byId = OFFICIAL_TC_BY_ID.get(String(id).trim());
+    if (byId?.img) return byId.img;
+  }
+  const clean = (name || "").trim();
+  if (!clean) return "";
+  const byName = OFFICIAL_TC_BY_NAME.get(clean);
+  if (byName?.img) {
+    return byName.img;
+  }
+  if (NATION_FLAG_URL_MAP[clean]) {
+    return NATION_FLAG_URL_MAP[clean];
+  }
+  if (CLUB_EMBLEM_URL_MAP[clean]) {
+    return CLUB_EMBLEM_URL_MAP[clean];
+  }
+  for (const [k, url] of Object.entries(CLUB_EMBLEM_URL_MAP)) {
+    if (clean.includes(k)) return url;
+  }
+  const code = clean
+    .replace(/[^A-Za-z가-힣0-9]/g, "")
+    .slice(0, 3)
+    .toUpperCase();
+  if (type === "국가대표") {
+    return makeCrestSvgDataUrl(code || "NAT", "#e11d48", "#ffffff", "#fda4af");
+  }
+  if (type === "특성" || type === "관계") {
+    return makeCrestSvgDataUrl(code || "SPC", "#7c3aed", "#fde047", "#c4b5fd");
+  }
+  return makeCrestSvgDataUrl(code || "CLB", "#2563eb", "#ffffff", "#60a5fa");
+}
+
+export interface PlayerFilterState {
+  seasons: string[];
+  teamColors: string[];
+  salaryMin: string;
+  salaryMax: string;
+  ovrMin: string;
+  ovrMax: string;
+  grade: number;
+  adaptBonus: number;
+  position: string;
+  preferredFoot: "ALL" | "RIGHT" | "LEFT";
+  weakFoot: "ALL" | "3" | "4" | "5";
+  heightMin: string;
+  heightMax: string;
+  weightMin: string;
+  weightMax: string;
+  bodyTypes: string[];
+  traits: string[];
+}
+
+export const DEFAULT_PLAYER_FILTER_STATE: PlayerFilterState = {
+  seasons: [],
+  teamColors: [],
+  salaryMin: "",
+  salaryMax: "",
+  ovrMin: "",
+  ovrMax: "",
+  grade: 8,
+  adaptBonus: 0,
+  position: "ALL",
+  preferredFoot: "ALL",
+  weakFoot: "ALL",
+  heightMin: "",
+  heightMax: "",
+  weightMin: "",
+  weightMax: "",
+  bodyTypes: [],
+  traits: [],
+};
+
+export const FILTER_POSITIONS = [
+  "ALL",
+  "ST",
+  "CF",
+  "LW",
+  "RW",
+  "CAM",
+  "CM",
+  "CDM",
+  "CB",
+  "LB",
+  "RB",
+  "GK",
+] as const;
+
+export const FILTER_BODY_TYPES = [
+  "마름",
+  "고유 마름",
+  "보통",
+  "건장",
+  "고유 건장",
+] as const;
+
+export function countActiveDetailFilters(filter: PlayerFilterState): number {
+  let count = 0;
+  if (filter.seasons.length > 0) count += filter.seasons.length;
+  if (filter.teamColors.length > 0) count += filter.teamColors.length;
+  if (filter.salaryMin.trim() !== "" || filter.salaryMax.trim() !== "") count += 1;
+  if (filter.ovrMin.trim() !== "" || filter.ovrMax.trim() !== "") count += 1;
+  if (filter.position !== "ALL") count += 1;
+  if (filter.preferredFoot !== "ALL") count += 1;
+  if (filter.weakFoot !== "ALL") count += 1;
+  if (filter.heightMin.trim() !== "" || filter.heightMax.trim() !== "") count += 1;
+  if (filter.weightMin.trim() !== "" || filter.weightMax.trim() !== "") count += 1;
+  if (filter.bodyTypes.length > 0) count += filter.bodyTypes.length;
+  if (filter.traits.length > 0) count += filter.traits.length;
+  return count;
+}
+
+export function hasActiveDetailFilters(filter: PlayerFilterState): boolean {
+  return countActiveDetailFilters(filter) > 0;
+}
+
+function parseCardFootDetail(footRaw?: string): {
+  left: number;
+  right: number;
+  weakFoot: number;
+  preferred: "RIGHT" | "LEFT" | "BOTH";
+} {
+  const raw = (footRaw || "L4 - R5").trim();
+  const m = raw.match(/L\s*(\d+)\s*[-–~]\s*R\s*(\d+)/i);
+  if (m) {
+    const l = Math.max(1, Math.min(5, Number(m[1])));
+    const r = Math.max(1, Math.min(5, Number(m[2])));
+    const weak = Math.min(l, r);
+    const preferred = l === r ? "BOTH" : r > l ? "RIGHT" : "LEFT";
+    return { left: l, right: r, weakFoot: weak, preferred };
+  }
+  return { left: 4, right: 5, weakFoot: 4, preferred: "RIGHT" };
+}
+
+export function matchesPlayerFilter(
+  card: PlayerCard,
+  filter: PlayerFilterState,
+  enhanceOvrBoosts: number[] = DEFAULT_ENHANCE_OVR_BOOSTS
+): boolean {
+  // 1. 시즌 선택
+  if (filter.seasons.length > 0) {
+    const cardSeasonNorm = (card.season_code || "")
+      .replace(/\s+/g, "")
+      .toUpperCase();
+    const matchedSeason = filter.seasons.some((s) => {
+      const targetNorm = s.replace(/\s+/g, "").toUpperCase();
+      return (
+        cardSeasonNorm === targetNorm ||
+        cardSeasonNorm.includes(targetNorm) ||
+        targetNorm.includes(cardSeasonNorm) ||
+        String(card.season_id) === targetNorm
+      );
+    });
+    if (!matchedSeason) return false;
+  }
+
+  // 2. 팀컬러 선택
+  if (filter.teamColors.length > 0) {
+    const cardTcNames = new Set<string>();
+    const cardTcIds = new Set<string>();
+    if (card.nation) cardTcNames.add(card.nation.trim());
+    if (card.team) cardTcNames.add(card.team.trim());
+    for (const tc of card.team_colors || []) {
+      if (tc.name) cardTcNames.add(tc.name.trim());
+      if (tc.id) cardTcIds.add(String(tc.id).trim());
+    }
+    const cardTcArr = Array.from(cardTcNames);
+    const matchedTc = filter.teamColors.some((selectedTc) => {
+      const cleanSel = selectedTc.trim();
+      const officialTc = findOfficialTeamColorByNameOrId(cleanSel);
+      if (officialTc && cardTcIds.has(String(officialTc.id))) {
+        return true;
+      }
+      return cardTcArr.some(
+        (cName) =>
+          cName === cleanSel ||
+          cName.includes(cleanSel) ||
+          cleanSel.includes(cName)
+      );
+    });
+    if (!matchedTc) return false;
+  }
+
+  // 3. 급여 범위
+  const sMin = Number(filter.salaryMin);
+  const sMax = Number(filter.salaryMax);
+  if (filter.salaryMin.trim() !== "" && !Number.isNaN(sMin) && card.salary < sMin) {
+    return false;
+  }
+  if (filter.salaryMax.trim() !== "" && !Number.isNaN(sMax) && card.salary > sMax) {
+    return false;
+  }
+
+  // 4. 오버롤(OVR) 범위
+  const oMin = Number(filter.ovrMin);
+  const oMax = Number(filter.ovrMax);
+  const enhAdd = getEnhanceOvrBoost(filter.grade || 8, enhanceOvrBoosts);
+  const effectiveOvr = card.ovr + enhAdd + (filter.adaptBonus || 0);
+  if (filter.ovrMin.trim() !== "" && !Number.isNaN(oMin)) {
+    if (effectiveOvr < oMin && card.ovr < oMin) return false;
+  }
+  if (filter.ovrMax.trim() !== "" && !Number.isNaN(oMax)) {
+    if (effectiveOvr > oMax && card.ovr > oMax) return false;
+  }
+
+  // 5. 포지션
+  if (filter.position && filter.position !== "ALL") {
+    const targetPos = filter.position.toUpperCase();
+    const hasPos =
+      card.primary_position?.toUpperCase() === targetPos ||
+      (card.positions || []).some((p) => p.pos?.toUpperCase() === targetPos);
+    if (!hasPos) return false;
+  }
+
+  // 6. 주발 / 약발
+  const footInfo = parseCardFootDetail(card.foot);
+  if (filter.preferredFoot === "RIGHT") {
+    if (footInfo.preferred !== "RIGHT" && footInfo.preferred !== "BOTH") {
+      return false;
+    }
+  } else if (filter.preferredFoot === "LEFT") {
+    if (footInfo.preferred !== "LEFT" && footInfo.preferred !== "BOTH") {
+      return false;
+    }
+  }
+
+  if (filter.weakFoot === "5") {
+    if (footInfo.weakFoot < 5) return false;
+  } else if (filter.weakFoot === "4") {
+    if (footInfo.weakFoot !== 4) return false;
+  } else if (filter.weakFoot === "3") {
+    if (footInfo.weakFoot > 3) return false;
+  }
+
+  // 7. 피지컬 (키 / 몸무게 / 체형)
+  const hMin = Number(filter.heightMin);
+  const hMax = Number(filter.heightMax);
+  if (
+    filter.heightMin.trim() !== "" &&
+    !Number.isNaN(hMin) &&
+    (card.height || 180) < hMin
+  ) {
+    return false;
+  }
+  if (
+    filter.heightMax.trim() !== "" &&
+    !Number.isNaN(hMax) &&
+    (card.height || 180) > hMax
+  ) {
+    return false;
+  }
+
+  const wMin = Number(filter.weightMin);
+  const wMax = Number(filter.weightMax);
+  if (
+    filter.weightMin.trim() !== "" &&
+    !Number.isNaN(wMin) &&
+    (card.weight || 75) < wMin
+  ) {
+    return false;
+  }
+  if (
+    filter.weightMax.trim() !== "" &&
+    !Number.isNaN(wMax) &&
+    (card.weight || 75) > wMax
+  ) {
+    return false;
+  }
+
+  if (filter.bodyTypes.length > 0) {
+    const cBody = (card.body_type || "보통").trim();
+    const matchedBody = filter.bodyTypes.some((bt) => {
+      if (bt === "고유 마름") {
+        return cBody.includes("고유") && cBody.includes("마름");
+      }
+      if (bt === "고유 건장") {
+        return cBody.includes("고유") && cBody.includes("건장");
+      }
+      if (bt === "마름") {
+        return cBody === "마름" || (cBody.includes("마름") && !cBody.includes("고유"));
+      }
+      if (bt === "건장") {
+        return cBody === "건장" || (cBody.includes("건장") && !cBody.includes("고유"));
+      }
+      return cBody === bt || cBody.includes(bt);
+    });
+    if (!matchedBody) return false;
+  }
+
+  // 8. 고유 특성 (신규 특성 17종 + 일반 특성)
+  if (filter.traits.length > 0) {
+    const cardTraitNames = new Set(
+      (card.traits || []).map((t) => (t.name || "").trim())
+    );
+    const hasMatchingTrait = filter.traits.every((tr) =>
+      cardTraitNames.has(tr)
+    );
+    if (!hasMatchingTrait) return false;
+  }
+
+  return true;
+}
+
+export function appendFilterParamsToUrl(
+  params: URLSearchParams,
+  filter: PlayerFilterState
+): void {
+  if (filter.position && filter.position !== "ALL") {
+    params.set("position", filter.position);
+  }
+  if (filter.seasons.length > 0) {
+    params.set("seasons", filter.seasons.join(","));
+  }
+  if (filter.teamColors.length > 0) {
+    params.set("team_colors", filter.teamColors.join(","));
+  }
+  if (filter.salaryMin.trim()) params.set("salary_min", filter.salaryMin.trim());
+  if (filter.salaryMax.trim()) params.set("salary_max", filter.salaryMax.trim());
+  if (filter.ovrMin.trim()) params.set("ovr_min", filter.ovrMin.trim());
+  if (filter.ovrMax.trim()) params.set("ovr_max", filter.ovrMax.trim());
+  params.set("grade", String(filter.grade || 8));
+  params.set("adapt_bonus", String(filter.adaptBonus || 0));
+  if (filter.preferredFoot !== "ALL") {
+    params.set("preferred_foot", filter.preferredFoot);
+  }
+  if (filter.weakFoot !== "ALL") {
+    params.set("weak_foot", filter.weakFoot);
+  }
+  if (filter.heightMin.trim()) params.set("height_min", filter.heightMin.trim());
+  if (filter.heightMax.trim()) params.set("height_max", filter.heightMax.trim());
+  if (filter.weightMin.trim()) params.set("weight_min", filter.weightMin.trim());
+  if (filter.weightMax.trim()) params.set("weight_max", filter.weightMax.trim());
+  if (filter.bodyTypes.length > 0) {
+    params.set("body_types", filter.bodyTypes.join(","));
+  }
+  if (filter.traits.length > 0) {
+    params.set("traits", filter.traits.join(","));
+  }
 }
 
 export function getStatColorClass(val: number): string {
@@ -934,9 +1584,10 @@ export interface MarketBacktestReport {
 }
 
 export type NewTraitMetaGroup =
-  | "공격/슈팅 특성"
-  | "드리블/스피드/활동량 특성"
-  | "패스/수비/GK 특성";
+  | "공격 특성"
+  | "중원 특성"
+  | "수비 특성"
+  | "GK 특성";
 
 export interface TraitRepresentativePlayerItem {
   spid: number;
@@ -1496,6 +2147,12 @@ export interface MarketOverviewHeatmapCell {
   signalTag?: MarketSignalStatusTag;
 }
 
+export interface MarketOverviewIndexTrendPoint {
+  date: string;
+  indexValue: number;
+  returnPct: number;
+}
+
 export interface MarketOverviewIndex {
   /** FClab 마켓 종합 지수 (기준 = 100.0) */
   currentIndex: number;
@@ -1503,12 +2160,22 @@ export interface MarketOverviewIndex {
   changePct1d: number;
   /** 7일 대비 등락률 (%) */
   changePct7d?: number;
+  /** 30일 대비 등락률 (%) */
+  changePct30d?: number;
+  /** 90일 대비 등락률 (%) */
+  changePct90d?: number;
   /** 상승 종목 수 */
   advancingCount: number;
   /** 보합 종목 수 */
   flatCount: number;
   /** 하락 종목 수 */
   decliningCount: number;
+  /** 최근 7일 전체 시장 시세 지수 추이 */
+  trend7d?: MarketOverviewIndexTrendPoint[];
+  /** 최근 30일 전체 시장 시세 지수 추이 */
+  trend30d?: MarketOverviewIndexTrendPoint[];
+  /** 최근 90일 전체 시장 시세 지수 추이 */
+  trend90d?: MarketOverviewIndexTrendPoint[];
   /** 시즌별·강화별 등락 히트맵 데이터 배열 */
   seasonGradeHeatmap: MarketOverviewHeatmapCell[];
   /** 산출 시각 */

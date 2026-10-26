@@ -33,6 +33,8 @@ import {
   getEnhanceBadgeStyle,
   getStatColorClass,
   getPositionToneClass,
+  getTeamColorLogoUrl,
+  getOfficialTraitIconUrl,
 } from "@/lib/fclab-types";
 import {
   PlayerAvatar,
@@ -41,6 +43,13 @@ import {
   PriceTrendChart,
   GradeEfficiencyBarChart,
 } from "./VisualCharts";
+import PlayerSearchFilter, {
+  PlayerFilterState,
+  DEFAULT_PLAYER_FILTER_STATE,
+  PlayerSearchFilterToggleButton,
+  appendFilterParamsToUrl,
+  hasActiveDetailFilters,
+} from "./PlayerSearchFilter";
 
 interface PlayerLabViewProps {
   rules?: SystemRules;
@@ -175,10 +184,8 @@ function TraitIconBadge({
 }) {
   const [imgFailed, setImgFailed] = useState(false);
   const { Icon, badgeTone, iconColor } = getTraitVisualStyle(trait.name);
-  const hasValidImg =
-    Boolean(trait.icon) &&
-    trait.icon!.startsWith("http") &&
-    !imgFailed;
+  const resolvedIconUrl = getOfficialTraitIconUrl(trait.name, trait.icon);
+  const hasValidImg = Boolean(resolvedIconUrl) && !imgFailed;
 
   return (
     <span
@@ -187,11 +194,11 @@ function TraitIconBadge({
       {hasValidImg ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={trait.icon}
+          src={resolvedIconUrl}
           alt={trait.name}
           referrerPolicy="no-referrer"
           onError={() => setImgFailed(true)}
-          className="w-4 h-4 object-contain shrink-0"
+          className="w-4 h-4 object-contain shrink-0 rounded-xs bg-slate-950/60 p-0.5"
         />
       ) : (
         <Icon className={`w-3.5 h-3.5 shrink-0 ${iconColor}`} />
@@ -238,13 +245,17 @@ const CLUB_CREST_MAP: Record<string, { code: string; bg: string }> = {
 function TeamColorLogoBadge({
   name,
   type,
+  logoUrl,
   compact = false,
 }: {
   name: string;
   type?: string;
+  logoUrl?: string;
   compact?: boolean;
 }) {
+  const [imgErr, setImgErr] = useState(false);
   const cleanName = name.trim();
+  const resolvedLogo = logoUrl || getTeamColorLogoUrl(cleanName, type);
   const nationStyle = NATION_CREST_MAP[cleanName];
   const clubStyle =
     CLUB_CREST_MAP[cleanName] ||
@@ -253,38 +264,64 @@ function TeamColorLogoBadge({
   const isNation =
     Boolean(nationStyle) ||
     type === "국가대표" ||
-    ["대한민국", "브라질", "네덜란드", "잉글랜드", "프랑스", "우루과이", "벨기에", "모로코", "독일", "스페인", "포르투갈", "아르헨티나", "이탈리아"].includes(cleanName);
+    [
+      "대한민국",
+      "브라질",
+      "네덜란드",
+      "잉글랜드",
+      "프랑스",
+      "우루과이",
+      "벨기에",
+      "모로코",
+      "독일",
+      "스페인",
+      "포르투갈",
+      "아르헨티나",
+      "이탈리아",
+    ].includes(cleanName);
 
   const badgeCode =
     nationStyle?.code ||
     clubStyle?.code ||
-    cleanName.replace(/[^A-Za-z가-힣0-9]/g, "").slice(0, 2).toUpperCase();
+    cleanName
+      .replace(/[^A-Za-z가-힣0-9]/g, "")
+      .slice(0, 2)
+      .toUpperCase();
 
   const crestBg =
     nationStyle?.bg ||
     clubStyle?.bg ||
-    (isNation
-      ? "bg-rose-600 text-white"
-      : "bg-emerald-600 text-white");
+    (isNation ? "bg-rose-600 text-white" : "bg-blue-600 text-white");
 
   return (
     <span
       className={`inline-flex items-center gap-1.5 rounded-md border ${
         compact
-          ? "px-1.5 py-0.5 text-[11px] bg-slate-800/90 border-slate-700 text-slate-200"
-          : "px-2 py-1 text-xs bg-[#0B0F17] border-slate-700/90 text-slate-200"
+          ? "px-1.5 py-0.5 text-[11px] bg-[#1E293B]/90 border-slate-700 text-slate-200"
+          : "px-2 py-1 text-xs bg-[#111827] border-slate-700/90 text-slate-100"
       }`}
     >
-      <span
-        className={`inline-flex items-center justify-center rounded px-1 py-0.5 text-[9px] font-mono font-extrabold leading-none tracking-tighter shrink-0 ${crestBg}`}
-      >
-        {isNation ? (
-          <Flag className="w-2.5 h-2.5 mr-0.5 inline" />
-        ) : (
-          <Trophy className="w-2.5 h-2.5 mr-0.5 inline" />
-        )}
-        {badgeCode}
-      </span>
+      {resolvedLogo && !imgErr ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={resolvedLogo}
+          alt={cleanName}
+          referrerPolicy="no-referrer"
+          onError={() => setImgErr(true)}
+          className="w-4 h-4 object-contain rounded-xs shrink-0"
+        />
+      ) : (
+        <span
+          className={`inline-flex items-center justify-center rounded px-1 py-0.5 text-[9px] font-mono font-extrabold leading-none tracking-tighter shrink-0 ${crestBg}`}
+        >
+          {isNation ? (
+            <Flag className="w-2.5 h-2.5 mr-0.5 inline" />
+          ) : (
+            <Trophy className="w-2.5 h-2.5 mr-0.5 inline" />
+          )}
+          {badgeCode}
+        </span>
+      )}
       <span className="font-medium">{cleanName}</span>
       {!compact && type && (
         <span className="text-[10px] text-slate-400">({type})</span>
@@ -304,11 +341,15 @@ export default function PlayerLabView({
   onAddToSquadSlot,
 }: PlayerLabViewProps) {
   const [searchQuery, setSearchQuery] = useState(initialQuery || "");
-  const [posFilter, setPosFilter] = useState("ALL");
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [detailFilter, setDetailFilter] = useState<PlayerFilterState>({
+    ...DEFAULT_PLAYER_FILTER_STATE,
+  });
   const [trapBadgeFilter, setTrapBadgeFilter] = useState("ALL");
   const [sortBy, setSortBy] = useState("ovr_desc");
   const [cards, setCards] = useState<PlayerCard[]>([]);
   const [searching, setSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(Boolean(initialQuery));
 
   const [selectedSpid, setSelectedSpid] = useState<number | null>(
     initialSpid || null
@@ -344,24 +385,42 @@ export default function PlayerLabView({
   const runSearch = useCallback(
     async (
       qStr: string,
-      pos: string,
+      activeFilter: PlayerFilterState,
       sort: string,
       trapBadge = "ALL",
       forceCrawl = false
     ) => {
+      const cleanQ = qStr.trim();
+      const hasDetail = hasActiveDetailFilters(activeFilter);
+      if (!cleanQ && !hasDetail && trapBadge === "ALL") {
+        setCards([]);
+        setHasSearched(false);
+        return;
+      }
+
       setSearching(true);
+      setHasSearched(true);
       try {
         const params = new URLSearchParams({
-          q: qStr,
-          position: pos,
+          q: cleanQ,
           sort,
           trap_badge: trapBadge,
           crawl: forceCrawl ? "1" : "0",
         });
+        appendFilterParamsToUrl(params, activeFilter);
         const res = await fetch(`/api/fclab/v1/players/search?${params.toString()}`);
         const data = await res.json();
         if (Array.isArray(data.cards)) {
           setCards(data.cards);
+          if (data.cards.length > 0) {
+            setSelectedSpid((prev) =>
+              prev && data.cards.some((c: PlayerCard) => c.spid === prev)
+                ? prev
+                : data.cards[0].spid
+            );
+          } else {
+            setSelectedSpid(null);
+          }
         }
       } catch {
         // ignore
@@ -373,9 +432,19 @@ export default function PlayerLabView({
   );
 
   useEffect(() => {
-    runSearch(searchQuery, posFilter, sortBy, trapBadgeFilter, false);
+    if (initialQuery && initialQuery.trim()) {
+      setSearchQuery(initialQuery);
+      runSearch(initialQuery, detailFilter, sortBy, trapBadgeFilter, true);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [posFilter, sortBy, trapBadgeFilter]);
+  }, [initialQuery]);
+
+  useEffect(() => {
+    if (hasSearched) {
+      runSearch(searchQuery, detailFilter, sortBy, trapBadgeFilter, false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortBy, trapBadgeFilter]);
 
   useEffect(() => {
     if (initialSpid) {
@@ -451,74 +520,66 @@ export default function PlayerLabView({
     <div className="space-y-6">
       {/* Search & Filter Toolbar */}
       <div className="bg-[#111827] border border-slate-800 rounded-xl p-4">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              runSearch(searchQuery, posFilter, sortBy, trapBadgeFilter, true);
+              runSearch(
+                searchQuery,
+                detailFilter,
+                sortBy,
+                trapBadgeFilter,
+                true
+              );
             }}
-            className="flex-1 flex items-center gap-2"
+            className="flex-1 flex flex-wrap sm:flex-nowrap items-center gap-2"
           >
-            <div className="relative flex-1">
+            <div className="relative flex-1 min-w-[220px]">
               <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="선수 이름 검색 (예: 손흥민, 호날두, 굴리트, 벨링엄, 이강인, 음바페...)"
-                className="w-full pl-10 pr-4 py-2 bg-[#0B0F17] border border-slate-800 rounded-lg text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-emerald-500"
+                className="w-full pl-10 pr-4 py-2 bg-[#0B1120] border border-slate-800 rounded-lg text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
               />
             </div>
             <button
               type="submit"
               disabled={searching}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5"
             >
               {searching ? (
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
               ) : (
                 <Search className="w-3.5 h-3.5" />
               )}
-              실시간 검색·크롤링
+              실시간 검색
             </button>
+            <PlayerSearchFilterToggleButton
+              isOpen={filterOpen}
+              onToggle={() => setFilterOpen((v) => !v)}
+              filter={detailFilter}
+            />
           </form>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1 bg-[#0B0F17] p-1 rounded-lg border border-slate-800">
-              {["ALL", "ST", "CF", "LW", "RW", "CAM", "CM", "CDM", "CB", "LB", "RB", "GK"].map(
-                (p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => setPosFilter(p)}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
-                      posFilter === p
-                        ? "bg-slate-800 text-emerald-400 font-semibold"
-                        : "text-slate-400 hover:text-slate-200"
-                    }`}
-                  >
-                    {p === "ALL" ? "전체" : p}
-                  </button>
-                )
-              )}
-            </div>
-
             <select
               value={trapBadgeFilter}
               onChange={(e) => setTrapBadgeFilter(e.target.value)}
-              className="bg-[#0B0F17] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+              className="bg-[#0B1120] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
               title="체감 판독 배지 필터"
             >
               <option value="ALL">체감 판독: 전체</option>
-              <option value="CHEAT_KEY">💎 체감 괴물 / 꿀매물</option>
-              <option value="NORMAL">일반 밸런스</option>
-              <option value="STAT_TRAP">⚠️ 스탯 대비 둔중함</option>
+              <option value="CHEAT_KEY">좋은 체감</option>
+              <option value="NORMAL">보통 체감</option>
+              <option value="STAT_TRAP">무거운 체감</option>
             </select>
 
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
-              className="bg-[#0B0F17] border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+              className="bg-[#0B1120] border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
             >
               <option value="ovr_desc">OVR 높은순</option>
               <option value="feel_desc">인게임 체감 지수순</option>
@@ -531,6 +592,31 @@ export default function PlayerLabView({
             </select>
           </div>
         </div>
+
+        <PlayerSearchFilter
+          isOpen={filterOpen}
+          filter={detailFilter}
+          onChange={(next) => {
+            setDetailFilter(next);
+            if (next.grade !== grade) setGrade(next.grade);
+            if (next.adaptBonus !== teamColorBonus) {
+              setTeamColorBonus(next.adaptBonus);
+            }
+          }}
+          onApply={(applied) => {
+            const target = applied || detailFilter;
+            setGrade(target.grade || 8);
+            setTeamColorBonus(target.adaptBonus || 0);
+            runSearch(searchQuery, target, sortBy, trapBadgeFilter, true);
+          }}
+          onReset={() => {
+            setGrade(8);
+            setTeamColorBonus(0);
+            setCards([]);
+            setHasSearched(false);
+          }}
+          maxEnhanceLevel={rules.maxEnhanceLevel}
+        />
       </div>
 
       {/* Main Split Grid: Left Player Card List (5 cols) / Right Detailed Inspector (7 cols) */}
@@ -549,12 +635,20 @@ export default function PlayerLabView({
           <div className="divide-y divide-slate-800/70 max-h-[780px] overflow-y-auto">
             {searching ? (
               <div className="p-8 text-center text-xs text-slate-400 space-y-2">
-                <RefreshCw className="w-5 h-5 animate-spin mx-auto text-emerald-400" />
+                <RefreshCw className="w-5 h-5 animate-spin mx-auto text-blue-400" />
                 <p>FC 온라인 공식 데이터센터에서 선수 카드를 탐색 중입니다...</p>
               </div>
             ) : cards.length === 0 ? (
-              <div className="p-8 text-center text-xs text-slate-500">
-                조건에 일치하는 선수가 없습니다. 상단 검색창에서 원하는 선수 이름을 검색해 보세요.
+              <div className="p-10 text-center text-xs text-slate-400 space-y-2">
+                <Search className="w-6 h-6 mx-auto text-slate-600" />
+                <p className="text-slate-300 font-medium">
+                  {hasSearched
+                    ? "검색 조건에 일치하는 선수 카드가 없습니다."
+                    : "탐색할 선수 이름을 검색하거나 [상세 필터 ▾]에서 조건을 선택해 주세요."}
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  기본 강화 +8강 · 적응도 0 기준으로 공식 데이터센터 능력치와 고유 특성, 팀컬러를 조회합니다.
+                </p>
               </div>
             ) : (
               cards.map((c) => {
@@ -772,16 +866,18 @@ export default function PlayerLabView({
                         +{grade}강 기준 이적시장 시세
                       </div>
                       <div className="text-lg font-bold text-emerald-400">
-                        {activeEff.bp_text} BP
+                        {activeEff.bp_text?.endsWith("BP")
+                          ? activeEff.bp_text
+                          : `${activeEff.bp_text} BP`}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
                       <button
                         type="button"
-                        onClick={() => onAddToSquadSlot(activeCard, grade)}
-                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0"
+                        onClick={() => onSendToProfileLab(activeCard.spid)}
+                        className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/35 border border-blue-500/50 text-blue-200 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0"
                       >
-                        스쿼드에 배치
+                        🧬 유형 분석 이동
                       </button>
                       <button
                         type="button"
@@ -791,10 +887,16 @@ export default function PlayerLabView({
                             activeCard.primary_position
                           )
                         }
-                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1"
+                        className="px-3 py-1.5 bg-sky-600/20 hover:bg-sky-600/35 border border-sky-500/50 text-sky-200 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0"
                       >
-                        카드 효율 분석
-                        <ArrowRight className="w-3.5 h-3.5" />
+                        ⚡ 효율 분석 이동
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onAddToSquadSlot(activeCard, grade)}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0"
+                      >
+                        ➕ 스쿼드에 추가
                       </button>
                     </div>
                   </div>
@@ -944,7 +1046,11 @@ export default function PlayerLabView({
                       +{activeEff.best_sweetspot_grade?.grade || 8}강
                     </div>
                     <div className="text-[11px] font-mono text-slate-400 truncate">
-                      {activeEff.best_sweetspot_grade?.bp_text || "-"} BP
+                      {activeEff.best_sweetspot_grade?.bp_text
+                        ? activeEff.best_sweetspot_grade.bp_text.endsWith("BP")
+                          ? activeEff.best_sweetspot_grade.bp_text
+                          : `${activeEff.best_sweetspot_grade.bp_text} BP`
+                        : "-"}
                     </div>
                   </div>
                 </div>
@@ -1126,6 +1232,7 @@ export default function PlayerLabView({
                         key={`${tc.id}-${i}`}
                         name={tc.name}
                         type={tc.type}
+                        logoUrl={tc.logoUrl}
                       />
                     ))}
                   </div>

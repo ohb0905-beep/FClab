@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   GradeCurvePoint,
   MarketOverviewHeatmapCell,
   MarketOverviewIndex,
   formatBpKorean,
+  getOfficialSeasonImgUrl,
 } from "@/lib/fclab-types";
 
 export function PlayerAvatar({
@@ -25,35 +26,46 @@ export function PlayerAvatar({
   size?: number;
   className?: string;
 }) {
-  const [stage, setStage] = useState<0 | 1 | 2>(0);
+  const [stage, setStage] = useState<0 | 1 | 2 | 3>(0);
   const pid = explicitPid || (spid % 1000000);
+
+  useEffect(() => {
+    setStage(0);
+  }, [spid, src, thumbUrl]);
+
   const primarySrc =
     src ||
     thumbUrl ||
     `https://fco.dn.nexoncdn.co.kr/live/externalAssets/common/playersAction/p${spid}.png`;
   const secondarySrc = `https://fco.dn.nexoncdn.co.kr/live/externalAssets/common/players/p${pid}.png`;
+  const tertiarySrc = `https://fo4.dn.nexoncdn.co.kr/live/externalAssets/common/players/p${pid}.png`;
 
   const sizeStyle = size ? { width: `${size}px`, height: `${size}px` } : undefined;
 
-  if (stage === 2) {
+  if (stage === 3) {
     return (
       <div
         style={sizeStyle}
-        className={`${className} flex items-center justify-center bg-slate-800/80 text-slate-300 font-semibold text-xs rounded-md select-none shrink-0 border border-slate-700/60`}
+        className={`${className} flex items-center justify-center bg-[#1E293B] text-slate-200 font-semibold text-xs rounded-md select-none shrink-0 border border-slate-700/80`}
         title={name}
       >
-        {name.slice(0, 2)}
+        {(name || "FC").slice(0, 2)}
       </div>
     );
   }
 
+  const activeSrc =
+    stage === 0 ? primarySrc : stage === 1 ? secondarySrc : tertiarySrc;
+
   return (
     <img
-      src={stage === 0 ? primarySrc : secondarySrc}
+      src={activeSrc}
       alt={name}
       style={sizeStyle}
       referrerPolicy="no-referrer"
-      onError={() => setStage((prev) => (prev === 0 ? 1 : 2))}
+      onError={() =>
+        setStage((prev) => (prev === 0 ? 1 : prev === 1 ? 2 : 3))
+      }
       className={`${className} object-contain shrink-0`}
     />
   );
@@ -69,11 +81,7 @@ export function SeasonBadge({
   className?: string;
 }) {
   const [failed, setFailed] = useState(false);
-  const resolvedSrc =
-    seasonImg ||
-    (seasonCode
-      ? `https://ssl.nexon.com/s2/game/fc/online/obt/externalAssets/season/${seasonCode.toLowerCase()}.png`
-      : "");
+  const resolvedSrc = getOfficialSeasonImgUrl(seasonCode, seasonImg);
   if (!resolvedSrc || failed) {
     return (
       <span className="font-mono text-[11px] font-bold text-amber-600 dark:text-amber-300 tracking-tight px-1 py-0.5 rounded bg-amber-500/10 border border-amber-500/30">
@@ -87,7 +95,7 @@ export function SeasonBadge({
       alt={seasonCode}
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}
-      className={`${className} w-auto object-contain inline-block shrink-0`}
+      className={`${className} w-auto object-contain inline-block shrink-0 drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]`}
     />
   );
 }
@@ -544,13 +552,16 @@ export function GradeEfficiencyBarChart({
 }
 
 /**
- * FClab 마켓 종합 지수 카드 (상승/보합/하락 종목 비중 바 포함)
+ * FClab 전체 이적시장 시세 그래프 (최근 7일 / 30일 / 90일 시계열 라인/에어리어 차트) + 종합 지수 카드
  */
 export function MarketOverviewIndexCard({
   overviewIndex,
 }: {
   overviewIndex: MarketOverviewIndex;
 }) {
+  const [period, setPeriod] = useState<"7d" | "30d" | "90d">("30d");
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+
   const totalCount = Math.max(
     1,
     overviewIndex.advancingCount +
@@ -562,58 +573,328 @@ export function MarketOverviewIndexCard({
   const decPct = Math.max(0, 100 - advPct - flatPct);
 
   const isPositive1d = overviewIndex.changePct1d >= 0;
-  const isPositive7d = (overviewIndex.changePct7d || 0) >= 0;
+  const activePeriodChangePct =
+    period === "7d"
+      ? overviewIndex.changePct7d ?? 0
+      : period === "90d"
+      ? overviewIndex.changePct90d ?? overviewIndex.changePct7d ?? 0
+      : overviewIndex.changePct30d ?? overviewIndex.changePct7d ?? 0;
+
+  const isPositivePeriod = activePeriodChangePct >= 0;
+
+  const series = useMemo(() => {
+    if (period === "7d") return overviewIndex.trend7d ?? [];
+    if (period === "90d") return overviewIndex.trend90d ?? [];
+    return overviewIndex.trend30d ?? [];
+  }, [overviewIndex, period]);
+
+  const width = 860;
+  const height = 240;
+  const padLeft = 52;
+  const padRight = 24;
+  const padTop = 22;
+  const padBottom = 34;
+  const plotW = width - padLeft - padRight;
+  const plotH = height - padTop - padBottom;
+
+  const { minVal, maxVal, coords, linePath, areaPath } = useMemo(() => {
+    if (!series.length) {
+      return { minVal: 95, maxVal: 105, coords: [], linePath: "", areaPath: "" };
+    }
+    const vals = series.map((p) => p.indexValue);
+    const rawMin = Math.min(...vals);
+    const rawMax = Math.max(...vals);
+    const pad = Math.max(0.45, (rawMax - rawMin) * 0.22);
+    const lo = rawMin - pad;
+    const hi = rawMax + pad;
+    const span = Math.max(0.5, hi - lo);
+
+    const pts = series.map((pt, idx) => {
+      const x = padLeft + (idx / Math.max(1, series.length - 1)) * plotW;
+      const y = padTop + (1 - (pt.indexValue - lo) / span) * plotH;
+      return { x, y, pt };
+    });
+
+    const lPath = pts
+      .map((c, i) => `${i === 0 ? "M" : "L"}${c.x.toFixed(1)},${c.y.toFixed(1)}`)
+      .join(" ");
+    const aPath =
+      pts.length > 1
+        ? `${lPath} L${pts[pts.length - 1].x.toFixed(1)},${(padTop + plotH).toFixed(1)} L${pts[0].x.toFixed(1)},${(padTop + plotH).toFixed(1)} Z`
+        : "";
+
+    return {
+      minVal: lo,
+      maxVal: hi,
+      coords: pts,
+      linePath: lPath,
+      areaPath: aPath,
+    };
+  }, [series, plotW, plotH]);
+
+  const activePoint =
+    hoverIdx !== null && coords[hoverIdx]
+      ? coords[hoverIdx]
+      : coords[coords.length - 1] ?? null;
+
+  const strokeColor = isPositivePeriod ? "#f43f5e" : "#38bdf8";
 
   return (
-    <div className="bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 rounded-xl p-5 flex flex-col justify-between space-y-4 shadow-xs">
-      <div className="flex items-start justify-between gap-3">
+    <div className="bg-white dark:bg-slate-900/95 border border-slate-200 dark:border-slate-800 rounded-xl p-5 flex flex-col justify-between space-y-4 shadow-xs">
+      {/* Top Header & Period Selector */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <span className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 rounded font-bold">
-            FCLAB COMPOSITE INDEX
-          </span>
-          <h3 className="text-base font-bold text-slate-900 dark:text-white mt-1.5">
-            FClab 마켓 종합 지수 (+8~+11강 기준)
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 rounded font-bold">
+              MARKET INDEX TREND CHART
+            </span>
+            <span className="px-2 py-0.5 text-[10px] font-bold bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-500/30 rounded">
+              절사평균(10%) · EMA 평활 · 기준가 스냅샷 고정
+            </span>
+          </div>
+          <h3 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white mt-1.5">
+            전체 이적시장 시세 그래프 (+8~+11강 코어 마켓 지수 추이)
           </h3>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            고정 기준가 스냅샷(100.0) 대비 절사평균·EMA 안정화 지수
+            최근 7일 / 30일 / 90일 전체 시장 시세 흐름과 지수 등락을 한눈에 확인합니다 (기준 스냅샷 100.0pt)
           </p>
         </div>
-        <div className="text-right shrink-0">
-          <div className="text-2xl sm:text-3xl font-mono font-black text-slate-900 dark:text-white tabular-nums">
-            {overviewIndex.currentIndex.toFixed(2)}
-          </div>
-          <div className="flex items-center justify-end gap-2 mt-1 text-xs font-mono">
-            <span
-              className={
-                isPositive1d
-                  ? "text-rose-600 dark:text-rose-400 font-bold"
-                  : "text-sky-600 dark:text-sky-400 font-bold"
-              }
-            >
-              1일 {isPositive1d ? "+" : ""}
-              {overviewIndex.changePct1d.toFixed(2)}%
-            </span>
-            {overviewIndex.changePct7d !== undefined && (
+
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="text-right">
+            <div className="text-2xl sm:text-3xl font-mono font-black text-slate-900 dark:text-white tabular-nums">
+              {overviewIndex.currentIndex.toFixed(2)}
+            </div>
+            <div className="flex items-center justify-end gap-2 mt-0.5 text-xs font-mono">
               <span
                 className={
-                  isPositive7d
-                    ? "text-rose-500 dark:text-rose-300"
-                    : "text-sky-500 dark:text-sky-300"
+                  isPositive1d
+                    ? "text-rose-600 dark:text-rose-400 font-bold"
+                    : "text-sky-600 dark:text-sky-400 font-bold"
                 }
               >
-                · 7일 {isPositive7d ? "+" : ""}
-                {overviewIndex.changePct7d.toFixed(2)}%
+                1일 {isPositive1d ? "+" : ""}
+                {overviewIndex.changePct1d.toFixed(2)}%
+              </span>
+              <span
+                className={
+                  isPositivePeriod
+                    ? "text-rose-500 dark:text-rose-300 font-bold"
+                    : "text-sky-500 dark:text-sky-300 font-bold"
+                }
+              >
+                · {period === "7d" ? "7일" : period === "30d" ? "30일" : "90일"}{" "}
+                {isPositivePeriod ? "+" : ""}
+                {activePeriodChangePct.toFixed(2)}%
+              </span>
+            </div>
+          </div>
+
+          {/* 최근 7일 / 30일 / 90일 토글 버튼 */}
+          <div className="flex items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-950 p-1">
+            {(
+              [
+                {
+                  id: "7d",
+                  label: "최근 7일",
+                  pct: overviewIndex.changePct7d ?? 0,
+                },
+                {
+                  id: "30d",
+                  label: "최근 30일",
+                  pct:
+                    overviewIndex.changePct30d ?? overviewIndex.changePct7d ?? 0,
+                },
+                {
+                  id: "90d",
+                  label: "최근 90일",
+                  pct:
+                    overviewIndex.changePct90d ?? overviewIndex.changePct7d ?? 0,
+                },
+              ] as const
+            ).map((tab) => {
+              const active = period === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => {
+                    setPeriod(tab.id);
+                    setHoverIdx(null);
+                  }}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-extrabold transition-all flex items-center gap-1.5 cursor-pointer ${
+                    active
+                      ? "bg-sky-600 text-white shadow-xs"
+                      : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                  <span
+                    className={`font-mono text-[10px] ${
+                      active
+                        ? "text-sky-100"
+                        : tab.pct >= 0
+                        ? "text-rose-500 dark:text-rose-400"
+                        : "text-sky-500 dark:text-sky-400"
+                    }`}
+                  >
+                    {tab.pct >= 0 ? `+${tab.pct.toFixed(1)}%` : `${tab.pct.toFixed(1)}%`}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Large Prominent Market Index Time-Series Line/Area Chart */}
+      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#080d1a] p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <div className="flex items-center gap-2 flex-wrap text-xs">
+            <span className="font-extrabold text-slate-800 dark:text-slate-200">
+              {period === "7d"
+                ? "최근 7일 전체 시장 지수 흐름"
+                : period === "30d"
+                ? "최근 30일 전체 시장 지수 흐름"
+                : "최근 90일 전체 시장 지수 흐름"}
+            </span>
+            {activePoint && (
+              <span className="rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/80 px-2.5 py-0.5 font-mono text-[11px] text-sky-700 dark:text-sky-300">
+                {activePoint.pt.date} · 지수{" "}
+                <strong className="text-slate-950 dark:text-white">
+                  {activePoint.pt.indexValue.toFixed(2)}pt
+                </strong>{" "}
+                ({activePoint.pt.returnPct >= 0 ? "+" : ""}
+                {activePoint.pt.returnPct.toFixed(2)}%)
               </span>
             )}
           </div>
+          <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+            기준가 스냅샷 앵커 = 100.00pt
+          </span>
         </div>
+
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          className="w-full h-56 sm:h-64 select-none overflow-visible"
+          onMouseLeave={() => setHoverIdx(null)}
+        >
+          <defs>
+            <linearGradient id="fcMarketIndexAreaGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={strokeColor} stopOpacity="0.34" />
+              <stop offset="75%" stopColor={strokeColor} stopOpacity="0.08" />
+              <stop offset="100%" stopColor={strokeColor} stopOpacity="0.0" />
+            </linearGradient>
+          </defs>
+
+          {/* Horizontal Y gridlines */}
+          {[0, 0.25, 0.5, 0.75, 1].map((r, idx) => {
+            const y = padTop + r * plotH;
+            const val = maxVal - r * (maxVal - minVal);
+            return (
+              <g key={idx}>
+                <line
+                  x1={padLeft}
+                  y1={y}
+                  x2={width - padRight}
+                  y2={y}
+                  stroke="#1e293b"
+                  strokeDasharray={idx === 2 ? "none" : "3 3"}
+                  strokeWidth={1}
+                />
+                <text
+                  x={padLeft - 8}
+                  y={y + 3}
+                  textAnchor="end"
+                  className="fill-slate-400 text-[10px] font-mono"
+                >
+                  {val.toFixed(1)}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Area & Line */}
+          {areaPath && <path d={areaPath} fill="url(#fcMarketIndexAreaGrad)" />}
+          {linePath && (
+            <path
+              d={linePath}
+              fill="none"
+              stroke={strokeColor}
+              strokeWidth={2.75}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          )}
+
+          {/* X-axis Date Labels */}
+          {coords.map((c, idx) => {
+            const step = Math.max(1, Math.floor(coords.length / 6));
+            const showLabel =
+              idx === 0 || idx === coords.length - 1 || idx % step === 0;
+            return (
+              <g key={c.pt.date}>
+                {showLabel && (
+                  <text
+                    x={c.x}
+                    y={height - 8}
+                    textAnchor="middle"
+                    className="fill-slate-400 text-[10px] font-mono"
+                  >
+                    {c.pt.date.slice(5).replace("-", ".")}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+
+          {/* Active Point Crosshair & Marker */}
+          {activePoint && (
+            <g>
+              <line
+                x1={activePoint.x}
+                y1={padTop}
+                x2={activePoint.x}
+                y2={padTop + plotH}
+                stroke="#38bdf8"
+                strokeDasharray="3 3"
+                strokeWidth={1}
+              />
+              <circle
+                cx={activePoint.x}
+                cy={activePoint.y}
+                r={5.5}
+                fill={strokeColor}
+                stroke="#0f172a"
+                strokeWidth={2}
+              />
+            </g>
+          )}
+
+          {/* Invisible Hover Columns */}
+          {coords.map((c, idx) => {
+            const colW = plotW / Math.max(1, coords.length);
+            return (
+              <rect
+                key={`hit-${c.pt.date}`}
+                x={c.x - colW / 2}
+                y={padTop}
+                width={colW}
+                height={plotH}
+                fill="transparent"
+                className="cursor-crosshair"
+                onMouseEnter={() => setHoverIdx(idx)}
+              />
+            );
+          })}
+        </svg>
       </div>
 
       {/* Advance / Flat / Decline Breadth Bar */}
       <div className="space-y-2 bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-lg p-3.5">
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
           <span className="font-bold text-slate-700 dark:text-slate-300">
-            시장 등락 종목 비중 (표본 {totalCount}종)
+            시장 등락 종목 비중 (실사용 메타 표본 {totalCount}종)
           </span>
           <div className="flex items-center gap-3 font-mono text-[11px]">
             <span className="text-rose-600 dark:text-rose-400 font-bold">
@@ -661,7 +942,7 @@ export function MarketOverviewIndexCard({
 }
 
 /**
- * 시즌/강화별 등락 히트맵 (Treemap 스타일 그리드, 공식 시즌 로고 아이콘 + 컬러 그라데이션)
+ * 실사용 메타 시즌 히트맵 (Treemap 스타일 그리드, 구시즌 제외 · 공식 시즌 로고 아이콘 + 시즌명 + 평균 등락률)
  */
 export function MarketSeasonGradeHeatmap({
   cells,
@@ -705,11 +986,16 @@ export function MarketSeasonGradeHeatmap({
     <div className="bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4 shadow-xs">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
-          <h3 className="text-base font-bold text-slate-900 dark:text-white">
-            시즌 · 강화단계별 시가총액 & 등락률 히트맵
-          </h3>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">
+              실사용 핵심 메타 시즌 시세 히트맵 (Treemap)
+            </h3>
+            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-500/30">
+              비주류 구시즌 제외 · 상위 랭커 실사용 {cells.length}개 메타 시즌
+            </span>
+          </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            각 시즌 공식 카드 아이콘과 최근 7일 등락률(-5% 파랑 ~ +5% 빨강)을 한눈에 비교합니다.
+            현재 랭커 및 유저 실사용률이 높은 핵심 메타 시즌의 공식 시즌 카드 로고 아이콘, 시즌명, 평균 등락률(%)을 표시합니다.
           </p>
         </div>
         {/* Color scale legend */}
@@ -726,7 +1012,7 @@ export function MarketSeasonGradeHeatmap({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-2.5">
         {cells.map((cell, idx) => {
           const isLargeTile = idx < 2;
           const toneClass = getHeatmapCellTone(cell.changePct7d);
@@ -737,36 +1023,43 @@ export function MarketSeasonGradeHeatmap({
               onClick={() =>
                 onSelectCell && onSelectCell(cell.seasonCode, cell.grade)
               }
-              className={`p-3 rounded-lg border text-left transition hover:brightness-105 cursor-pointer flex flex-col justify-between ${toneClass} ${
+              className={`p-3 rounded-xl border text-left transition hover:brightness-105 cursor-pointer flex flex-col justify-between ${toneClass} ${
                 isLargeTile ? "sm:col-span-2 lg:col-span-2" : ""
               }`}
             >
+              {/* 공식 시즌 카드 아이콘 이미지 + 시즌명 */}
               <div className="flex items-center justify-between gap-1.5">
-                <div className="flex items-center gap-1.5 min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
                   <SeasonBadge
                     seasonImg={cell.seasonImg}
                     seasonCode={cell.seasonCode}
-                    className="h-4.5"
+                    className="h-5"
                   />
                   <span className="font-mono font-black text-xs text-slate-900 dark:text-white truncate">
-                    {cell.seasonCode} +{cell.grade}강
+                    {cell.seasonName || cell.seasonCode}
                   </span>
                 </div>
-                {cell.signalTag && (
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/80 dark:bg-slate-950/70 border border-slate-300/60 dark:border-white/10 text-slate-800 dark:text-slate-200 truncate shrink-0">
-                    {cell.signalTag}
-                  </span>
-                )}
+                <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-white/80 dark:bg-slate-950/70 border border-slate-300/60 dark:border-white/10 text-slate-800 dark:text-slate-200 shrink-0">
+                  +{cell.grade}강
+                </span>
               </div>
 
+              {/* 평균 등락률(%) */}
               <div className="my-2">
-                <div className="text-base font-mono font-black tabular-nums">
-                  {cell.changePct7d >= 0 ? "+" : ""}
-                  {cell.changePct7d.toFixed(2)}%
+                <div className="flex items-baseline justify-between gap-1">
+                  <span className="text-base sm:text-lg font-mono font-black tabular-nums">
+                    {cell.changePct7d >= 0 ? "+" : ""}
+                    {cell.changePct7d.toFixed(2)}%
+                  </span>
+                  {cell.signalTag && (
+                    <span className="text-[10px] font-bold opacity-90 truncate">
+                      {cell.signalTag}
+                    </span>
+                  )}
                 </div>
-                <div className="text-[10px] font-mono opacity-80">
+                <div className="text-[10px] font-mono opacity-80 mt-0.5">
                   1일 {cell.changePct1d >= 0 ? "+" : ""}
-                  {cell.changePct1d.toFixed(2)}% · 표본 {cell.sampleCount}종
+                  {cell.changePct1d.toFixed(2)}% · 코어 표본 {cell.sampleCount}종
                 </div>
               </div>
 
@@ -780,3 +1073,4 @@ export function MarketSeasonGradeHeatmap({
     </div>
   );
 }
+

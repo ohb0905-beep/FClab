@@ -24,6 +24,12 @@ import {
   HexRadarChart,
   GradeEfficiencyBarChart,
 } from "./VisualCharts";
+import PlayerSearchFilter, {
+  PlayerFilterState,
+  DEFAULT_PLAYER_FILTER_STATE,
+  PlayerSearchFilterToggleButton,
+  hasActiveDetailFilters,
+} from "./PlayerSearchFilter";
 
 interface CardEfficiencyLabViewProps {
   rules?: SystemRules;
@@ -47,6 +53,13 @@ export default function CardEfficiencyLabView({
   const [teamColor, setTeamColor] = useState(0);
   const [maxBp, setMaxBp] = useState(0);
 
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [detailFilter, setDetailFilter] = useState<PlayerFilterState>({
+    ...DEFAULT_PLAYER_FILTER_STATE,
+    position: initialPosition || "ALL",
+  });
+  const [hasSearched, setHasSearched] = useState(Boolean(initialPlayerName));
+
   const [customWeights, setCustomWeights] = useState<Record<string, number>>(
     positionWeightsMap[initialPosition || "ST"] || {}
   );
@@ -69,19 +82,9 @@ export default function CardEfficiencyLabView({
     (_, i) => i + 1
   );
 
-  useEffect(() => {
-    if (initialPlayerName !== undefined) setQuery(initialPlayerName);
-    if (initialPosition) {
-      setPosition(initialPosition);
-      if (positionWeightsMap[initialPosition]) {
-        setCustomWeights({ ...positionWeightsMap[initialPosition] });
-        setIsCustomWeightActive(false);
-      }
-    }
-  }, [initialPlayerName, initialPosition, positionWeightsMap]);
-
   const handlePositionChange = (newPos: string) => {
     setPosition(newPos);
+    setDetailFilter((prev) => ({ ...prev, position: newPos }));
     setIsCustomWeightActive(false);
     if (positionWeightsMap[newPos]) {
       setCustomWeights({ ...positionWeightsMap[newPos] });
@@ -95,19 +98,30 @@ export default function CardEfficiencyLabView({
       gNum: number,
       tcNum: number,
       maxBpVal: number,
-      weightsObj?: Record<string, number>
+      weightsObj?: Record<string, number>,
+      activeFilter?: PlayerFilterState
     ) => {
+      const fState = activeFilter || detailFilter;
+      const cleanQ = qStr.trim();
+      if (!cleanQ && !hasActiveDetailFilters(fState) && maxBpVal === 0) {
+        setResults([]);
+        setHasSearched(false);
+        return;
+      }
+
       setLoading(true);
+      setHasSearched(true);
       try {
         const res = await fetch("/api/fclab/v1/efficiency/analyze", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            query: qStr,
+            query: cleanQ,
             position: posStr,
             grade: gNum,
             team_color: tcNum,
             max_bp: maxBpVal,
+            filter: fState,
             custom_weights:
               weightsObj && Object.keys(weightsObj).length > 0
                 ? weightsObj
@@ -122,6 +136,9 @@ export default function CardEfficiencyLabView({
           if (list.length > 0) {
             setSelectedSpid(list[0].spid);
             setCompareSpid(list[1]?.spid || null);
+          } else {
+            setSelectedSpid(null);
+            setCompareSpid(null);
           }
         }
       } catch {
@@ -130,18 +147,48 @@ export default function CardEfficiencyLabView({
         setLoading(false);
       }
     },
-    []
+    [detailFilter]
   );
 
   useEffect(() => {
-    runEfficiencyAnalysis(
-      query,
-      position,
-      grade,
-      teamColor,
-      maxBp,
-      isCustomWeightActive ? customWeights : undefined
-    );
+    if (initialPlayerName && initialPlayerName.trim()) {
+      const targetPos = initialPosition || "ST";
+      setQuery(initialPlayerName);
+      setPosition(targetPos);
+      if (positionWeightsMap[targetPos]) {
+        setCustomWeights({ ...positionWeightsMap[targetPos] });
+        setIsCustomWeightActive(false);
+      }
+      const nextF = {
+        ...detailFilter,
+        position: targetPos,
+      };
+      setDetailFilter(nextF);
+      runEfficiencyAnalysis(
+        initialPlayerName,
+        targetPos,
+        grade,
+        teamColor,
+        maxBp,
+        undefined,
+        nextF
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPlayerName, initialPosition]);
+
+  useEffect(() => {
+    if (hasSearched) {
+      runEfficiencyAnalysis(
+        query,
+        position,
+        grade,
+        teamColor,
+        maxBp,
+        isCustomWeightActive ? customWeights : undefined,
+        detailFilter
+      );
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [position, grade, teamColor, maxBp]);
 
@@ -261,23 +308,24 @@ export default function CardEfficiencyLabView({
               grade,
               teamColor,
               maxBp,
-              isCustomWeightActive ? customWeights : undefined
+              isCustomWeightActive ? customWeights : undefined,
+              detailFilter
             );
           }}
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-2"
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 pt-2"
         >
-          <div className="lg:col-span-2 flex gap-2">
+          <div className="lg:col-span-3 flex flex-wrap sm:flex-nowrap gap-2">
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="선수 이름 입력 (비워두면 해당 포지션 전체 비교)"
-              className="flex-1 px-3 py-2 bg-[#0B0F17] border border-slate-800 rounded-lg text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
+              placeholder="선수 이름 입력 또는 [상세 필터 ▾] 조건 선택..."
+              className="flex-1 min-w-[180px] px-3 py-2 bg-[#0B1120] border border-slate-800 rounded-lg text-xs text-slate-100 focus:outline-none focus:border-blue-500"
             />
             <button
               type="submit"
               disabled={loading}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 whitespace-nowrap shrink-0"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 whitespace-nowrap shrink-0"
             >
               {loading ? (
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -286,13 +334,18 @@ export default function CardEfficiencyLabView({
               )}
               효율 분석
             </button>
+            <PlayerSearchFilterToggleButton
+              isOpen={filterOpen}
+              onToggle={() => setFilterOpen((v) => !v)}
+              filter={detailFilter}
+            />
           </div>
 
           <div>
             <select
               value={position}
               onChange={(e) => handlePositionChange(e.target.value)}
-              className="w-full px-3 py-2 bg-[#0B0F17] border border-slate-800 rounded-lg text-xs text-slate-200"
+              className="w-full px-3 py-2 bg-[#0B1120] border border-slate-800 rounded-lg text-xs text-slate-200"
             >
               {["ST", "CF", "LW", "RW", "CAM", "CM", "CDM", "CB", "LB", "RB", "GK"].map(
                 (p) => (
@@ -307,8 +360,12 @@ export default function CardEfficiencyLabView({
           <div>
             <select
               value={grade}
-              onChange={(e) => setGrade(Number(e.target.value))}
-              className="w-full px-3 py-2 bg-[#0B0F17] border border-slate-800 rounded-lg text-xs font-mono text-slate-200"
+              onChange={(e) => {
+                const g = Number(e.target.value);
+                setGrade(g);
+                setDetailFilter((prev) => ({ ...prev, grade: g }));
+              }}
+              className="w-full px-3 py-2 bg-[#0B1120] border border-slate-800 rounded-lg text-xs font-mono text-slate-200"
             >
               {dynamicEnhanceLevels.map((g) => (
                 <option key={g} value={g}>
@@ -323,7 +380,7 @@ export default function CardEfficiencyLabView({
             <select
               value={maxBp}
               onChange={(e) => setMaxBp(Number(e.target.value))}
-              className="w-full px-3 py-2 bg-[#0B0F17] border border-slate-800 rounded-lg text-xs font-mono text-slate-200"
+              className="w-full px-3 py-2 bg-[#0B1120] border border-slate-800 rounded-lg text-xs font-mono text-slate-200"
             >
               <option value={0}>예산 제한 없음 (전체)</option>
               <option value={50_000_000}>5,000만 BP 이하</option>
@@ -333,6 +390,50 @@ export default function CardEfficiencyLabView({
             </select>
           </div>
         </form>
+
+        <PlayerSearchFilter
+          isOpen={filterOpen}
+          filter={detailFilter}
+          onChange={(next) => {
+            setDetailFilter(next);
+            if (next.grade !== grade) setGrade(next.grade);
+            if (next.adaptBonus !== teamColor) setTeamColor(next.adaptBonus);
+            if (next.position && next.position !== "ALL" && next.position !== position) {
+              setPosition(next.position);
+            }
+          }}
+          onApply={(applied) => {
+            const target = applied || detailFilter;
+            const nextGrade = target.grade || 8;
+            const nextTc = target.adaptBonus || 0;
+            const nextPos =
+              target.position && target.position !== "ALL"
+                ? target.position
+                : position;
+            setGrade(nextGrade);
+            setTeamColor(nextTc);
+            setPosition(nextPos);
+            runEfficiencyAnalysis(
+              query,
+              nextPos,
+              nextGrade,
+              nextTc,
+              maxBp,
+              isCustomWeightActive ? customWeights : undefined,
+              target
+            );
+          }}
+          onReset={() => {
+            setGrade(8);
+            setTeamColor(0);
+            setMaxBp(0);
+            setResults([]);
+            setSelectedSpid(null);
+            setCompareSpid(null);
+            setHasSearched(false);
+          }}
+          maxEnhanceLevel={rules.maxEnhanceLevel}
+        />
 
         {/* Custom Weights Editor Drawer */}
         {showWeightEditor && (
@@ -486,13 +587,35 @@ export default function CardEfficiencyLabView({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/70 text-xs">
-                {filteredAndSortedResults.map((r, idx) => {
-                  const isPrimary = r.spid === primaryCard?.spid;
-                  const isCompare = r.spid === compareCard?.spid;
-                  const fm = r.feelMetrics;
-                  const gap = r.ovr_to_core_gap;
-                  return (
-                    <tr
+                {loading ? (
+                  <tr>
+                    <td colSpan={8} className="py-12 text-center text-slate-400">
+                      <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-400" />
+                      포지션별 핵심 스탯 평균 및 표기 OVR 대비 효율 점수를 계산하고 있습니다...
+                    </td>
+                  </tr>
+                ) : filteredAndSortedResults.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-12 px-4 text-center text-slate-400 space-y-1.5">
+                      <Search className="w-6 h-6 mx-auto text-slate-600 mb-1" />
+                      <div className="text-slate-200 font-semibold">
+                        {hasSearched
+                          ? "조건에 일치하는 선수 카드가 없습니다."
+                          : "분석할 선수 이름을 입력하거나 [상세 필터 ▾]에서 조건을 선택한 뒤 [효율 분석]을 눌러주세요."}
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        기본 강화 +8강 · 적응도 0 기준으로 (포지션 핵심 스탯 평균 ÷ 선수 표기 OVR) × 100 효율 점수를 비교합니다.
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredAndSortedResults.map((r, idx) => {
+                    const isPrimary = r.spid === primaryCard?.spid;
+                    const isCompare = r.spid === compareCard?.spid;
+                    const fm = r.feelMetrics;
+                    const gap = r.ovr_to_core_gap;
+                    return (
+                      <tr
                       key={r.spid}
                       onClick={() => setSelectedSpid(r.spid)}
                       className={`cursor-pointer transition-colors ${
@@ -606,7 +729,8 @@ export default function CardEfficiencyLabView({
                       </td>
                     </tr>
                   );
-                })}
+                  })
+                )}
               </tbody>
             </table>
           </div>
@@ -614,7 +738,11 @@ export default function CardEfficiencyLabView({
 
         {/* Right Detailed Breakdown & Grade Curve (5 cols) */}
         <div className="lg:col-span-5 space-y-6">
-          {primaryCard && (
+          {!primaryCard ? (
+            <div className="bg-[#111827] border border-slate-800 rounded-xl p-10 text-center text-xs text-slate-400">
+              좌측에서 선수를 검색하거나 상세 필터로 효율 분석을 실행하면, 선택된 카드의 6축 밸런스와 포지션별 핵심 스탯 평균 산출 내역이 표시됩니다.
+            </div>
+          ) : (
             <>
               <div className="bg-[#111827] border border-slate-800 rounded-xl p-5 space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-800 pb-3">
