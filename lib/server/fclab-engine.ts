@@ -3974,9 +3974,9 @@ export async function analyzeSquadAsync(
   const store = loadStore();
   const rules = getSystemRules();
   const effectiveSalaryCap =
-    salaryCap && salaryCap >= rules.salaryCap ? salaryCap : rules.salaryCap;
+    salaryCap && salaryCap > 0 ? salaryCap : rules.salaryCap || 270;
 
-  const placedEvaluations = [];
+  const placedEvaluations: SquadAnalysisResult["placed_evaluations"] = [];
   let totalSalary = 0;
   let totalBp = 0;
   const teamCounter: Record<string, number> = {};
@@ -3993,12 +3993,35 @@ export async function analyzeSquadAsync(
     피지컬: [],
   };
 
+  const extractValidCardTeamColors = (c: PlayerCard): string[] => {
+    const out: string[] = [];
+    const addTc = (raw?: string) => {
+      const clean = (raw || "").trim();
+      if (
+        !clean ||
+        clean === "단일팀" ||
+        clean === "스페셜" ||
+        clean === "미확인" ||
+        BANNED_DUMMY_TEAM_COLORS.has(clean)
+      ) {
+        return;
+      }
+      if (!out.includes(clean)) out.push(clean);
+    };
+    for (const tc of c.team_colors || []) {
+      addTc(tc.name);
+    }
+    addTc(c.team);
+    addTc(c.nation);
+    return out;
+  };
+
   for (const slot of slots) {
     const slotPos = (slot.slot_position || "ST").toUpperCase();
     const spid = Number(slot.spid || 0);
     const grade = Math.max(
       1,
-      Math.min(rules.maxEnhanceLevel, Number(slot.grade || 5))
+      Math.min(rules.maxEnhanceLevel, Number(slot.grade || 8))
     );
     if (!spid) continue;
 
@@ -4023,19 +4046,7 @@ export async function analyzeSquadAsync(
     totalSalary += Number(card.salary || 20);
     totalBp += Number(evalRes.bp || 0);
 
-    const seenForCard = new Set<string>();
-    if (card.team && !BANNED_DUMMY_TEAM_COLORS.has(card.team.trim())) {
-      seenForCard.add(card.team.trim());
-    }
-    if (card.nation && !BANNED_DUMMY_TEAM_COLORS.has(card.nation.trim())) {
-      seenForCard.add(card.nation.trim());
-    }
-    for (const tc of card.team_colors || []) {
-      const tcClean = (tc.name || "").trim();
-      if (tcClean && !BANNED_DUMMY_TEAM_COLORS.has(tcClean)) {
-        seenForCard.add(tcClean);
-      }
-    }
+    const seenForCard = new Set<string>(extractValidCardTeamColors(card));
     for (const tcName of seenForCard) {
       if (tcName) teamCounter[tcName] = (teamCounter[tcName] || 0) + 1;
     }
@@ -4088,18 +4099,49 @@ export async function analyzeSquadAsync(
       foot: card.foot,
       traits: card.traits || [],
       new_traits: cardNewTraits,
-      team_colors: card.team_colors || [],
+      team_colors: (card.team_colors || []).filter(
+        (tc) =>
+          tc.name &&
+          tc.name !== "단일팀" &&
+          !BANNED_DUMMY_TEAM_COLORS.has(tc.name.trim())
+      ),
     });
   }
 
   const detectedSynergies = Object.entries(teamCounter)
-    .filter(([, count]) => count >= 3)
+    .filter(
+      ([name, count]) =>
+        count >= 3 && name !== "단일팀" && !BANNED_DUMMY_TEAM_COLORS.has(name)
+    )
     .sort((a, b) => b[1] - a[1])
     .map(([name, count]) => ({
       name,
       count,
       bonus: `전체 능력치 +${count >= 8 ? 3 : count >= 5 ? 2 : 1}`,
     }));
+
+  const activeSynergyNames = new Set(detectedSynergies.map((d) => d.name));
+
+  /**
+   * 현재 스쿼드에서 해당 선수가 실제로 적용받고 있는 팀컬러(소속 클럽 또는 국가, '단일팀' 제외) 반환:
+   * 1순위: 스쿼드 내 활성 팀컬러(3명 이상) 중 해당 선수가 보유한 팀컬러
+   * 2순위: 스쿼드 내 다른 선수와 2명 이상 공유 중인 팀컬러
+   * 3순위: 해당 선수의 실제 소속 클럽 / 국가대표 팀컬러
+   */
+  const resolvePlayerActiveSquadTeamColors = (c: PlayerCard): string[] => {
+    const validTcs = extractValidCardTeamColors(c);
+    const inActiveSynergy = validTcs
+      .filter((tc) => activeSynergyNames.has(tc))
+      .sort((a, b) => (teamCounter[b] || 0) - (teamCounter[a] || 0));
+    if (inActiveSynergy.length > 0) return inActiveSynergy;
+
+    const sharedWithOther = validTcs
+      .filter((tc) => (teamCounter[tc] || 0) >= 2)
+      .sort((a, b) => (teamCounter[b] || 0) - (teamCounter[a] || 0));
+    if (sharedWithOther.length > 0) return sharedWithOther;
+
+    return validTcs;
+  };
 
   const avg = (arr: number[]) =>
     arr.length
@@ -4117,7 +4159,23 @@ export async function analyzeSquadAsync(
   const remainingSalary = effectiveSalaryCap - totalSalary;
 
   const usedPids = new Set(placedEvaluations.map((p) => p.pid));
-  const allCards = Object.values(store.cards);
+
+  const isSamePositionPlayable = (cand: PlayerCard, targetPos: string): boolean => {
+    const cleanPos = targetPos.toUpperCase();
+    if (cand.primary_position === cleanPos) return true;
+    if ((cand.positions || []).some((p) => p.pos === cleanPos)) return true;
+    if (cand.position_ovrs && cand.position_ovrs[cleanPos] !== undefined) return true;
+    return false;
+  };
+
+  const getSharedTeamColorsWithRequired = (
+    cand: PlayerCard,
+    requiredTcs: string[]
+  ): string[] => {
+    if (requiredTcs.length === 0) return [];
+    const candTcs = extractValidCardTeamColors(cand);
+    return requiredTcs.filter((reqTc) => candTcs.includes(reqTc));
+  };
 
   if (placedEvaluations.length > 0) {
     const sortedByCore = [...placedEvaluations].sort(
@@ -4125,33 +4183,56 @@ export async function analyzeSquadAsync(
     );
 
     for (const weakSlot of sortedByCore.slice(0, 3)) {
+      const weakCard = store.cards[weakSlot.spid];
+      if (!weakCard) continue;
       const wPos = weakSlot.slot_position;
       const wCore = weakSlot.core_score;
       const wBp = weakSlot.bp;
       const wSal = weakSlot.salary;
       const maxAllowedBp = wBp + remainingBp;
       const maxAllowedSal = wSal + Math.max(0, remainingSalary);
+      const requiredTcs = resolvePlayerActiveSquadTeamColors(weakCard);
 
       weaknesses.push({
         slot_position: wPos,
         current_player: `${weakSlot.season_code} ${weakSlot.name} (+${weakSlot.grade})`,
         core_score: wCore,
-        reason: `${wPos} 포지션 핵심 능력치 점수(${wCore}점)가 팀 평균 대비 낮아 공수 밸런스 병목이 발생합니다.`,
+        reason: `${wPos} 포지션 핵심 능력치 점수(${wCore}점)가 팀 평균 대비 낮아 공수 밸런스 보강 여지가 있습니다.`,
       });
 
-      const candidates = allCards
-        .filter(
+      if (requiredTcs.length === 0) continue;
+
+      let currentPool = Object.values(store.cards);
+      let sameTcCandidates = currentPool.filter(
+        (c) =>
+          !usedPids.has(c.pid) &&
+          isSamePositionPlayable(c, wPos) &&
+          getSharedTeamColorsWithRequired(c, requiredTcs).length > 0
+      );
+
+      if (sameTcCandidates.length < 3) {
+        await crawlPlayerList("", 24, {
+          position: wPos,
+          teamColors: [requiredTcs[0]],
+        }).catch(() => []);
+        currentPool = Object.values(store.cards);
+        sameTcCandidates = currentPool.filter(
           (c) =>
             !usedPids.has(c.pid) &&
-            c.salary <= maxAllowedSal + 3 &&
-            (c.primary_position === wPos ||
-              (c.positions || []).some((p) => p.pos === wPos))
-        )
+            isSamePositionPlayable(c, wPos) &&
+            getSharedTeamColorsWithRequired(c, requiredTcs).length > 0
+        );
+      }
+
+      const candidates = sameTcCandidates
+        .filter((c) => c.salary <= maxAllowedSal + 3)
         .sort((a, b) => b.ovr - a.ovr)
         .slice(0, 20);
 
       const bestAlts: SquadReplacementRecommendation[] = [];
       for (const cCard of candidates) {
+        const sharedTcs = getSharedTeamColorsWithRequired(cCard, requiredTcs);
+        if (sharedTcs.length === 0) continue;
         for (const testGrade of [8, 5, 3, 1]) {
           if (testGrade > rules.maxEnhanceLevel) continue;
           const cEval = evaluateCardEfficiencySync(
@@ -4182,6 +4263,7 @@ export async function analyzeSquadAsync(
               bp: cEval.bp,
               bp_text: cEval.bp_text,
               efficiency_index: cEval.efficiency_index,
+              sharedTeamColors: sharedTcs,
             });
             break;
           }
@@ -4198,9 +4280,9 @@ export async function analyzeSquadAsync(
   const roleWarnings: string[] = [];
   if (totalSalary > effectiveSalaryCap) {
     roleWarnings.push(
-      `현재 총 급여(${totalSalary} FP)가 최신 급여 상한선(${effectiveSalaryCap} FP)을 ${
+      `현재 총 급여(${totalSalary} FP)가 급여 상한선(${effectiveSalaryCap} FP)을 ${
         totalSalary - effectiveSalaryCap
-      } FP 초과했습니다. 풀백 또는 골키퍼 급여 조정을 권장합니다.`
+      } FP 초과했습니다. 아래 동일 팀컬러 급여 절감 대체 카드를 확인하세요.`
     );
   }
 
@@ -4222,23 +4304,16 @@ export async function analyzeSquadAsync(
   }
 
   // ============================================================================
-  // [스쿼드 구매 점검 리포트 (SquadPurchaseAudit)] 산출
-  // 1) 총 구단가치 및 재판매 시 예상 수수료 손실액 (PC방+탑클 20% vs 40% 쿠폰 비교)
-  // 2) 선발 11명 각각의 최근 30일 시세 백분위 위치 (저점 🟢 / 중립 🟡 / 고점 🔴)
-  // 3) 급여 과투자 포지션(풀백 26+ 등) 및 스탯 대비 체감 효율 저하 카드 대체재 제안
+  // [스쿼드 구매 점검 리포트 (SquadPurchaseAudit) 및 동일 팀컬러 급여 절감 / 가성비 대체 카드 제안]
   // ============================================================================
   const defaultFeeConfig: MarketFeeConfig = {
     hasPcRoom: true,
     hasTopClass: true,
     couponRate: 0,
   };
-  // 기본(PC방 30% + 탑클 20% = 50% 할인 -> 실효 수수료 20%)
   const effectiveFeeRatePcTop = 0.20;
-  // PC방 + 탑클 + 30% 쿠폰 (80% 할인 -> 실효 수수료 8%)
   const effectiveFeeRateWith30Coupon = 0.08;
-  // PC방 + 탑클 + 40% 쿠폰 (90% 할인 -> 실효 수수료 4%)
   const effectiveFeeRateWith40Coupon = 0.04;
-  // 40% 쿠폰 단독 (40% 할인 -> 실효 수수료 24%)
   const effectiveFeeRateCouponOnly40 = 0.24;
 
   const resaleLossPcTopBp = Math.round(totalBp * effectiveFeeRatePcTop);
@@ -4249,11 +4324,146 @@ export async function analyzeSquadAsync(
   const playerPricePercentiles: SquadPlayerPricePercentileItem[] = [];
   const overinvestedPositions: SquadOverinvestedPositionWarning[] = [];
 
+  /**
+   * 특정 슬롯 선수에 대해 반드시 [동일 활성 팀컬러(소속 클럽/국가, '단일팀' 제외) + 동일 포지션]을 만족하는
+   * 급여 절감 / 가성비 대체 카드 후보를 탐색하는 헬퍼
+   */
+  const findSameTeamColorAlternativesForPlaced = async (
+    placed: (typeof placedEvaluations)[number],
+    card: PlayerCard,
+    allowSameSalaryCostEffective = false
+  ): Promise<{
+    requiredTcs: string[];
+    items: {
+      cand: PlayerCard;
+      candGrade: number;
+      candOvr: number;
+      candBp: number;
+      candFeelScore: number;
+      candFeelBadge?: SimilarAlternativePlayerItem["feelBadgeLabel"];
+      similarityPct: number;
+      priceDiffRatio: number;
+      salSaved: number;
+      sharedTcs: string[];
+      rankScore: number;
+    }[];
+  }> => {
+    const pos = placed.slot_position;
+    const currentBp = Math.max(0, Number(placed.bp || 0));
+    const feelScore = placed.feelScore ?? 78;
+    const requiredTcs = resolvePlayerActiveSquadTeamColors(card);
+    if (requiredTcs.length === 0) {
+      return { requiredTcs: [], items: [] };
+    }
+
+    let pool = Object.values(store.cards);
+    let matchingPool = pool.filter((cand) => {
+      if (cand.spid === card.spid || usedPids.has(cand.pid)) return false;
+      if (!isSamePositionPlayable(cand, pos)) return false;
+      const shared = getSharedTeamColorsWithRequired(cand, requiredTcs);
+      if (shared.length === 0) return false;
+      return allowSameSalaryCostEffective
+        ? cand.salary <= placed.salary
+        : cand.salary < placed.salary;
+    });
+
+    // 로컬 캐시에 동일 팀컬러·동포지션 대체 후보가 부족하면 실시간 데이터센터 크롤링 수행
+    if (matchingPool.length < 2) {
+      await crawlPlayerList("", 28, {
+        position: pos,
+        teamColors: [requiredTcs[0]],
+      }).catch(() => []);
+      pool = Object.values(store.cards);
+      matchingPool = pool.filter((cand) => {
+        if (cand.spid === card.spid || usedPids.has(cand.pid)) return false;
+        if (!isSamePositionPlayable(cand, pos)) return false;
+        const shared = getSharedTeamColorsWithRequired(cand, requiredTcs);
+        if (shared.length === 0) return false;
+        return cand.salary <= placed.salary;
+      });
+    }
+
+    const targetSix = computeSixFaceSummary(card, placed.grade, teamColorBonus);
+    const targetVec = [
+      targetSix["속력"] || 100,
+      targetSix["슈팅"] || 100,
+      targetSix["패스"] || 100,
+      targetSix["드리블"] || 100,
+      targetSix["수비"] || 100,
+      targetSix["피지컬"] || 100,
+    ];
+
+    const items = matchingPool
+      .map((cand) => {
+        const sharedTcs = getSharedTeamColorsWithRequired(cand, requiredTcs);
+        const candGrade = placed.grade || 8;
+        const candFeel = computePlayerFeelMetricsSync(
+          cand,
+          pos,
+          candGrade,
+          teamColorBonus,
+          false
+        );
+        const candSix = computeSixFaceSummary(cand, candGrade, teamColorBonus);
+        const candVec = [
+          candSix["속력"] || 100,
+          candSix["슈팅"] || 100,
+          candSix["패스"] || 100,
+          candSix["드리블"] || 100,
+          candSix["수비"] || 100,
+          candSix["피지컬"] || 100,
+        ];
+        const cosSim = computeCosineSimilarity(targetVec, candVec);
+        const similarityPct = Number(
+          Math.max(84, Math.min(99.2, cosSim * 98.5)).toFixed(1)
+        );
+        const candBp = resolveCardBpForGrade(cand, candGrade);
+        const priceDiffRatio =
+          currentBp > 0 && candBp > 0
+            ? Number(((candBp - currentBp) / currentBp).toFixed(2))
+            : -0.25;
+        const salSaved = Math.max(0, placed.salary - cand.salary);
+        const feelGain = candFeel.feelScore - feelScore;
+        const bpSavedBonus =
+          currentBp > 0 && candBp < currentBp
+            ? Math.min(10, ((currentBp - candBp) / currentBp) * 12)
+            : 0;
+        const rankScore =
+          salSaved * 4.0 +
+          feelGain * 1.2 +
+          similarityPct * 0.4 +
+          bpSavedBonus +
+          cand.ovr * 0.25;
+        const candOvr =
+          (cand.position_ovrs?.[pos] || cand.ovr) +
+          getEnhanceOvrBoost(candGrade, rules.enhanceOvrBoosts) +
+          teamColorBonus;
+
+        return {
+          cand,
+          candGrade,
+          candOvr,
+          candBp,
+          candFeelScore: candFeel.feelScore,
+          candFeelBadge: candFeel.feelGradeLabel,
+          similarityPct,
+          priceDiffRatio,
+          salSaved,
+          sharedTcs,
+          rankScore,
+        };
+      })
+      .filter((item) => item.sharedTcs.length > 0 && item.candFeelScore >= feelScore - 8)
+      .sort((a, b) => b.rankScore - a.rankScore)
+      .slice(0, 3);
+
+    return { requiredTcs, items };
+  };
+
   for (const placed of placedEvaluations) {
     const card = store.cards[placed.spid];
     const currentBp = Math.max(0, Number(placed.bp || 0));
 
-    // 30일 시세 이력 조회 (캐시 우선, 없을 경우 카드/강화별 현실적 30일 변동 밴드 산출)
     const phExact = store.priceHistory[`${placed.spid}_${placed.grade}`];
     const phBase = store.priceHistory[`${placed.spid}_1`];
     let min30dBp = 0;
@@ -4273,9 +4483,8 @@ export async function analyzeSquadAsync(
       min30dBp = Math.round(currentBp * minRatio);
       max30dBp = Math.round(currentBp * maxRatio);
     } else if (currentBp > 0) {
-      // 카드 고유 해시 기반으로 일관된 30일 시세 위치 산출
       const seed = ((placed.spid * 31 + placed.grade * 97) % 100 + 100) % 100;
-      const pctTarget = 14 + (seed % 76); // 14% ~ 89% 분포
+      const pctTarget = 14 + (seed % 76);
       const bandWidthRatio = placed.grade >= 8 ? 0.28 : 0.19;
       const totalSpan = Math.max(10_000_000, Math.round(currentBp * bandWidthRatio));
       min30dBp = Math.max(
@@ -4315,7 +4524,6 @@ export async function analyzeSquadAsync(
       buyTimingVerdict,
     });
 
-    // 3) 급여 과투자 포지션 및 스탯 대비 체감 저하 카드 점검
     if (!card) continue;
     const pos = placed.slot_position;
     const isFullback = ["LB", "RB", "LWB", "RWB"].includes(pos);
@@ -4328,93 +4536,26 @@ export async function analyzeSquadAsync(
     let isOverinvested = false;
     let warningReason = "";
 
-    if (isFullback && placed.salary >= 25) {
+    if (isFullback && placed.salary >= 24) {
       isOverinvested = true;
-      warningReason = `${pos}(풀백/윙백) 포지션에 급여 ${placed.salary} FP가 투자되어 있습니다. 풀백 급여를 19~23 FP 구간의 가성비 메타 자원으로 낮추면 핵심 공격수·중앙 미드필더 체급을 한 단계 높일 수 있습니다.`;
-    } else if (isGk && placed.salary >= 20) {
+      warningReason = `${pos}(풀백/윙백) 포지션에 급여 ${placed.salary} FP가 배정되어 있습니다. 동일 팀컬러 내 하위 급여 자원으로 조정하면 핵심 공격·중원 포지션 급여 여유분을 확보할 수 있습니다.`;
+    } else if (isGk && placed.salary >= 19) {
       isOverinvested = true;
-      warningReason = `GK 포지션에 급여 ${placed.salary} FP가 배정되어 있습니다. 골키퍼는 신장(193cm+)과 반응속도가 우수한 14~18 FP 급여권 카드로도 최상위 선방 효율을 낼 수 있습니다.`;
+      warningReason = `GK 포지션에 급여 ${placed.salary} FP가 배정되어 있습니다. 동일 팀컬러 내 가성비 골키퍼로 교체해 급여를 절감할 수 있습니다.`;
     } else if (trapBadge === "STAT_TRAP") {
       isOverinvested = true;
-      warningReason = `표기 OVR(${placed.ovr}) 대비 인게임 체감 지수(${feelScore}점, ⚠️ 스탯 대비 둔중함)와 선회 반응이 다소 무거운 카드입니다. 급여·BP를 아끼면서 실제 체감 지수가 더 높은 대체 카드를 추천합니다.`;
-    } else if (isCenterback && placed.salary >= 28) {
+      warningReason = `동일 팀컬러·동포지션 내에서 급여와 BP를 절감하면서 체감 밸런스를 높일 수 있는 대체 카드입니다.`;
+    } else if (isCenterback && placed.salary >= 27) {
       isOverinvested = true;
-      warningReason = `CB 포지션에 급여 ${placed.salary} FP가 집중되어 있습니다. 유사한 피지컬·속력을 가진 하위 급여 시즌/강화 카드로 교체해 급여 여유분을 확보할 수 있습니다.`;
-    } else if (placed.salary >= 27 && salEff < 68) {
+      warningReason = `CB 포지션에 급여 ${placed.salary} FP가 집중되어 있습니다. 동일 팀컬러 내 하위 급여 센터백으로 교체해 급여 여유분을 확보할 수 있습니다.`;
+    } else if (placed.salary >= 26) {
       isOverinvested = true;
-      warningReason = `급여 ${placed.salary} FP 대비 ${pos} 포지션 핵심 유효 스탯 효율(${salEff}점)이 다소 낮습니다. 급여를 절감하면서 실전 체감 지수(${feelScore}점)를 유지할 수 있는 대체 후보입니다.`;
+      warningReason = `${pos} 포지션(${placed.name}, 급여 ${placed.salary} FP)의 활성 팀컬러를 그대로 유지하면서 급여 및 BP를 절감할 수 있는 동포지션 대체 카드입니다.`;
     }
 
     if (isOverinvested) {
-      const targetPosInfo = resolvePositionGroupInfo(pos);
-      const targetSix = computeSixFaceSummary(card, placed.grade, teamColorBonus);
-      const targetVec = [
-        targetSix["속력"] || 100,
-        targetSix["슈팅"] || 100,
-        targetSix["패스"] || 100,
-        targetSix["드리블"] || 100,
-        targetSix["수비"] || 100,
-        targetSix["피지컬"] || 100,
-      ];
-
-      const altCandidates = allCards
-        .filter((cand) => {
-          if (cand.spid === card.spid || usedPids.has(cand.pid)) return false;
-          const cPosInfo = resolvePositionGroupInfo(cand.primary_position);
-          const posOk =
-            cand.primary_position === pos ||
-            cPosInfo.positionGroup === targetPosInfo.positionGroup ||
-            (cand.positions || []).some((p) => p.pos === pos);
-          if (!posOk) return false;
-          // 급여 절감 또는 체감 개선 조건
-          return cand.salary < placed.salary || (trapBadge === "STAT_TRAP" && cand.salary <= placed.salary);
-        })
-        .map((cand) => {
-          const candGrade = placed.grade;
-          const candFeel = computePlayerFeelMetricsSync(
-            cand,
-            pos,
-            candGrade,
-            teamColorBonus,
-            false
-          );
-          const candSix = computeSixFaceSummary(cand, candGrade, teamColorBonus);
-          const candVec = [
-            candSix["속력"] || 100,
-            candSix["슈팅"] || 100,
-            candSix["패스"] || 100,
-            candSix["드리블"] || 100,
-            candSix["수비"] || 100,
-            candSix["피지컬"] || 100,
-          ];
-          const cosSim = computeCosineSimilarity(targetVec, candVec);
-          const similarityPct = Number(
-            Math.max(82, Math.min(99.2, cosSim * 98.5)).toFixed(1)
-          );
-          const candBp = resolveCardBpForGrade(cand, candGrade);
-          const priceDiffRatio =
-            currentBp > 0 && candBp > 0
-              ? Number(((candBp - currentBp) / currentBp).toFixed(2))
-              : -0.25;
-
-          const salSaved = placed.salary - cand.salary;
-          const feelGain = candFeel.feelScore - feelScore;
-          const rankScore = salSaved * 3.5 + feelGain * 1.4 + similarityPct * 0.4;
-
-          return {
-            cand,
-            candGrade,
-            candBp,
-            candFeelScore: candFeel.feelScore,
-            similarityPct,
-            priceDiffRatio,
-            salSaved,
-            rankScore,
-          };
-        })
-        .filter((item) => item.candFeelScore >= feelScore - 5)
-        .sort((a, b) => b.rankScore - a.rankScore)
-        .slice(0, 3);
+      const { requiredTcs, items: altCandidates } =
+        await findSameTeamColorAlternativesForPlaced(placed, card, true);
 
       if (altCandidates.length > 0) {
         const bestAlt = altCandidates[0];
@@ -4425,12 +4566,18 @@ export async function analyzeSquadAsync(
             season: item.cand.season_code,
             seasonImg: item.cand.season_img,
             thumbUrl: item.cand.thumb_url,
+            position: pos,
             grade: item.candGrade,
+            salary: item.cand.salary,
+            ovr: item.candOvr,
             bp: item.candBp,
             bpText: formatBpKorean(item.candBp),
+            sharedTeamColor: item.sharedTcs[0],
+            sharedTeamColors: item.sharedTcs,
             similarity: item.similarityPct,
             priceDiffRatio: item.priceDiffRatio,
             feelScore: item.candFeelScore,
+            feelBadgeLabel: item.candFeelBadge,
           }));
 
         overinvestedPositions.push({
@@ -4448,8 +4595,9 @@ export async function analyzeSquadAsync(
             feelScore,
             positionSalaryEfficiency: salEff,
             statTrapBadge: trapBadge,
+            activeTeamColors: requiredTcs,
           },
-          warningReason,
+          warningReason: `[${requiredTcs.slice(0, 2).join(" · ")} 팀컬러 동일 유지] ${warningReason}`,
           savedSalary: Math.max(0, bestAlt.salSaved),
           savedBp: Math.max(0, currentBp - bestAlt.candBp),
           recommendedAlternatives,
@@ -4458,35 +4606,39 @@ export async function analyzeSquadAsync(
     }
   }
 
-  // 만약 엄격 조건에 걸린 포지션이 하나도 없다면, 가장 급여 절감 여지가 큰 측면/수비 포지션 1곳을 최적화 제안으로 제공
+  // 만약 위 조건에 걸린 포지션이 없더라도, 현재 배치된 선수 중 급여가 가장 높은 포지션에 대해 동일 팀컬러·동포지션 대체 카드를 제안
   if (overinvestedPositions.length === 0 && placedEvaluations.length > 0) {
-    const peripheralSorted = [...placedEvaluations].sort((a, b) => {
-      const aPri = ["LB", "RB", "LWB", "RWB", "GK"].includes(a.slot_position) ? 5 : 0;
-      const bPri = ["LB", "RB", "LWB", "RWB", "GK"].includes(b.slot_position) ? 5 : 0;
-      return b.salary + bPri - (a.salary + aPri);
-    });
-    const topTarget = peripheralSorted[0];
-    const card = topTarget ? store.cards[topTarget.spid] : null;
-    if (topTarget && card) {
+    const sortedBySal = [...placedEvaluations].sort((a, b) => b.salary - a.salary);
+    for (const topTarget of sortedBySal.slice(0, 2)) {
+      const card = store.cards[topTarget.spid];
+      if (!card) continue;
       const pos = topTarget.slot_position;
-      const feelMetrics = computePlayerFeelMetricsSync(
-        card,
-        pos,
-        topTarget.grade,
-        teamColorBonus,
-        true
-      );
-      const filteredAlts = (feelMetrics.similarAlternatives || [])
-        .filter((alt) => !usedPids.has(alt.spid % 1_000_000))
-        .slice(0, 2);
-      if (filteredAlts.length > 0) {
-        const altCard = store.cards[filteredAlts[0].spid];
-        const savedSal = altCard
-          ? Math.max(1, topTarget.salary - altCard.salary)
-          : 2;
-        const savedBpVal = filteredAlts[0].bp
-          ? Math.max(0, topTarget.bp - filteredAlts[0].bp)
-          : 0;
+      const { requiredTcs, items: altCandidates } =
+        await findSameTeamColorAlternativesForPlaced(topTarget, card, true);
+
+      if (altCandidates.length > 0) {
+        const bestAlt = altCandidates[0];
+        const recommendedAlternatives: SimilarAlternativePlayerItem[] =
+          altCandidates.map((item) => ({
+            spid: item.cand.spid,
+            name: item.cand.name,
+            season: item.cand.season_code,
+            seasonImg: item.cand.season_img,
+            thumbUrl: item.cand.thumb_url,
+            position: pos,
+            grade: item.candGrade,
+            salary: item.cand.salary,
+            ovr: item.candOvr,
+            bp: item.candBp,
+            bpText: formatBpKorean(item.candBp),
+            sharedTeamColor: item.sharedTcs[0],
+            sharedTeamColors: item.sharedTcs,
+            similarity: item.similarityPct,
+            priceDiffRatio: item.priceDiffRatio,
+            feelScore: item.candFeelScore,
+            feelBadgeLabel: item.candFeelBadge,
+          }));
+
         overinvestedPositions.push({
           slotId: topTarget.slot_id,
           slotPosition: pos,
@@ -4499,15 +4651,17 @@ export async function analyzeSquadAsync(
             grade: topTarget.grade,
             salary: topTarget.salary,
             bp: topTarget.bp,
-            feelScore: feelMetrics.feelScore,
-            positionSalaryEfficiency: feelMetrics.positionSalaryEfficiency,
-            statTrapBadge: feelMetrics.statTrapBadge,
+            feelScore: topTarget.feelScore ?? 78,
+            positionSalaryEfficiency: topTarget.positionSalaryEfficiency ?? 72,
+            statTrapBadge: topTarget.statTrapBadge,
+            activeTeamColors: requiredTcs,
           },
-          warningReason: `${pos} 포지션(${topTarget.name}, 급여 ${topTarget.salary} FP)은 현재 준수하나, 급여와 예산을 아껴 공격진에 투자하고 싶을 때 인게임 체감 지수(${feelMetrics.feelScore}점)가 유사한 가성비 대체 카드입니다.`,
-          savedSalary: savedSal,
-          savedBp: savedBpVal,
-          recommendedAlternatives: filteredAlts,
+          warningReason: `[${requiredTcs.slice(0, 2).join(" · ")} 팀컬러 동일 유지] ${pos} 포지션(${topTarget.name}, 급여 ${topTarget.salary} FP)과 동일한 팀컬러를 유지하면서 급여 및 예산을 절감할 수 있는 동포지션 대체 카드입니다.`,
+          savedSalary: Math.max(0, bestAlt.salSaved),
+          savedBp: Math.max(0, topTarget.bp - bestAlt.candBp),
+          recommendedAlternatives,
         });
+        break;
       }
     }
   }

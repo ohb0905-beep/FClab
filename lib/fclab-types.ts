@@ -22,7 +22,7 @@ export const DEFAULT_ENHANCE_OVR_BOOSTS: number[] = [
 ];
 
 export const DEFAULT_SYSTEM_RULES: SystemRules = {
-  salaryCap: 310,
+  salaryCap: 270,
   maxEnhanceLevel: 13,
   enhanceOvrBoosts: [...DEFAULT_ENHANCE_OVR_BOOSTS],
   lastSyncedAt: new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC",
@@ -349,6 +349,7 @@ export interface SquadReplacementRecommendation {
   bp: number;
   bp_text: string;
   efficiency_index: number;
+  sharedTeamColors?: string[];
 }
 
 export interface SquadAnalysisResult {
@@ -2013,6 +2014,8 @@ export interface SimilarAlternativePlayerItem {
   thumbUrl?: string;
   position?: string;
   grade?: number;
+  salary?: number;
+  ovr?: number;
   bp?: number;
   bpText?: string;
   /** 공유하는 핵심 팀컬러(소속 클럽 또는 국가대표) */
@@ -2215,6 +2218,7 @@ export interface SquadOverinvestedPositionWarning {
     feelScore: number;
     positionSalaryEfficiency: number;
     statTrapBadge?: StatTrapBadgeType;
+    activeTeamColors?: string[];
   };
   warningReason: string;
   savedSalary: number;

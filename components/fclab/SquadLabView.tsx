@@ -4,37 +4,26 @@ import React, {
   useState,
   useEffect,
   useCallback,
-  useRef,
   useMemo,
 } from "react";
 import {
   Save,
   FolderOpen,
   RefreshCw,
-  Search,
   AlertTriangle,
-  ArrowUpRight,
   UserPlus,
   X,
   RotateCcw,
-  Move,
   ArrowLeftRight,
-  Filter,
   ArrowUpDown,
-  CheckCircle2,
   Users,
-  Crosshair,
-  Zap,
-  Shield,
-  Flame,
-  Compass,
-  Sparkles,
   Flag,
   Trophy,
   Trash2,
   ChevronDown,
   ChevronUp,
   Wallet,
+  Search,
 } from "lucide-react";
 import {
   PlayerCard,
@@ -43,6 +32,12 @@ import {
   SquadAnalysisResult,
   SystemRules,
   DEFAULT_SYSTEM_RULES,
+  OFFICIAL_NEW_TRAIT_NAMES_17,
+  getOfficialTraitIconUrl,
+  PlayerFilterState,
+  DEFAULT_PLAYER_FILTER_STATE,
+  appendFilterParamsToUrl,
+  matchesPlayerFilter,
   getEnhanceBadgeStyle,
   getEnhanceOvrBoost,
   formatBpKorean,
@@ -50,6 +45,9 @@ import {
   getTeamColorLogoUrl,
 } from "@/lib/fclab-types";
 import { PlayerAvatar, SeasonBadge, HexRadarChart } from "./VisualCharts";
+import PlayerSearchFilter, {
+  PlayerSearchFilterToggleButton,
+} from "./PlayerSearchFilter";
 
 export type FormationCategory = "4백" | "3백" | "5백";
 
@@ -59,10 +57,10 @@ export const FORMATION_CATEGORIES: Record<FormationCategory, string[]> = {
     "4-2-2-2",
     "4-1-2-3",
     "4-2-1-3",
-    "4-1-4-1",
     "4-4-2",
-    "4-4-1-1",
+    "4-1-4-1",
     "4-3-3",
+    "4-4-1-1",
     "4-1-2-1-2 (다이아)",
     "4-1-2-1-2 (넓게)",
     "4-3-2-1",
@@ -73,16 +71,22 @@ export const FORMATION_CATEGORIES: Record<FormationCategory, string[]> = {
   "5백": ["5-2-3", "5-3-2", "5-2-1-2", "5-4-1", "5-1-2-2"],
 };
 
+export const ALL_FORMATIONS_LIST: string[] = [
+  ...FORMATION_CATEGORIES["4백"],
+  ...FORMATION_CATEGORIES["3백"],
+  ...FORMATION_CATEGORIES["5백"],
+];
+
 export const FORMATION_LAYOUTS: Record<
   string,
   { slot_id: string; slot_position: string; x: number; y: number }[]
 > = {
   // ==================== 4백 (13종) ====================
   "4-2-3-1": [
-    { slot_id: "ST", slot_position: "ST", x: 50, y: 13 },
-    { slot_id: "LW", slot_position: "LW", x: 18, y: 28 },
-    { slot_id: "CAM", slot_position: "CAM", x: 50, y: 30 },
-    { slot_id: "RW", slot_position: "RW", x: 82, y: 28 },
+    { slot_id: "ST", slot_position: "ST", x: 50, y: 14 },
+    { slot_id: "LW", slot_position: "LW", x: 18, y: 29 },
+    { slot_id: "CAM", slot_position: "CAM", x: 50, y: 31 },
+    { slot_id: "RW", slot_position: "RW", x: 82, y: 29 },
     { slot_id: "CDM1", slot_position: "CDM", x: 35, y: 52 },
     { slot_id: "CDM2", slot_position: "CDM", x: 65, y: 52 },
     { slot_id: "LB", slot_position: "LB", x: 14, y: 73 },
@@ -414,7 +418,6 @@ const ALL_POSITIONS = [
   "GK",
 ];
 
-// 포지션 호환 그룹 (포메이션 변경 시 기존 선수를 최대한 알맞은 포지션 슬롯에 자동 유지하기 위함)
 const POSITION_COMPATIBILITY_ORDER: Record<string, string[]> = {
   ST: ["ST", "CF", "LW", "RW", "CAM"],
   CF: ["CF", "ST", "CAM", "LW", "RW"],
@@ -433,257 +436,17 @@ const POSITION_COMPATIBILITY_ORDER: Record<string, string[]> = {
   GK: ["GK"],
 };
 
-// 공식 신규 특성 17종 전용 시각 스타일 및 아이콘 매핑 (가상/추론 특성 제외)
-const NEW_TRAITS_CONFIG: Record<
-  string,
-  {
-    shortLabel: string;
-    Icon: React.ComponentType<{ className?: string }>;
-    bgClass: string;
-    borderClass: string;
-    iconColor: string;
-  }
-> = {
-  "크로스 포쳐": {
-    shortLabel: "크로스 포쳐",
-    Icon: Crosshair,
-    bgClass: "bg-amber-950/95",
-    borderClass: "border-amber-400/80",
-    iconColor: "text-amber-300",
-  },
-  "아크로바틱 피니셔": {
-    shortLabel: "아크로바틱",
-    Icon: Flame,
-    bgClass: "bg-rose-950/95",
-    borderClass: "border-rose-400/80",
-    iconColor: "text-rose-300",
-  },
-  "레이저 슈터": {
-    shortLabel: "레이저 슈터",
-    Icon: Crosshair,
-    bgClass: "bg-fuchsia-950/95",
-    borderClass: "border-fuchsia-400/80",
-    iconColor: "text-fuchsia-300",
-  },
-  타이탄: {
-    shortLabel: "타이탄",
-    Icon: Shield,
-    bgClass: "bg-orange-950/95",
-    borderClass: "border-orange-400/80",
-    iconColor: "text-orange-300",
-  },
-  "라인 브레이커": {
-    shortLabel: "라인 브레이커",
-    Icon: Zap,
-    bgClass: "bg-cyan-950/95",
-    borderClass: "border-cyan-400/80",
-    iconColor: "text-cyan-300",
-  },
-  프레데터: {
-    shortLabel: "프레데터",
-    Icon: Crosshair,
-    bgClass: "bg-red-950/95",
-    borderClass: "border-red-400/80",
-    iconColor: "text-red-300",
-  },
-  스피드스터: {
-    shortLabel: "스피드스터",
-    Icon: Zap,
-    bgClass: "bg-yellow-950/95",
-    borderClass: "border-yellow-400/80",
-    iconColor: "text-yellow-300",
-  },
-  트릭스터: {
-    shortLabel: "트릭스터",
-    Icon: Sparkles,
-    bgClass: "bg-purple-950/95",
-    borderClass: "border-purple-400/80",
-    iconColor: "text-purple-300",
-  },
-  "2개의 심장": {
-    shortLabel: "2개의 심장",
-    Icon: Flame,
-    bgClass: "bg-emerald-950/95",
-    borderClass: "border-emerald-400/80",
-    iconColor: "text-emerald-300",
-  },
-  커맨더: {
-    shortLabel: "커맨더",
-    Icon: Compass,
-    bgClass: "bg-sky-950/95",
-    borderClass: "border-sky-400/80",
-    iconColor: "text-sky-300",
-  },
-  블로커: {
-    shortLabel: "블로커",
-    Icon: Shield,
-    bgClass: "bg-emerald-950/95",
-    borderClass: "border-emerald-400/80",
-    iconColor: "text-emerald-300",
-  },
-  파이터: {
-    shortLabel: "파이터",
-    Icon: Shield,
-    bgClass: "bg-rose-950/95",
-    borderClass: "border-rose-400/80",
-    iconColor: "text-rose-300",
-  },
-  "와일드 태클러": {
-    shortLabel: "와일드 태클러",
-    Icon: Shield,
-    bgClass: "bg-teal-950/95",
-    borderClass: "border-teal-400/80",
-    iconColor: "text-teal-300",
-  },
-  체이서: {
-    shortLabel: "체이서",
-    Icon: Zap,
-    bgClass: "bg-blue-950/95",
-    borderClass: "border-blue-400/80",
-    iconColor: "text-blue-300",
-  },
-  "GK 빠른 반응": {
-    shortLabel: "GK 빠른 반응",
-    Icon: Zap,
-    bgClass: "bg-indigo-950/95",
-    borderClass: "border-indigo-400/80",
-    iconColor: "text-indigo-300",
-  },
-  "GK 공중볼 장악": {
-    shortLabel: "GK 공중볼",
-    Icon: Shield,
-    bgClass: "bg-indigo-950/95",
-    borderClass: "border-indigo-400/80",
-    iconColor: "text-indigo-300",
-  },
-  "GK 데드아이": {
-    shortLabel: "GK 데드아이",
-    Icon: Compass,
-    bgClass: "bg-indigo-950/95",
-    borderClass: "border-indigo-400/80",
-    iconColor: "text-indigo-300",
-  },
-};
+// 공식 신규 특성 17종 아이콘 URL 매핑 (넥슨 공식 CDN)
+const OFFICIAL_NEW_TRAIT_ICON_MAP: Record<string, string> = Object.fromEntries(
+  OFFICIAL_NEW_TRAIT_NAMES_17.map((name) => [name, getOfficialTraitIconUrl(name)])
+);
 
-const NATION_CREST_MAP: Record<string, { code: string; bg: string }> = {
-  대한민국: { code: "KOR", bg: "bg-rose-600 text-white" },
-  브라질: { code: "BRA", bg: "bg-amber-500 text-slate-950" },
-  네덜란드: { code: "NED", bg: "bg-orange-500 text-white" },
-  잉글랜드: { code: "ENG", bg: "bg-slate-200 text-rose-700" },
-  프랑스: { code: "FRA", bg: "bg-blue-600 text-white" },
-  우루과이: { code: "URU", bg: "bg-sky-500 text-white" },
-  벨기에: { code: "BEL", bg: "bg-red-700 text-amber-300" },
-  모로코: { code: "MAR", bg: "bg-emerald-700 text-rose-200" },
-  독일: { code: "GER", bg: "bg-slate-800 text-amber-400" },
-  스페인: { code: "ESP", bg: "bg-red-600 text-amber-300" },
-  포르투갈: { code: "POR", bg: "bg-rose-700 text-emerald-300" },
-  아르헨티나: { code: "ARG", bg: "bg-sky-400 text-slate-950" },
-  이탈리아: { code: "ITA", bg: "bg-blue-500 text-white" },
-};
-
-const CLUB_CREST_MAP: Record<string, { code: string; bg: string }> = {
-  "레알 마드리드": { code: "RMA", bg: "bg-indigo-600 text-amber-300" },
-  "AC 밀란": { code: "ACM", bg: "bg-red-700 text-white" },
-  "토트넘 홋스퍼": { code: "TOT", bg: "bg-slate-200 text-slate-900" },
-  "맨체스터 유나이티드": { code: "MUN", bg: "bg-red-600 text-amber-200" },
-  "맨체스터 시티": { code: "MCI", bg: "bg-sky-500 text-white" },
-  "바이에른 뮌헨": { code: "FCB", bg: "bg-rose-600 text-white" },
-  "리버풀 FC": { code: "LIV", bg: "bg-red-700 text-amber-200" },
-  "첼시 FC": { code: "CHE", bg: "bg-blue-600 text-white" },
-  "파리 생제르맹": { code: "PSG", bg: "bg-blue-800 text-rose-300" },
-  "인터 밀란": { code: "INT", bg: "bg-blue-700 text-slate-100" },
-  "FC 바르셀로나": { code: "BAR", bg: "bg-rose-700 text-amber-300" },
-  "보루시아 도르트문트": { code: "BVB", bg: "bg-amber-400 text-slate-950" },
-  "바이어 04 레버쿠젠": { code: "B04", bg: "bg-red-600 text-white" },
-  "SSC 나폴리": { code: "NAP", bg: "bg-sky-500 text-white" },
-  "PSV 에인트호번": { code: "PSV", bg: "bg-rose-600 text-white" },
-};
-
-function TeamColorLogoBadge({
-  name,
-  count,
-  bonus,
-}: {
-  name: string;
-  count?: number;
-  bonus?: string;
-}) {
-  const [imgErr, setImgErr] = useState(false);
-  const cleanName = name.trim();
-  const nationStyle = NATION_CREST_MAP[cleanName];
-  const clubStyle =
-    CLUB_CREST_MAP[cleanName] ||
-    Object.entries(CLUB_CREST_MAP).find(([k]) => cleanName.includes(k))?.[1];
-
-  const isNation =
-    Boolean(nationStyle) ||
-    [
-      "대한민국",
-      "브라질",
-      "네덜란드",
-      "잉글랜드",
-      "프랑스",
-      "우루과이",
-      "벨기에",
-      "모로코",
-      "독일",
-      "스페인",
-      "포르투갈",
-      "아르헨티나",
-      "이탈리아",
-    ].includes(cleanName);
-
-  const resolvedLogo = getTeamColorLogoUrl(
-    cleanName,
-    isNation ? "국가대표" : "소속 클럽"
-  );
-
-  const badgeCode =
-    nationStyle?.code ||
-    clubStyle?.code ||
-    cleanName
-      .replace(/[^A-Za-z가-힣0-9]/g, "")
-      .slice(0, 2)
-      .toUpperCase();
-
-  const crestBg =
-    nationStyle?.bg ||
-    clubStyle?.bg ||
-    (isNation ? "bg-rose-600 text-white" : "bg-blue-600 text-white");
-
-  return (
-    <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-100 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-800 text-xs">
-      {resolvedLogo && !imgErr ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={resolvedLogo}
-          alt={cleanName}
-          referrerPolicy="no-referrer"
-          onError={() => setImgErr(true)}
-          className="w-4 h-4 object-contain rounded-xs shrink-0"
-        />
-      ) : (
-        <span
-          className={`inline-flex items-center justify-center rounded px-1 py-0.5 text-[9px] font-mono font-extrabold leading-none tracking-tighter shrink-0 ${crestBg}`}
-        >
-          {isNation ? (
-            <Flag className="w-2.5 h-2.5 mr-0.5 inline" />
-          ) : (
-            <Trophy className="w-2.5 h-2.5 mr-0.5 inline" />
-          )}
-          {badgeCode}
-        </span>
-      )}
-      <span className="font-bold text-slate-800 dark:text-slate-100">
-        {cleanName}
-      </span>
-      {count !== undefined && (
-        <span className="text-[11px] font-mono text-cyan-600 dark:text-cyan-400 font-bold">
-          {count}명{bonus ? ` (${bonus.replace("전체 능력치 ", "")})` : ""}
-        </span>
-      )}
-    </span>
-  );
+function getPosTextColor(pos: string): string {
+  const p = (pos || "").toUpperCase();
+  if (["ST", "CF", "LW", "RW", "LF", "RF"].includes(p)) return "text-rose-400";
+  if (["CAM", "CM", "CDM", "LM", "RM"].includes(p)) return "text-emerald-400";
+  if (["CB", "LB", "RB", "LWB", "RWB", "SW"].includes(p)) return "text-sky-400";
+  return "text-amber-400";
 }
 
 function getPosHeaderBarClass(pos: string): string {
@@ -700,31 +463,83 @@ function getPosHeaderBarClass(pos: string): string {
   return "bg-gradient-to-r from-amber-500 to-amber-400 text-slate-950";
 }
 
-function inferPositionFromPitchCoords(
-  x: number,
-  y: number,
-  currentSlotId: string,
-  fallbackPos: string
-): string {
-  if (currentSlotId === "GK" || fallbackPos === "GK" || y >= 84) {
-    return "GK";
+function getCardFrameClass(grade: number): string {
+  if (grade >= 11) {
+    return "from-[#2c194d] via-[#131d36] to-[#090d16] border-cyan-400/90 shadow-[0_0_16px_rgba(34,211,238,0.3)]";
   }
-  if (y <= 29) {
-    if (x < 30) return "LW";
-    if (x > 70) return "RW";
-    if (y <= 18) return "ST";
-    return "CF";
+  if (grade >= 8) {
+    return "from-[#382b12] via-[#1c1917] to-[#0c0a09] border-amber-400/90 shadow-[0_0_14px_rgba(251,191,36,0.28)]";
   }
-  if (y <= 62) {
-    if (x < 28) return y <= 36 ? "LW" : "LM";
-    if (x > 72) return y <= 36 ? "RW" : "RM";
-    if (y <= 38) return "CAM";
-    if (y <= 49) return "CM";
-    return "CDM";
+  if (grade >= 5) {
+    return "from-[#273244] via-[#141c2b] to-[#0b0f17] border-slate-300/80 shadow-lg";
   }
-  if (x < 28) return y <= 68 ? "LWB" : "LB";
-  if (x > 72) return y <= 68 ? "RWB" : "RB";
-  return "CB";
+  return "from-[#1e2636] via-[#111827] to-[#090d16] border-slate-600/80 shadow-md";
+}
+
+function getGradeShieldClass(grade: number): string {
+  if (grade >= 11) {
+    return "bg-gradient-to-b from-fuchsia-400 via-cyan-300 to-emerald-300 text-slate-950 border-white font-black";
+  }
+  if (grade >= 8) {
+    return "bg-gradient-to-b from-amber-300 via-amber-400 to-yellow-600 text-slate-950 border-amber-200 font-black";
+  }
+  if (grade >= 5) {
+    return "bg-gradient-to-b from-slate-200 via-slate-300 to-slate-400 text-slate-950 border-slate-100 font-black";
+  }
+  if (grade >= 2) {
+    return "bg-gradient-to-b from-amber-600 to-amber-800 text-amber-100 border-amber-500 font-bold";
+  }
+  return "bg-slate-800 text-slate-300 border-slate-600 font-bold";
+}
+
+function TeamColorLogoBadge({
+  name,
+  count,
+  bonus,
+  compact = false,
+}: {
+  name: string;
+  count?: number;
+  bonus?: string;
+  compact?: boolean;
+}) {
+  const [imgErr, setImgErr] = useState(false);
+  const cleanName = (name || "").trim();
+  if (!cleanName || cleanName === "단일팀") return null;
+
+  const resolvedLogo = getTeamColorLogoUrl(cleanName);
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-lg bg-slate-100 dark:bg-[#0B1120] border border-slate-200 dark:border-slate-700/80 ${
+        compact ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-1 text-xs"
+      }`}
+    >
+      {resolvedLogo && !imgErr ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={resolvedLogo}
+          alt={cleanName}
+          referrerPolicy="no-referrer"
+          onError={() => setImgErr(true)}
+          className={`${compact ? "w-3.5 h-3.5" : "w-4 h-4"} object-contain rounded-xs shrink-0`}
+        />
+      ) : (
+        <span className="inline-flex items-center justify-center rounded px-1 py-0.5 text-[9px] font-mono font-extrabold leading-none bg-blue-600 text-white shrink-0">
+          <Trophy className="w-2.5 h-2.5 mr-0.5 inline" />
+          {cleanName.slice(0, 2)}
+        </span>
+      )}
+      <span className="font-bold text-slate-800 dark:text-slate-100">
+        {cleanName}
+      </span>
+      {count !== undefined && (
+        <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400 font-bold">
+          {count}명{bonus ? ` (${bonus.replace("전체 능력치 ", "")})` : ""}
+        </span>
+      )}
+    </span>
+  );
 }
 
 interface UnassignedPlayerItem {
@@ -759,7 +574,6 @@ export default function SquadLabView({
   savedSquads,
   externalSlots,
   onRefreshSquads,
-  onInspectPlayerInLab,
 }: SquadLabViewProps) {
   const [squadId, setSquadId] = useState<string>("custom-squad-maker");
   const [squadName, setSquadName] = useState<string>("나만의 커스텀 스쿼드");
@@ -767,12 +581,12 @@ export default function SquadLabView({
     useState<FormationCategory>("4백");
   const [formation, setFormation] = useState<string>("4-2-3-1");
 
-  // [요구사항 1] 목표 보유 예산 선택형 입력: 기본값은 '없음(빈칸)'
+  // [요구사항 2-2] 목표 보유 예산 자율 입력: 기본값은 '설정 안 함(비워둠)'
   const [budgetInput, setBudgetInput] = useState<string>("");
   const [budgetUnit, setBudgetUnit] = useState<number>(100_000_000); // 기본 단위: 억 BP
   const [teamColorBonus, setTeamColorBonus] = useState<number>(0);
 
-  // [요구사항 1] 초기 빈 스쿼드 (기본 강화 등급 8강, spid 0)
+  // 초기 빈 스쿼드 (기본 강화 등급 8강, spid 0)
   const [slots, setSlots] = useState<SquadSlot[]>(() =>
     (FORMATION_LAYOUTS["4-2-3-1"] || []).map((l) => ({
       slot_id: l.slot_id,
@@ -795,31 +609,27 @@ export default function SquadLabView({
   const [evaluating, setEvaluating] = useState<boolean>(false);
   const [saveMessage, setSaveMessage] = useState<string>("");
 
-  // 우측 보조 패널 접기/펴기
   const [showPurchaseAudit, setShowPurchaseAudit] = useState<boolean>(true);
   const [showTacticalRadar, setShowTacticalRadar] = useState<boolean>(false);
 
-  // 드래그 상태
-  const pitchRef = useRef<HTMLDivElement | null>(null);
-  const [draggingSlotId, setDraggingSlotId] = useState<string | null>(null);
-  const dragStartRef = useRef<{
-    slotId: string;
-    startX: number;
-    startY: number;
-    moved: boolean;
-  } | null>(null);
+  // [요구사항 1-1] 드래그 앤 드롭(Drag & Drop) 슬롯 간 스위칭 상태
+  const [dragSourceSlotId, setDragSourceSlotId] = useState<string | null>(null);
+  const [dragOverSlotId, setDragOverSlotId] = useState<string | null>(null);
 
-  // 슬롯 선수 선택 모달(Picker) 상태 (기본 배치 강화 8강)
+  // [요구사항 1-2] 슬롯 클릭 시 선수 검색/교체 모달(상세 필터 포함) 상태
   const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
   const [editingSlotPos, setEditingSlotPos] = useState<string>("ST");
-  const [pickerPosFilter, setPickerPosFilter] = useState<string>("ST");
-  const [pickerSeasonFilter, setPickerSeasonFilter] = useState<string>("ALL");
+  const [modalQuery, setModalQuery] = useState<string>("");
+  const [isModalFilterOpen, setIsModalFilterOpen] = useState<boolean>(false);
+  const [modalFilterState, setModalFilterState] = useState<PlayerFilterState>({
+    ...DEFAULT_PLAYER_FILTER_STATE,
+    grade: 8,
+    adaptBonus: 0,
+  });
   const [pickerSort, setPickerSort] = useState<string>("ovr_desc");
-  const [pickerSearch, setPickerSearch] = useState<string>("");
   const [pickerCards, setPickerCards] = useState<PlayerCard[]>([]);
   const [pickerLoading, setPickerLoading] = useState<boolean>(false);
   const [pickerError, setPickerError] = useState<string | null>(null);
-  const [pickerGrade, setPickerGrade] = useState<number>(8);
 
   const [duplicateConfirm, setDuplicateConfirm] = useState<{
     card: PlayerCard;
@@ -831,7 +641,7 @@ export default function SquadLabView({
   const dynamicEnhanceLevels = useMemo(
     () =>
       Array.from(
-        { length: Math.max(1, rules.maxEnhanceLevel) },
+        { length: Math.max(13, rules.maxEnhanceLevel || 13) },
         (_, i) => i + 1
       ),
     [rules.maxEnhanceLevel]
@@ -874,6 +684,9 @@ export default function SquadLabView({
       });
     }
   }, [externalSlots, formation]);
+
+  // 표준 급여 상한선 270 고정
+  const activeSalaryCap = 270;
 
   const evaluateCurrentSquad = useCallback(
     async (
@@ -919,13 +732,12 @@ export default function SquadLabView({
   );
 
   useEffect(() => {
-    if (draggingSlotId) return;
     const timer = setTimeout(() => {
       evaluateCurrentSquad(
         slots,
         formation,
         budgetBp,
-        rules.salaryCap,
+        activeSalaryCap,
         teamColorBonus
       );
     }, 0);
@@ -934,10 +746,10 @@ export default function SquadLabView({
     evaluationTriggerKey,
     formation,
     budgetBp,
-    rules.salaryCap,
+    activeSalaryCap,
     teamColorBonus,
-    draggingSlotId,
     evaluateCurrentSquad,
+    slots,
   ]);
 
   const evalMap = useMemo(
@@ -947,8 +759,44 @@ export default function SquadLabView({
   );
 
   /**
-   * [요구사항 2] 포메이션 변경 시 각 포지션 슬롯의 피치 위 좌표(x, y)가 자연스럽게 재배치되고,
-   * 기존 등록된 선수들이 최대한 맞는 포지션에 유지되도록 스마트 매칭 수행
+   * [요구사항 1-1] 두 슬롯 간 선수 즉시 위치 맞교환(Switching)
+   * 빈 슬롯으로 드래그 시 해당 포지션으로 이동하며, 이미 선수가 있는 슬롯으로 드래그 시 두 선수가 서로 자리를 바꿉니다.
+   */
+  const handleSwapSlots = useCallback(
+    (sourceSlotId: string, targetSlotId: string) => {
+      if (!sourceSlotId || !targetSlotId || sourceSlotId === targetSlotId) {
+        return;
+      }
+      setSlots((prev) => {
+        const srcSlot = prev.find((s) => s.slot_id === sourceSlotId);
+        const tgtSlot = prev.find((s) => s.slot_id === targetSlotId);
+        if (!srcSlot || !tgtSlot) return prev;
+        if (!srcSlot.spid && !tgtSlot.spid) return prev;
+
+        return prev.map((s) => {
+          if (s.slot_id === sourceSlotId) {
+            return {
+              ...s,
+              spid: tgtSlot.spid || 0,
+              grade: tgtSlot.spid ? tgtSlot.grade || 8 : 8,
+            };
+          }
+          if (s.slot_id === targetSlotId) {
+            return {
+              ...s,
+              spid: srcSlot.spid || 0,
+              grade: srcSlot.spid ? srcSlot.grade || 8 : 8,
+            };
+          }
+          return s;
+        });
+      });
+    },
+    []
+  );
+
+  /**
+   * [요구사항 2-1] 포메이션 변경 시 기존 선수를 새 전술 포지션에 맞춰 자동 재배치
    */
   const handleChangeFormation = (newFmt: string) => {
     if (newFmt === formation) return;
@@ -961,7 +809,6 @@ export default function SquadLabView({
       unassigned: [...unassignedPlayers],
     });
 
-    // 현재 배치된 선수 목록 복사
     const activeOldSlots = slots.filter((s) => s.spid > 0);
     const usedOldSlotIds = new Set<string>();
     const assignedNewSlots = new Map<
@@ -969,7 +816,7 @@ export default function SquadLabView({
       { spid: number; grade: number }
     >();
 
-    // 1단계: 동일한 slot_id가 있으면 최우선 매칭
+    // 1단계: 동일한 slot_id 매칭
     for (const newSlot of targetLayout) {
       const exactIdMatch = activeOldSlots.find(
         (old) =>
@@ -1001,7 +848,7 @@ export default function SquadLabView({
       }
     }
 
-    // 3단계: 호환 포지션 우선순위 매칭 (예: LW -> LM, CDM -> CM, LB -> LWB 등)
+    // 3단계: 호환 포지션 우선순위 매칭
     for (const newSlot of targetLayout) {
       if (assignedNewSlots.has(newSlot.slot_id)) continue;
       const compatList =
@@ -1023,7 +870,7 @@ export default function SquadLabView({
       }
     }
 
-    // 4단계: 그래도 남은 선수가 있다면 남은 빈 필드 슬롯에 순서대로 유지 배치
+    // 4단계: 남은 선수 순서대로 배치
     for (const newSlot of targetLayout) {
       if (assignedNewSlots.has(newSlot.slot_id)) continue;
       const remainingOld = activeOldSlots.find(
@@ -1050,7 +897,6 @@ export default function SquadLabView({
       };
     });
 
-    // 카테고리 동기화
     for (const [cat, fmts] of Object.entries(FORMATION_CATEGORIES)) {
       if (fmts.includes(newFmt)) {
         setFormationCategory(cat as FormationCategory);
@@ -1091,24 +937,6 @@ export default function SquadLabView({
     setFormationNotice(null);
   };
 
-  const handleResetPitchPositions = () => {
-    const defaultLayout =
-      FORMATION_LAYOUTS[formation] || FORMATION_LAYOUTS["4-2-3-1"];
-    setSlots((prev) =>
-      prev.map((s) => {
-        const def = defaultLayout.find((l) => l.slot_id === s.slot_id);
-        return def
-          ? {
-              ...s,
-              slot_position: def.slot_position,
-              x: def.x,
-              y: def.y,
-            }
-          : s;
-      })
-    );
-  };
-
   const handleSaveSquad = async () => {
     setSaveMessage("저장 중...");
     try {
@@ -1120,7 +948,7 @@ export default function SquadLabView({
           name: squadName,
           formation,
           budget_bp: budgetBp,
-          salary_cap: rules.salaryCap,
+          salary_cap: activeSalaryCap,
           team_color_name: `팀컬러 +${teamColorBonus}`,
           team_color_bonus: teamColorBonus,
           slots,
@@ -1138,24 +966,29 @@ export default function SquadLabView({
     }
   };
 
-  const fetchPickerPlayers = useCallback(
-    async (opts: {
-      query: string;
-      positionFilter: string;
-      seasonFilter: string;
-      sort: string;
-      forceCrawl?: boolean;
-    }) => {
+  /**
+   * [요구사항 1-2] 상세 필터(PlayerSearchFilter)와 연동된 선수 검색 모달 데이터 조회
+   */
+  const executeModalSearch = useCallback(
+    async (
+      qText: string,
+      fState: PlayerFilterState,
+      forceCrawl = true
+    ) => {
       setPickerLoading(true);
       setPickerError(null);
       try {
-        const params = new URLSearchParams({
-          q: opts.query.trim(),
-          position: opts.positionFilter || "ALL",
-          season: opts.seasonFilter || "ALL",
-          sort: opts.sort || "ovr_desc",
-        });
-        if (opts.forceCrawl && opts.query.trim()) {
+        const params = new URLSearchParams();
+        if (qText.trim()) {
+          params.set("q", qText.trim());
+        }
+        appendFilterParamsToUrl(params, fState);
+        if (
+          forceCrawl ||
+          qText.trim() ||
+          fState.seasons.length > 0 ||
+          fState.teamColors.length > 0
+        ) {
           params.set("crawl", "1");
         }
         const res = await fetch(
@@ -1165,10 +998,11 @@ export default function SquadLabView({
           throw new Error(`선수 검색 요청 실패 (HTTP ${res.status})`);
         }
         const data = await res.json();
-        if (!data.ok) {
-          throw new Error(data.error || "선수 검색 중 오류가 발생했습니다.");
-        }
-        setPickerCards(data.cards || []);
+        const rawItems: PlayerCard[] = data.items || data.cards || [];
+        const filtered = rawItems.filter((c) =>
+          matchesPlayerFilter(c, fState, rules.enhanceOvrBoosts)
+        );
+        setPickerCards(filtered);
       } catch (err) {
         setPickerError(
           err instanceof Error
@@ -1180,73 +1014,25 @@ export default function SquadLabView({
         setPickerLoading(false);
       }
     },
-    []
+    [rules.enhanceOvrBoosts]
   );
 
   const openSlotPicker = async (slotId: string, pos: string) => {
     const existingSlot = slots.find((s) => s.slot_id === slotId);
     const initialGrade = existingSlot?.grade || 8;
+    const nextFilter: PlayerFilterState = {
+      ...DEFAULT_PLAYER_FILTER_STATE,
+      position: pos,
+      grade: initialGrade,
+      adaptBonus: 0,
+    };
     setEditingSlotId(slotId);
     setEditingSlotPos(pos);
-    setPickerPosFilter(pos);
-    setPickerGrade(initialGrade);
+    setModalQuery("");
+    setModalFilterState(nextFilter);
     setDuplicateConfirm(null);
 
-    await fetchPickerPlayers({
-      query: pickerSearch,
-      positionFilter: pos,
-      seasonFilter: pickerSeasonFilter,
-      sort: pickerSort,
-      forceCrawl: false,
-    });
-  };
-
-  const searchInPicker = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setDuplicateConfirm(null);
-    await fetchPickerPlayers({
-      query: pickerSearch,
-      positionFilter: pickerPosFilter,
-      seasonFilter: pickerSeasonFilter,
-      sort: pickerSort,
-      forceCrawl: false,
-    });
-  };
-
-  const handlePositionFilterChange = async (newPosFilter: string) => {
-    setPickerPosFilter(newPosFilter);
-    setDuplicateConfirm(null);
-    await fetchPickerPlayers({
-      query: pickerSearch,
-      positionFilter: newPosFilter,
-      seasonFilter: pickerSeasonFilter,
-      sort: pickerSort,
-      forceCrawl: false,
-    });
-  };
-
-  const handleSeasonFilterChange = async (newSeasonFilter: string) => {
-    setPickerSeasonFilter(newSeasonFilter);
-    setDuplicateConfirm(null);
-    await fetchPickerPlayers({
-      query: pickerSearch,
-      positionFilter: pickerPosFilter,
-      seasonFilter: newSeasonFilter,
-      sort: pickerSort,
-      forceCrawl: false,
-    });
-  };
-
-  const handleSortChange = async (newSort: string) => {
-    setPickerSort(newSort);
-    setDuplicateConfirm(null);
-    await fetchPickerPlayers({
-      query: pickerSearch,
-      positionFilter: pickerPosFilter,
-      seasonFilter: pickerSeasonFilter,
-      sort: newSort,
-      forceCrawl: false,
-    });
+    await executeModalSearch("", nextFilter, false);
   };
 
   const unassignSlot = (slotId: string, moveToHolding = true) => {
@@ -1347,69 +1133,6 @@ export default function SquadLabView({
     );
   };
 
-  const handleSlotPointerDown = (
-    e: React.PointerEvent<HTMLDivElement>,
-    slotId: string
-  ) => {
-    const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase();
-    if (
-      targetTag === "select" ||
-      targetTag === "option" ||
-      targetTag === "button"
-    ) {
-      return;
-    }
-    e.currentTarget.setPointerCapture(e.pointerId);
-    dragStartRef.current = {
-      slotId,
-      startX: e.clientX,
-      startY: e.clientY,
-      moved: false,
-    };
-    setDraggingSlotId(slotId);
-  };
-
-  const handlePitchPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragStartRef.current || !pitchRef.current) return;
-    const { slotId, startX, startY } = dragStartRef.current;
-    const dx = Math.abs(e.clientX - startX);
-    const dy = Math.abs(e.clientY - startY);
-    if (dx < 5 && dy < 5 && !dragStartRef.current.moved) {
-      return;
-    }
-    dragStartRef.current.moved = true;
-
-    const rect = pitchRef.current.getBoundingClientRect();
-    const relX = ((e.clientX - rect.left) / rect.width) * 100;
-    const relY = ((e.clientY - rect.top) / rect.height) * 100;
-    const clampedX = Math.max(9, Math.min(91, Math.round(relX * 10) / 10));
-    const clampedY = Math.max(9, Math.min(92, Math.round(relY * 10) / 10));
-
-    setSlots((prev) =>
-      prev.map((s) => {
-        if (s.slot_id !== slotId) return s;
-        const inferredPos = inferPositionFromPitchCoords(
-          clampedX,
-          clampedY,
-          s.slot_id,
-          s.slot_position
-        );
-        return {
-          ...s,
-          x: clampedX,
-          y: clampedY,
-          slot_position: inferredPos,
-        };
-      })
-    );
-  };
-
-  const handlePitchPointerUp = () => {
-    if (!dragStartRef.current) return;
-    dragStartRef.current = null;
-    setDraggingSlotId(null);
-  };
-
   const defaultLayoutCoords =
     FORMATION_LAYOUTS[formation] || FORMATION_LAYOUTS["4-2-3-1"];
 
@@ -1421,8 +1144,8 @@ export default function SquadLabView({
         slot_position: slotObj?.slot_position || def.slot_position,
         spid: slotObj?.spid || 0,
         grade: slotObj?.grade || 8,
-        x: slotObj?.x ?? def.x,
-        y: slotObj?.y ?? def.y,
+        x: def.x,
+        y: def.y,
       };
     });
   }, [defaultLayoutCoords, slots]);
@@ -1433,7 +1156,7 @@ export default function SquadLabView({
   );
   const placedCount = renderedSlots.length - emptySlots.length;
 
-  // 평균 OVR 계산 (코어 점수 완전 대체)
+  // 평균 오버롤(Avg OVR) 계산 ('코어 점수' 미표시)
   const averageOvr = useMemo(() => {
     if (analysis?.avg_ovr && analysis.avg_ovr > 0) {
       return analysis.avg_ovr;
@@ -1444,7 +1167,6 @@ export default function SquadLabView({
     return Number((sum / placedList.length).toFixed(1));
   }, [analysis]);
 
-  // 라인별 평균 OVR (FW / MF / DF)
   const lineAvgOvrs = useMemo(() => {
     const placedList = analysis?.placed_evaluations || [];
     const fw: number[] = [];
@@ -1467,8 +1189,6 @@ export default function SquadLabView({
     };
   }, [analysis]);
 
-  // 급여 및 선택형 예산 계산
-  const activeSalaryCap = rules.salaryCap;
   const currentTotalSalary = analysis?.total_salary || 0;
   const salaryDiff = activeSalaryCap - currentTotalSalary;
   const isSalaryValid = salaryDiff >= 0;
@@ -1481,23 +1201,16 @@ export default function SquadLabView({
   const hasBudgetTarget = budgetBp > 0;
   const bpDiff = hasBudgetTarget ? budgetBp - currentTotalBp : 0;
   const isBudgetValid = !hasBudgetTarget || bpDiff >= 0;
-  const budgetUsagePct = hasBudgetTarget
-    ? Math.min(100, Math.round((currentTotalBp / Math.max(1, budgetBp)) * 100))
-    : 0;
 
-  const availablePickerSeasons = useMemo(() => {
-    const set = new Set<string>();
-    for (const c of pickerCards) {
-      if (c.season_code) set.add(c.season_code);
-    }
-    return Array.from(set).sort();
-  }, [pickerCards]);
+  const pickerGrade = modalFilterState.grade || 8;
 
   const sortedPickerCards = useMemo(() => {
     const list = [...pickerCards];
     const getCardBpForGrade = (c: PlayerCard, g: number) => {
       const gPrice = c.prices?.[String(g)]?.bp;
       if (gPrice && gPrice > 0) return gPrice;
+      if (g === 8 && c.bp_8) return c.bp_8;
+      if (g === 5 && c.bp_5) return c.bp_5;
       return c.bp_1 || 0;
     };
     const boost = getEnhanceOvrBoost(pickerGrade, rules.enhanceOvrBoosts);
@@ -1522,11 +1235,6 @@ export default function SquadLabView({
       list.sort((a, b) => b.salary - a.salary || b.ovr - a.ovr);
     } else if (pickerSort === "ovr_asc") {
       list.sort((a, b) => a.ovr + boost - (b.ovr + boost));
-    } else if (pickerSort === "season_desc") {
-      list.sort(
-        (a, b) =>
-          b.season_code.localeCompare(a.season_code) || b.ovr - a.ovr
-      );
     } else {
       list.sort((a, b) => b.ovr + boost - (a.ovr + boost));
     }
@@ -1541,25 +1249,69 @@ export default function SquadLabView({
     <div className="space-y-6">
       {/* ==================== 상단 스쿼드 메이커 통합 헤더 & 4대 핵심 요약 지표 ==================== */}
       <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-6 shadow-sm space-y-5">
-        {/* 타이틀 & 저장/불러오기/초기화 바 */}
+        {/* 타이틀 · 포메이션 드롭다운 · 저장/불러오기/초기화 바 */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800/80">
           <div className="flex flex-wrap items-center gap-2.5">
-            <span className="text-xs font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+            <span className="text-xs font-extrabold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
               FC ONLINE SQUAD MAKER
             </span>
+            <span className="text-slate-300 dark:text-slate-700">·</span>
             <input
               type="text"
               value={squadName}
               onChange={(e) => setSquadName(e.target.value)}
               placeholder="스쿼드 이름을 입력하세요"
-              className="px-3.5 py-1.5 bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-700/80 rounded-xl text-sm font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-emerald-500 min-w-[220px]"
+              className="px-3.5 py-1.5 bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-700/80 rounded-xl text-sm font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-emerald-500 min-w-[200px]"
             />
+
+            {/* [요구사항 2-1] 전 포메이션 드롭다운 선택기 */}
+            <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-700/80 rounded-xl px-3 py-1.5">
+              <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                포메이션:
+              </span>
+              <select
+                value={formation}
+                onChange={(e) => handleChangeFormation(e.target.value)}
+                className="bg-transparent text-xs font-mono font-extrabold text-emerald-600 dark:text-emerald-400 outline-none cursor-pointer"
+              >
+                <optgroup
+                  label="4백 포메이션 (13종)"
+                  className="bg-white dark:bg-[#0B0F17] text-slate-900 dark:text-slate-100"
+                >
+                  {FORMATION_CATEGORIES["4백"].map((fmt) => (
+                    <option key={fmt} value={fmt}>
+                      {fmt}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup
+                  label="3백 포메이션 (6종)"
+                  className="bg-white dark:bg-[#0B0F17] text-slate-900 dark:text-slate-100"
+                >
+                  {FORMATION_CATEGORIES["3백"].map((fmt) => (
+                    <option key={fmt} value={fmt}>
+                      {fmt}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup
+                  label="5백 포메이션 (5종)"
+                  className="bg-white dark:bg-[#0B0F17] text-slate-900 dark:text-slate-100"
+                >
+                  {FORMATION_CATEGORIES["5백"].map((fmt) => (
+                    <option key={fmt} value={fmt}>
+                      {fmt}
+                    </option>
+                  ))}
+                </optgroup>
+              </select>
+            </div>
+
             <span className="text-xs text-slate-500 dark:text-slate-400">
               선발{" "}
-              <strong className="text-emerald-600 dark:text-emerald-400">
+              <strong className="text-emerald-600 dark:text-emerald-400 font-mono">
                 {placedCount} / 11명
-              </strong>{" "}
-              등록됨
+              </strong>
             </span>
           </div>
 
@@ -1601,8 +1353,8 @@ export default function SquadLabView({
                           slot_position: m?.slot_position || l.slot_position,
                           spid: m?.spid || 0,
                           grade: m?.grade || 8,
-                          x: m?.x ?? l.x,
-                          y: m?.y ?? l.y,
+                          x: l.x,
+                          y: l.y,
                         };
                       });
                       setSlots(loadedSlots);
@@ -1652,15 +1404,63 @@ export default function SquadLabView({
           </div>
         </div>
 
-        {/* [요구사항 1] 상단 4대 요약 지표: 1) 평균 오버롤(OVR) / 2) 총 급여 / 3) 총 스쿼드 가치(BP) & 선택형 예산 / 4) 활성화된 팀컬러(로고 포함) */}
+        {/* [요구사항 2-3] 상단 4대 요약 지표: 1) 총 급여 (현재 급여 / 270) / 2) 평균 오버롤(Avg OVR) / 3) 총 스쿼드 가치(BP) / 4) 활성 팀컬러(구단/국가 로고 포함) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3.5">
-          {/* 1. 평균 오버롤 (평균 OVR) */}
+          {/* 1. 총 급여 (현재 급여 / 270) */}
+          <div
+            className={`p-4 rounded-xl border flex flex-col justify-between ${
+              isSalaryValid
+                ? "bg-slate-50 dark:bg-[#0B0F17] border-slate-200 dark:border-slate-800"
+                : "bg-rose-500/10 border-rose-500/50"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                총 급여 (현재 급여 / 270)
+              </span>
+              <span
+                className={`text-[11px] font-bold ${
+                  isSalaryValid
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : "text-rose-600 dark:text-rose-400"
+                }`}
+              >
+                {isSalaryValid
+                  ? `여유 ${salaryDiff} FP`
+                  : `+${Math.abs(salaryDiff)} 초과`}
+              </span>
+            </div>
+            <div
+              className={`text-2xl font-black font-mono tabular-nums mt-1.5 ${
+                isSalaryValid
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-rose-600 dark:text-rose-400"
+              }`}
+            >
+              {currentTotalSalary}{" "}
+              <span className="text-sm font-bold text-slate-400">
+                / {activeSalaryCap}
+              </span>
+            </div>
+            <div className="mt-2 space-y-1">
+              <div className="h-2 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                <div
+                  style={{ width: `${salaryUsagePct}%` }}
+                  className={`h-full transition-all ${
+                    isSalaryValid ? "bg-emerald-500" : "bg-rose-500"
+                  }`}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* 2. 평균 오버롤 (Avg OVR) */}
           <div className="p-4 rounded-xl bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 flex flex-col justify-between">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
-                평균 오버롤 (평균 OVR)
+                평균 오버롤 (Avg OVR)
               </span>
-              <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-indigo-500/15 text-indigo-600 dark:text-indigo-300">
+              <span className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400">
                 선발 {placedCount}명 기준
               </span>
             </div>
@@ -1692,53 +1492,7 @@ export default function SquadLabView({
             </div>
           </div>
 
-          {/* 2. 총 급여 (현재 급여 / 최대 급여) */}
-          <div
-            className={`p-4 rounded-xl border flex flex-col justify-between ${
-              isSalaryValid
-                ? "bg-slate-50 dark:bg-[#0B0F17] border-slate-200 dark:border-slate-800"
-                : "bg-rose-500/10 border-rose-500/50"
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
-                총 급여 (현재 / 최대 급여)
-              </span>
-              <span
-                className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-                  isSalaryValid
-                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
-                    : "bg-rose-500/20 text-rose-600 dark:text-rose-300"
-                }`}
-              >
-                {isSalaryValid ? `여유 ${salaryDiff} FP` : `+${Math.abs(salaryDiff)} 초과`}
-              </span>
-            </div>
-            <div
-              className={`text-2xl font-black font-mono tabular-nums mt-1.5 ${
-                isSalaryValid
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-rose-600 dark:text-rose-400"
-              }`}
-            >
-              {currentTotalSalary}{" "}
-              <span className="text-sm font-bold text-slate-400">
-                / {activeSalaryCap} FP
-              </span>
-            </div>
-            <div className="mt-2 space-y-1">
-              <div className="h-2 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
-                <div
-                  style={{ width: `${salaryUsagePct}%` }}
-                  className={`h-full transition-all ${
-                    isSalaryValid ? "bg-emerald-500" : "bg-rose-500"
-                  }`}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* 3. 총 스쿼드 가치(BP) & 선택형 목표 보유 예산 */}
+          {/* 3. 총 스쿼드 가치(BP) & 목표 보유 예산 자율 입력 */}
           <div
             className={`p-4 rounded-xl border flex flex-col justify-between ${
               isBudgetValid
@@ -1753,19 +1507,19 @@ export default function SquadLabView({
               </span>
               {hasBudgetTarget ? (
                 <span
-                  className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                  className={`text-[11px] font-bold ${
                     isBudgetValid
-                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
-                      : "bg-rose-500/20 text-rose-600 dark:text-rose-300"
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-rose-600 dark:text-rose-400"
                   }`}
                 >
                   {isBudgetValid
-                    ? `잔여 ${formatBpKorean(bpDiff)}`
-                    : `+${formatBpKorean(Math.abs(bpDiff))} 초과`}
+                    ? `잔여 ${formatBpKorean(bpDiff)} BP`
+                    : `+${formatBpKorean(Math.abs(bpDiff))} BP 초과`}
                 </span>
               ) : (
                 <span className="text-[11px] text-slate-400">
-                  목표 예산: 미설정(자유)
+                  목표 예산: 설정 안 함
                 </span>
               )}
             </div>
@@ -1775,7 +1529,6 @@ export default function SquadLabView({
               <span className="text-xs font-bold text-slate-400">BP</span>
             </div>
 
-            {/* 목표 보유 예산 선택형 직접 입력 */}
             <div className="mt-2 pt-2 border-t border-slate-200/80 dark:border-slate-800 flex items-center gap-1.5">
               <input
                 type="number"
@@ -1783,7 +1536,7 @@ export default function SquadLabView({
                 step="any"
                 value={budgetInput}
                 onChange={(e) => setBudgetInput(e.target.value)}
-                placeholder="목표 예산 입력 (선택)"
+                placeholder="보유 예산 입력 (설정 안 함)"
                 className="w-full px-2.5 py-1 rounded-lg bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-700 text-xs font-mono text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-amber-500"
               />
               <select
@@ -1807,11 +1560,11 @@ export default function SquadLabView({
             </div>
           </div>
 
-          {/* 4. 활성화된 팀컬러 (로고 포함) & 팀컬러 보너스 */}
+          {/* 4. 활성 팀컬러 (구단/국가 로고 포함) */}
           <div className="p-4 rounded-xl bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 flex flex-col justify-between">
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
-                활성화된 팀컬러
+                활성 팀컬러 (구단/국가 로고)
               </span>
               <select
                 value={teamColorBonus}
@@ -1830,7 +1583,7 @@ export default function SquadLabView({
             <div className="mt-2 flex flex-wrap gap-1.5 min-h-[34px] items-center">
               {analysis?.detected_synergies &&
               analysis.detected_synergies.length > 0 ? (
-                analysis.detected_synergies.slice(0, 3).map((syn) => (
+                analysis.detected_synergies.slice(0, 4).map((syn) => (
                   <TeamColorLogoBadge
                     key={syn.name}
                     name={syn.name}
@@ -1840,20 +1593,17 @@ export default function SquadLabView({
                 ))
               ) : (
                 <span className="text-xs text-slate-400">
-                  동일 클럽/국가 선수 3명 이상 배치 시 팀컬러 로고가 자동 활성화됩니다.
+                  동일 클럽/국가 선수 3명 이상 배치 시 공식 구단·국기 로고가 활성화됩니다.
                 </span>
               )}
             </div>
           </div>
         </div>
 
-        {/* ==================== [요구사항 2] FC 온라인 전체 포메이션 선택기 (4백 / 3백 / 5백 총 24종) ==================== */}
-        <div className="pt-2 border-t border-slate-200/80 dark:border-slate-800/80 space-y-2.5">
+        {/* 빠른 포메이션 버튼 바 */}
+        <div className="pt-2 border-t border-slate-200/80 dark:border-slate-800/80 space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-extrabold text-slate-700 dark:text-slate-200">
-                전술 포메이션 선택 (전체 24종)
-              </span>
               <div className="flex items-center gap-1 bg-slate-100 dark:bg-[#0B0F17] p-1 rounded-xl border border-slate-200 dark:border-slate-800">
                 {(["4백", "3백", "5백"] as FormationCategory[]).map((cat) => (
                   <button
@@ -1870,47 +1620,37 @@ export default function SquadLabView({
                   </button>
                 ))}
               </div>
+              <div className="flex flex-wrap gap-1">
+                {FORMATION_CATEGORIES[formationCategory].map((fmt) => {
+                  const isSelected = formation === fmt;
+                  return (
+                    <button
+                      key={fmt}
+                      type="button"
+                      onClick={() => handleChangeFormation(fmt)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold border transition-all cursor-pointer ${
+                        isSelected
+                          ? "bg-emerald-600 text-white border-emerald-500 shadow-xs"
+                          : "bg-slate-50 dark:bg-[#0B0F17] text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-emerald-500/50"
+                      }`}
+                    >
+                      {fmt}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500 dark:text-slate-400">
-                현재 선택:{" "}
-                <strong className="font-mono text-emerald-600 dark:text-emerald-400">
-                  {formation}
-                </strong>
-              </span>
-              {previousSnapshot && (
-                <button
-                  type="button"
-                  onClick={handleRestorePreviousFormation}
-                  className="px-2.5 py-1 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-600 dark:text-sky-300 text-xs font-bold flex items-center gap-1 cursor-pointer"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  이전({previousSnapshot.formation}) 되돌리기
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* 선택된 카테고리의 포메이션 버튼 그리드 */}
-          <div className="flex flex-wrap gap-1.5">
-            {FORMATION_CATEGORIES[formationCategory].map((fmt) => {
-              const isSelected = formation === fmt;
-              return (
-                <button
-                  key={fmt}
-                  type="button"
-                  onClick={() => handleChangeFormation(fmt)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold border transition-all cursor-pointer ${
-                    isSelected
-                      ? "bg-emerald-600 text-white border-emerald-500 shadow-sm"
-                      : "bg-slate-50 dark:bg-[#0B0F17] text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-emerald-500/50"
-                  }`}
-                >
-                  {fmt}
-                </button>
-              );
-            })}
+            {previousSnapshot && (
+              <button
+                type="button"
+                onClick={handleRestorePreviousFormation}
+                className="px-2.5 py-1 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-600 dark:text-sky-300 text-xs font-bold flex items-center gap-1 cursor-pointer"
+              >
+                <RotateCcw className="w-3 h-3" />
+                이전({previousSnapshot.formation}) 되돌리기
+              </button>
+            )}
           </div>
 
           {formationNotice && (
@@ -1937,48 +1677,30 @@ export default function SquadLabView({
               <div>
                 <h2 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
                   전술 피치 보드 ({formation})
-                  <span className="text-[11px] font-medium px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-                    <Move className="w-3 h-3" />
-                    카드 드래그 이동 &amp; 클릭 배치
+                  <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                    · <ArrowLeftRight className="w-3.5 h-3.5 inline" /> 드래그 앤 드롭 위치 스위칭 &amp; 클릭 선수 검색
                   </span>
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  각 슬롯을 클릭해 선수를 등록하고, 카드 하단의 강화별 실시간 시세(BP)와 우측 상단 신규 특성 배지를 확인하세요.
+                  슬롯을 다른 슬롯에 드래그하여 놓으면 두 선수의 위치가 즉시 맞교환되며, 슬롯 클릭 시 상세 필터가 포함된 선수 검색창이 열립니다.
                 </p>
               </div>
-              <div className="flex items-center gap-2 self-end sm:self-auto">
-                {evaluating && (
-                  <span className="text-xs text-emerald-500 font-bold flex items-center gap-1">
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    스쿼드 계산 중
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={handleResetPitchPositions}
-                  className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-[#0B0F17] hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1 whitespace-nowrap cursor-pointer"
-                >
-                  <RotateCcw className="w-3 h-3" />
-                  포지션 좌표 초기화
-                </button>
-              </div>
+              {evaluating && (
+                <span className="text-xs text-emerald-500 font-bold flex items-center gap-1 shrink-0">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  스쿼드 분석 중
+                </span>
+              )}
             </div>
 
-            {/* [요구사항 3] 공식 스쿼드메이커풍 고시인성 피치 & 미니 카드 + 하단 시세 + 측면 신규 특성 아이콘 */}
-            <div
-              ref={pitchRef}
-              onPointerMove={handlePitchPointerMove}
-              onPointerUp={handlePitchPointerUp}
-              onPointerCancel={handlePitchPointerUp}
-              className="relative w-full h-[640px] sm:h-[720px] rounded-2xl overflow-hidden select-none touch-none border-2 border-emerald-800/70 shadow-inner bg-gradient-to-b from-[#0f3823] via-[#12422a] to-[#0d3320]"
-            >
+            {/* [요구사항 1] 공식 스쿼드메이커풍 피치 & 실제 선수 카드 UI + 드래그 앤 드롭 스위칭 */}
+            <div className="relative w-full h-[680px] sm:h-[760px] rounded-2xl overflow-hidden select-none border-2 border-emerald-800/80 shadow-inner bg-gradient-to-b from-[#0d3b24] via-[#11462b] to-[#0a2e1c]">
               {/* 잔디 스트라이프 & 경기장 라인 SVG */}
               <svg
                 viewBox="0 0 600 780"
                 className="absolute inset-0 w-full h-full pointer-events-none"
                 preserveAspectRatio="none"
               >
-                {/* 잔디 가로 줄무늬 */}
                 {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((idx) => (
                   <rect
                     key={idx}
@@ -1986,10 +1708,9 @@ export default function SquadLabView({
                     y={idx * 78}
                     width="600"
                     height="39"
-                    fill="rgba(255, 255, 255, 0.03)"
+                    fill="rgba(255, 255, 255, 0.035)"
                   />
                 ))}
-                {/* 외곽 터치라인 */}
                 <rect
                   x="24"
                   y="20"
@@ -1999,7 +1720,6 @@ export default function SquadLabView({
                   stroke="rgba(255,255,255,0.32)"
                   strokeWidth="2"
                 />
-                {/* 하프라인 & 센터서클 */}
                 <line
                   x1="24"
                   y1="390"
@@ -2017,7 +1737,6 @@ export default function SquadLabView({
                   strokeWidth="2"
                 />
                 <circle cx="300" cy="390" r="4" fill="rgba(255,255,255,0.45)" />
-                {/* 상단 페널티 박스 & 골 에어리어 */}
                 <rect
                   x="150"
                   y="20"
@@ -2036,7 +1755,6 @@ export default function SquadLabView({
                   stroke="rgba(255,255,255,0.32)"
                   strokeWidth="2"
                 />
-                {/* 하단 페널티 박스 & 골 에어리어 */}
                 <rect
                   x="150"
                   y="645"
@@ -2061,156 +1779,241 @@ export default function SquadLabView({
                 const placed = evalMap.get(coord.slot_id);
                 const hasPlayer = coord.spid > 0;
                 const currentGrade = coord.grade || 8;
-                const badgeStyle = getEnhanceBadgeStyle(currentGrade);
-                const isDraggingThis = draggingSlotId === coord.slot_id;
                 const posHeaderClass = getPosHeaderBarClass(coord.slot_position);
+                const posTextColor = getPosTextColor(coord.slot_position);
+                const cardFrameClass = getCardFrameClass(currentGrade);
+                const gradeShieldClass = getGradeShieldClass(currentGrade);
 
-                // 신규 특성(집중훈련/고유 신규 특성) 추출
-                const playerNewTraits: string[] =
+                const isBeingDragged = dragSourceSlotId === coord.slot_id;
+                const isDragTarget =
+                  dragOverSlotId === coord.slot_id &&
+                  dragSourceSlotId !== null &&
+                  dragSourceSlotId !== coord.slot_id;
+
+                // 공식 신규 특성(17종) 추출 및 공식 아이콘 매핑
+                const playerNewTraits: { name: string; icon: string }[] = (
                   placed?.new_traits && placed.new_traits.length > 0
                     ? placed.new_traits
                     : (placed?.traits || [])
                         .map((t) => t.name)
-                        .filter((n) => Boolean(NEW_TRAITS_CONFIG[n]));
+                        .filter((n) => Boolean(OFFICIAL_NEW_TRAIT_ICON_MAP[n]))
+                ).map((ntName) => {
+                  const fromCard = (placed?.traits || []).find(
+                    (t) => t.name === ntName
+                  );
+                  return {
+                    name: ntName,
+                    icon:
+                      fromCard?.icon ||
+                      OFFICIAL_NEW_TRAIT_ICON_MAP[ntName] ||
+                      "",
+                  };
+                });
 
                 return (
                   <div
                     key={coord.slot_id}
-                    onPointerDown={(e) =>
-                      handleSlotPointerDown(e, coord.slot_id)
-                    }
+                    draggable
+                    onDragStart={(e) => {
+                      setDragSourceSlotId(coord.slot_id);
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/plain", coord.slot_id);
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      if (dragOverSlotId !== coord.slot_id) {
+                        setDragOverSlotId(coord.slot_id);
+                      }
+                    }}
+                    onDragEnter={(e) => {
+                      e.preventDefault();
+                      setDragOverSlotId(coord.slot_id);
+                    }}
+                    onDragLeave={() => {
+                      if (dragOverSlotId === coord.slot_id) {
+                        setDragOverSlotId(null);
+                      }
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const srcId =
+                        dragSourceSlotId ||
+                        e.dataTransfer.getData("text/plain");
+                      if (srcId && srcId !== coord.slot_id) {
+                        handleSwapSlots(srcId, coord.slot_id);
+                      }
+                      setDragSourceSlotId(null);
+                      setDragOverSlotId(null);
+                    }}
+                    onDragEnd={() => {
+                      setDragSourceSlotId(null);
+                      setDragOverSlotId(null);
+                    }}
                     style={{
                       left: `${coord.x}%`,
                       top: `${coord.y}%`,
                       transform: "translate(-50%, -50%)",
                     }}
-                    className={`absolute transition-transform ${
-                      isDraggingThis
-                        ? "z-30 scale-105 cursor-grabbing"
-                        : "z-10 hover:z-20 cursor-grab"
+                    className={`absolute transition-all ${
+                      isBeingDragged
+                        ? "z-30 opacity-60 scale-95 cursor-grabbing"
+                        : isDragTarget
+                        ? "z-30 scale-110 ring-4 ring-emerald-400 rounded-xl"
+                        : "z-10 hover:z-25 cursor-grab"
                     }`}
                   >
+                    {/* 드래그 타겟 오버레이 힌트 */}
+                    {isDragTarget && (
+                      <div className="absolute -top-6 left-1/2 -translate-x-1/2 z-40 px-2 py-0.5 rounded bg-emerald-500 text-slate-950 text-[10px] font-extrabold whitespace-nowrap shadow-lg pointer-events-none">
+                        {hasPlayer ? "⇄ 선수 스위칭" : "여기로 이동"}
+                      </div>
+                    )}
+
                     {hasPlayer ? (
-                      <div className="relative flex flex-col items-center">
-                        {/* [요구사항 3-3] 선수 카드 바로 옆(우측 상단 측면) 신규 특성 전용 아이콘 배지 */}
-                        {playerNewTraits.length > 0 && (
-                          <div className="absolute -right-3 -top-2 z-20 flex flex-col gap-1">
-                            {playerNewTraits.slice(0, 2).map((ntName) => {
-                              const ntCfg = NEW_TRAITS_CONFIG[ntName] || {
-                                shortLabel: ntName,
-                                Icon: Sparkles,
-                                bgClass: "bg-indigo-950/95",
-                                borderClass: "border-indigo-400/80",
-                                iconColor: "text-indigo-300",
-                              };
-                              const TraitIcon = ntCfg.Icon;
-                              return (
-                                <div
-                                  key={ntName}
-                                  title={`신규 특성: ${ntName}`}
-                                  className={`group/trait flex items-center gap-1 px-1.5 py-0.5 rounded-full border shadow-md ${ntCfg.bgClass} ${ntCfg.borderClass}`}
-                                >
-                                  <TraitIcon
-                                    className={`w-3 h-3 shrink-0 ${ntCfg.iconColor}`}
-                                  />
-                                  <span className="text-[9px] font-extrabold text-white whitespace-nowrap hidden sm:inline">
-                                    {ntCfg.shortLabel}
-                                  </span>
-                                </div>
+                      <div className="relative flex flex-col items-center group">
+                        {/* [요구사항 1-3] 호버/상단 미니 컨트롤 바: 강화 단계(1~13강) 즉시 변경 & 제거(✕) 버튼 (클릭 이벤트 충돌 방지) */}
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          className="mb-1 px-1.5 py-0.5 rounded-lg bg-slate-950/95 border border-slate-700 shadow-lg flex items-center gap-1 opacity-95 group-hover:opacity-100 transition-opacity z-20"
+                        >
+                          <select
+                            value={currentGrade}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              updateSlotGrade(
+                                coord.slot_id,
+                                Number(e.target.value)
                               );
-                            })}
-                          </div>
-                        )}
-
-                        {/* [요구사항 3-1] 공식 스쿼드메이커풍 선수 미니 카드 그래픽 */}
-                        <div className="w-[104px] sm:w-[118px] rounded-xl bg-gradient-to-b from-[#1A2436] via-[#111827] to-[#0B0F17] border border-slate-600/80 hover:border-emerald-400 shadow-xl overflow-hidden transition-colors">
-                          {/* 상단 포지션 · OVR · 해제(X) 바 */}
-                          <div
-                            className={`px-2 py-0.5 flex items-center justify-between text-[11px] font-mono font-black ${posHeaderClass}`}
-                          >
-                            <span>{coord.slot_position}</span>
-                            <div className="flex items-center gap-1">
-                              <span>{placed ? placed.ovr : "..."}</span>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  unassignSlot(coord.slot_id, true);
-                                }}
-                                title="슬롯 비우기"
-                                className="ml-0.5 p-0.5 rounded hover:bg-black/25 text-white/90 hover:text-white cursor-pointer"
-                              >
-                                <X className="w-2.5 h-2.5" />
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* 중단: 미니 페이스온 + 좌측 시즌/강화 배지 */}
-                          <div
-                            onClick={() => {
-                              if (dragStartRef.current?.moved) return;
-                              openSlotPicker(coord.slot_id, coord.slot_position);
                             }}
-                            className="relative px-2 pt-1.5 pb-1 flex items-center gap-1.5 cursor-pointer"
+                            aria-label={`${coord.slot_position} 강화 단계 선택`}
+                            className={`rounded px-1 py-0.2 text-[10px] font-mono border outline-none cursor-pointer ${gradeShieldClass}`}
                           >
-                            <PlayerAvatar
-                              src={placed?.thumb_url}
-                              spid={coord.spid}
-                              name={placed?.name || `선수 #${coord.spid}`}
-                              className="w-10 h-10 sm:w-11 sm:h-11 rounded-lg bg-slate-900/90 border border-slate-700/70 p-0.5 shrink-0"
-                            />
-                            <div className="min-w-0 flex-1 flex flex-col items-start gap-1">
-                              {placed && (
-                                <SeasonBadge
-                                  seasonCode={placed.season_code}
-                                  seasonImg={placed.season_img}
-                                  className="h-3.5"
-                                />
-                              )}
-                              {/* 강화 단계 즉시 변경 셀렉트 */}
-                              <select
-                                value={currentGrade}
-                                onClick={(e) => e.stopPropagation()}
-                                onChange={(e) =>
-                                  updateSlotGrade(
-                                    coord.slot_id,
-                                    Number(e.target.value)
-                                  )
-                                }
-                                className={`rounded px-1 py-0.5 text-[10px] font-mono border focus:outline-none cursor-pointer ${badgeStyle.className}`}
+                            {dynamicEnhanceLevels.map((g) => (
+                              <option
+                                key={g}
+                                value={g}
+                                className="bg-[#0B0F17] text-slate-100 font-bold"
                               >
-                                {dynamicEnhanceLevels.map((g) => (
-                                  <option
-                                    key={g}
-                                    value={g}
-                                    className="bg-[#0B0F17] text-slate-100"
-                                  >
-                                    +{g}강
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          </div>
+                                +{g}강
+                              </option>
+                            ))}
+                          </select>
 
-                          {/* 하단: 선수명 & 급여(FP) */}
-                          <div
-                            onClick={() => {
-                              if (dragStartRef.current?.moved) return;
-                              openSlotPicker(coord.slot_id, coord.slot_position);
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              unassignSlot(coord.slot_id, true);
                             }}
-                            className="px-2 py-1 bg-[#090D15] border-t border-slate-800 flex items-center justify-between gap-1 cursor-pointer"
+                            title="선수 제거"
+                            className="w-4 h-4 rounded bg-rose-500/20 hover:bg-rose-600 text-rose-300 hover:text-white flex items-center justify-center text-[10px] font-black transition-colors cursor-pointer"
                           >
-                            <span className="text-[11px] font-extrabold text-white truncate">
-                              {placed?.name || "불러오는 중"}
-                            </span>
-                            <span className="px-1 py-0.2 rounded bg-slate-800 text-[9px] font-mono font-bold text-sky-300 shrink-0">
-                              {placed ? `${placed.salary}` : "-"}
-                            </span>
-                          </div>
+                            ✕
+                          </button>
                         </div>
 
-                        {/* [요구사항 3-2] 선수 카드 바로 밑 현재 시세(예: 25억 BP) 배지 */}
-                        <div className="mt-1 px-2.5 py-0.5 rounded-full bg-black/85 border border-amber-500/40 shadow-md flex items-center gap-1">
+                        {/* 카드 본체 + 우측 신규 특성 아이콘 영역 */}
+                        <div className="relative flex items-center">
+                          {/* [요구사항 1-3] 실제 FC 온라인 선수 카드 디자인 */}
+                          <div
+                            onClick={() =>
+                              openSlotPicker(coord.slot_id, coord.slot_position)
+                            }
+                            title="클릭하여 선수 교체 / 드래그하여 다른 슬롯과 위치 스위칭"
+                            className={`w-[98px] sm:w-[110px] rounded-xl bg-gradient-to-b ${cardFrameClass} border-2 hover:border-emerald-400 overflow-hidden transition-all cursor-pointer select-none`}
+                          >
+                            {/* 카드 상단+중단: 좌측(OVR/포지션/시즌아이콘) + 우측(선수 액션/헤드샷 이미지 & 강화단계/급여) */}
+                            <div className="relative h-[66px] sm:h-[72px] px-1.5 pt-1 flex justify-between">
+                              {/* 좌측 스펙 컬럼 */}
+                              <div className="z-10 flex flex-col items-start leading-none">
+                                <span className="text-sm sm:text-base font-black font-mono text-white tracking-tighter drop-shadow">
+                                  {placed ? placed.ovr : "..."}
+                                </span>
+                                <span
+                                  className={`text-[10px] font-mono font-extrabold tracking-tight mt-0.5 ${posTextColor}`}
+                                >
+                                  {coord.slot_position}
+                                </span>
+                                {placed && (
+                                  <div className="mt-1">
+                                    <SeasonBadge
+                                      seasonCode={placed.season_code}
+                                      seasonImg={placed.season_img}
+                                      className="h-3.5"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* 중앙~우측 선수 액션/헤드샷 이미지 */}
+                              <div className="absolute right-1 bottom-0 w-14 h-14 sm:w-16 sm:h-16 pointer-events-none flex items-end justify-end">
+                                <PlayerAvatar
+                                  src={placed?.thumb_url}
+                                  spid={coord.spid}
+                                  name={placed?.name || `선수 #${coord.spid}`}
+                                  className="w-14 h-14 sm:w-16 sm:h-16 object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,0.85)]"
+                                />
+                              </div>
+
+                              {/* 우측 상단 강화 배지 (1~13강) */}
+                              <div className="z-10 flex flex-col items-end justify-between pb-1">
+                                <span
+                                  className={`px-1 py-0.2 rounded text-[10px] font-mono leading-tight border shadow-xs ${gradeShieldClass}`}
+                                >
+                                  +{currentGrade}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* 카드 하단 네임플레이트: 시즌 아이콘 + 선수명 + 급여 */}
+                            <div className="px-1.5 py-1 bg-slate-950/95 border-t border-white/15 flex items-center justify-between gap-1">
+                              <span className="text-[11px] font-extrabold text-white truncate">
+                                {placed?.name || "불러오는 중"}
+                              </span>
+                              <span className="px-1 py-0.2 rounded bg-slate-800 border border-slate-700 text-[9px] font-mono font-extrabold text-sky-300 shrink-0">
+                                {placed ? placed.salary : "-"}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* [요구사항 1-3] 카드 우측 옆 보유 신규 특성 공식 아이콘 표시 */}
+                          {playerNewTraits.length > 0 && (
+                            <div className="absolute -right-7 top-1/2 -translate-y-1/2 z-20 flex flex-col gap-1">
+                              {playerNewTraits.slice(0, 3).map((nt) => (
+                                <div
+                                  key={nt.name}
+                                  title={`신규 특성: ${nt.name}`}
+                                  className="w-6 h-6 rounded-full bg-slate-950/95 border border-amber-400/80 shadow-md flex items-center justify-center p-0.5"
+                                >
+                                  {nt.icon ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img
+                                      src={nt.icon}
+                                      alt={nt.name}
+                                      referrerPolicy="no-referrer"
+                                      className="w-4 h-4 object-contain"
+                                    />
+                                  ) : (
+                                    <span className="text-[8px] font-bold text-amber-300">
+                                      {nt.name.slice(0, 1)}
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* [요구사항 1-3] 카드 바로 하단 해당 강화 단계 현재 시세(예: 420억 BP) 표시 */}
+                        <div
+                          onClick={() =>
+                            openSlotPicker(coord.slot_id, coord.slot_position)
+                          }
+                          className="mt-1 px-2 py-0.5 rounded bg-slate-950/90 border border-amber-500/45 shadow-md flex items-center gap-1 cursor-pointer"
+                        >
                           <span className="text-[10px] font-mono font-extrabold text-amber-300 whitespace-nowrap">
                             {placed?.bp_text
                               ? `${placed.bp_text} BP`
@@ -2221,14 +2024,13 @@ export default function SquadLabView({
                         </div>
                       </div>
                     ) : (
-                      /* 빈 포지션 슬롯 (초기 빈 스쿼드 상태) */
+                      /* 빈 포지션 슬롯 (클릭 시 해당 포지션 필터가 적용된 선수 검색 모달 오픈) */
                       <button
                         type="button"
-                        onClick={() => {
-                          if (dragStartRef.current?.moved) return;
-                          openSlotPicker(coord.slot_id, coord.slot_position);
-                        }}
-                        className="w-[96px] sm:w-[108px] rounded-xl bg-[#0B131E]/85 hover:bg-[#111C2D] border-2 border-dashed border-white/30 hover:border-emerald-400 p-2 text-center shadow-lg transition-all group cursor-pointer"
+                        onClick={() =>
+                          openSlotPicker(coord.slot_id, coord.slot_position)
+                        }
+                        className="w-[92px] sm:w-[104px] rounded-xl bg-[#0B131E]/85 hover:bg-[#111C2D] border-2 border-dashed border-white/35 hover:border-emerald-400 p-2 text-center shadow-lg transition-all group cursor-pointer"
                       >
                         <div
                           className={`inline-block px-2 py-0.5 rounded text-[10px] font-mono font-extrabold mb-1 ${posHeaderClass}`}
@@ -2239,7 +2041,7 @@ export default function SquadLabView({
                           <UserPlus className="w-3.5 h-3.5 text-emerald-300" />
                         </div>
                         <div className="text-[10px] font-bold text-slate-200 group-hover:text-emerald-300">
-                          선수 등록
+                          선수 추가
                         </div>
                       </button>
                     )}
@@ -2249,7 +2051,7 @@ export default function SquadLabView({
             </div>
           </div>
 
-          {/* 선발 11인 포지션 한눈에 관리 리스트 (코어 점수 제거 -> OVR · 급여 · 시세 · 신규 특성 표시) */}
+          {/* 선발 11인 포지션 명단 빠른 편집 */}
           <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-sm space-y-3">
             <div className="flex items-center justify-between">
               <div>
@@ -2257,7 +2059,7 @@ export default function SquadLabView({
                   선발 11인 명단 빠른 편집
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  포지션 역할 변경, 강화 단계(+1~+{rules.maxEnhanceLevel}강) 조절, 선수 교체 및 해제를 빠르게 수행합니다.
+                  강화 단계(1~13강) 조절, 선수 교체 및 제거를 한눈에 관리합니다.
                 </p>
               </div>
               <span className="text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400">
@@ -2310,7 +2112,12 @@ export default function SquadLabView({
                       </select>
 
                       {hasPlayer ? (
-                        <div className="min-w-0">
+                        <div
+                          onClick={() =>
+                            openSlotPicker(slot.slot_id, slot.slot_position)
+                          }
+                          className="min-w-0 cursor-pointer"
+                        >
                           <div className="flex items-center gap-1.5">
                             {placed && (
                               <SeasonBadge
@@ -2329,9 +2136,15 @@ export default function SquadLabView({
                           </div>
                         </div>
                       ) : (
-                        <span className="text-xs text-slate-400 font-medium">
-                          빈 슬롯 ({slot.slot_position})
-                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openSlotPicker(slot.slot_id, slot.slot_position)
+                          }
+                          className="text-xs text-slate-400 hover:text-emerald-400 font-medium cursor-pointer"
+                        >
+                          빈 슬롯 ({slot.slot_position}) - 클릭하여 추가
+                        </button>
                       )}
                     </div>
 
@@ -2366,14 +2179,14 @@ export default function SquadLabView({
                         }
                         className="px-2.5 py-1 rounded-lg bg-emerald-600/15 hover:bg-emerald-600/25 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs font-bold whitespace-nowrap cursor-pointer"
                       >
-                        {hasPlayer ? "교체" : "등록"}
+                        {hasPlayer ? "교체" : "추가"}
                       </button>
 
                       {hasPlayer && (
                         <button
                           type="button"
                           onClick={() => unassignSlot(slot.slot_id, true)}
-                          title="배치 해제"
+                          title="선수 제거"
                           className="p-1 rounded-lg bg-slate-200 dark:bg-slate-800 hover:bg-rose-500/20 text-slate-500 hover:text-rose-500 cursor-pointer"
                         >
                           <X className="w-3.5 h-3.5" />
@@ -2387,7 +2200,7 @@ export default function SquadLabView({
           </div>
         </div>
 
-        {/* 우측 (5 cols): 스쿼드 구매 점검 리포트 & 급여/예산 맞춤 추천 */}
+        {/* 우측 (5 cols): 동일 팀컬러 엄격 제한 급여 절감 / 가성비 대체 카드 제안 & 스쿼드 구매 점검 리포트 */}
         <div className="lg:col-span-5 space-y-6">
           {/* 임시 보관함이 있을 때 표시 */}
           {unassignedPlayers.length > 0 && (
@@ -2458,24 +2271,176 @@ export default function SquadLabView({
                 <UserPlus className="w-6 h-6 text-emerald-500" />
               </div>
               <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
-                피치 위 포지션 슬롯을 클릭해 선수를 등록해보세요
+                피치 위 포지션 슬롯을 클릭해 선수를 추가해보세요
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                선수를 1명 이상 배치하면 <strong>평균 OVR, 총 급여, 총 스쿼드 가치(BP), 활성 팀컬러 로고</strong>와 함께 <strong>재판매 수수료 손실 및 30일 시세 저점/고점 진단 리포트</strong>가 실시간으로 표시됩니다.
+                선수를 1명 이상 배치하면 <strong>총 급여(현재/270), 평균 OVR, 총 스쿼드 가치(BP), 활성 팀컬러 로고</strong>와 함께 <strong>동일 팀컬러 기반 급여 절감 / 가성비 대체 카드 제안</strong>이 실시간으로 표시됩니다.
               </p>
             </div>
           )}
 
-          {/* 스쿼드 구매 점검 리포트 (선수가 1명 이상 배치된 경우) */}
-          {placedCount > 0 && analysis?.purchaseAudit && (
-            <div className="bg-white dark:bg-[#111827] border border-emerald-500/40 rounded-2xl p-5 space-y-4 shadow-sm">
-              <div className="flex items-start justify-between gap-2 pb-3 border-b border-slate-200 dark:border-slate-800">
-                <div>
+          {/* [요구사항 3] 동일 팀컬러 엄격 제한 급여 절감 / 가성비 대체 카드 제안 */}
+          {placedCount > 0 &&
+            analysis?.purchaseAudit &&
+            analysis.purchaseAudit.overinvestedPositions.length > 0 && (
+              <div className="bg-white dark:bg-[#111827] border border-emerald-500/40 rounded-2xl p-5 space-y-4 shadow-sm">
+                <div className="pb-3 border-b border-slate-200 dark:border-slate-800">
                   <span className="text-[11px] font-mono uppercase tracking-wider text-emerald-600 dark:text-emerald-400 font-bold">
-                    SQUAD PURCHASE &amp; SALARY AUDIT
+                    SAME TEAM COLOR ALTERNATIVES
                   </span>
                   <h3 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white mt-0.5">
-                    🔍 이 스쿼드, 지금 사도 될까? (구매 시점 &amp; 급여 리포트)
+                    급여 절감 / 가성비 대체 카드 제안 (동일 팀컬러 · 동포지션)
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    현재 스쿼드에서 해당 선수가 받고 있는 실제 팀컬러(소속 클럽 또는 국가)와 동일한 팀컬러를 보유한 동포지션 선수만 엄격하게 추천합니다.
+                  </p>
+                </div>
+
+                <div className="space-y-3.5">
+                  {analysis.purchaseAudit.overinvestedPositions.map((warn) => {
+                    const activeTcs = (
+                      warn.currentPlayer.activeTeamColors || []
+                    ).filter((tc) => tc && tc !== "단일팀");
+
+                    return (
+                      <div
+                        key={`${warn.slotId}-${warn.currentPlayer.spid}`}
+                        className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 space-y-2.5"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`text-xs font-mono font-extrabold ${getPositionToneClass(
+                                warn.slotPosition
+                              )}`}
+                            >
+                              [{warn.slotPosition}]
+                            </span>
+                            <SeasonBadge
+                              seasonCode={warn.currentPlayer.seasonCode}
+                              seasonImg={warn.currentPlayer.seasonImg}
+                            />
+                            <span className="text-xs font-extrabold text-slate-900 dark:text-white">
+                              {warn.currentPlayer.name} (+
+                              {warn.currentPlayer.grade}강 · 급여{" "}
+                              {warn.currentPlayer.salary})
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1">
+                            {activeTcs.slice(0, 2).map((tcName) => (
+                              <TeamColorLogoBadge
+                                key={tcName}
+                                name={tcName}
+                                compact
+                              />
+                            ))}
+                          </div>
+                        </div>
+
+                        <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+                          {warn.warningReason}
+                        </p>
+
+                        <div className="space-y-2 pt-1">
+                          {warn.recommendedAlternatives.map((alt) => {
+                            const altGrade =
+                              alt.grade || warn.currentPlayer.grade || 8;
+                            const sharedTcs = (
+                              alt.sharedTeamColors &&
+                              alt.sharedTeamColors.length > 0
+                                ? alt.sharedTeamColors
+                                : alt.sharedTeamColor
+                                ? [alt.sharedTeamColor]
+                                : activeTcs
+                            ).filter((tc) => tc && tc !== "단일팀");
+                            const salDiff =
+                              alt.salary !== undefined
+                                ? warn.currentPlayer.salary - alt.salary
+                                : 0;
+
+                            return (
+                              <div
+                                key={`${warn.slotId}-alt-${alt.spid}`}
+                                className="p-2.5 rounded-xl bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2"
+                              >
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <PlayerAvatar
+                                    src={alt.thumbUrl}
+                                    spid={alt.spid}
+                                    name={alt.name}
+                                    className="w-9 h-9 shrink-0"
+                                  />
+                                  <div className="min-w-0 space-y-1">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <SeasonBadge
+                                        seasonCode={alt.season}
+                                        seasonImg={alt.seasonImg}
+                                      />
+                                      <span className="text-xs font-extrabold text-slate-900 dark:text-white truncate">
+                                        {alt.name} (+{altGrade}강)
+                                      </span>
+                                      {sharedTcs.slice(0, 2).map((tc) => (
+                                        <TeamColorLogoBadge
+                                          key={tc}
+                                          name={tc}
+                                          compact
+                                        />
+                                      ))}
+                                    </div>
+                                    <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
+                                      {alt.ovr ? (
+                                        <span>OVR {alt.ovr}</span>
+                                      ) : null}
+                                      {alt.salary !== undefined ? (
+                                        <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                                          급여 {alt.salary}
+                                          {salDiff > 0
+                                            ? ` (-${salDiff} 절감)`
+                                            : ""}
+                                        </span>
+                                      ) : null}
+                                      <span className="text-amber-600 dark:text-amber-400 font-bold">
+                                        {alt.bpText ||
+                                          formatBpKorean(alt.bp || 0)}{" "}
+                                        BP
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    commitAssignCardToSlot(
+                                      warn.slotId,
+                                      alt.spid,
+                                      altGrade
+                                    )
+                                  }
+                                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shrink-0 cursor-pointer"
+                                >
+                                  즉시 교체
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+          {/* 스쿼드 구매 시점 & 재판매 수수료 점검 리포트 */}
+          {placedCount > 0 && analysis?.purchaseAudit && (
+            <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 shadow-sm">
+              <div className="flex items-start justify-between gap-2 pb-3 border-b border-slate-200 dark:border-slate-800">
+                <div>
+                  <span className="text-[11px] font-mono uppercase tracking-wider text-slate-500 dark:text-slate-400 font-bold">
+                    SQUAD PURCHASE &amp; FEE AUDIT
+                  </span>
+                  <h3 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white mt-0.5">
+                    스쿼드 재판매 수수료 및 30일 시세 위치 점검
                   </h3>
                 </div>
                 <button
@@ -2492,7 +2457,6 @@ export default function SquadLabView({
                 </button>
               </div>
 
-              {/* 핵심 요약 바 (항상 표시) */}
               <div className="px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-xs">
                 <span className="font-bold text-slate-800 dark:text-slate-200">
                   {analysis.purchaseAudit.buyTimingSummaryLabel}
@@ -2504,11 +2468,10 @@ export default function SquadLabView({
 
               {showPurchaseAudit && (
                 <div className="space-y-4">
-                  {/* 1) 재판매 수수료 손실 비교 */}
                   <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 space-y-2.5">
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-bold text-slate-800 dark:text-slate-200">
-                        1) 재판매 시 예상 수수료 손실 비교
+                        재판매 시 예상 수수료 손실 비교
                       </span>
                       <span className="font-mono font-bold text-amber-600 dark:text-amber-400">
                         총 {formatBpKorean(analysis.purchaseAudit.totalBp)} BP
@@ -2546,11 +2509,10 @@ export default function SquadLabView({
                     </div>
                   </div>
 
-                  {/* 2) 선수별 30일 시세 위치 진단 */}
                   <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 space-y-2">
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-bold text-slate-800 dark:text-slate-200">
-                        2) 선수별 최근 30일 시세 위치 (저점 🟢 / 고점 🔴)
+                        선수별 최근 30일 시세 위치 (저점 / 고점)
                       </span>
                     </div>
                     <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
@@ -2566,10 +2528,10 @@ export default function SquadLabView({
                             ? "bg-rose-500"
                             : "bg-amber-400";
                           const verdictBadgeText = isLow
-                            ? "매수 적기 🟢"
+                            ? "매수 적기"
                             : isHigh
-                            ? "고점 주의 🔴"
-                            : "중립 🟡";
+                            ? "고점 주의"
+                            : "중립";
                           return (
                             <div
                               key={`${item.slotId}-${item.spid}`}
@@ -2613,88 +2575,12 @@ export default function SquadLabView({
                       )}
                     </div>
                   </div>
-
-                  {/* 3) 급여 과투자 포지션 경고 및 대체재 제안 */}
-                  {analysis.purchaseAudit.overinvestedPositions.length > 0 && (
-                    <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 space-y-2.5">
-                      <div className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                        3) 급여 절감 &amp; 체감 유지 대체 카드 제안
-                      </div>
-                      {analysis.purchaseAudit.overinvestedPositions.map(
-                        (warn) => (
-                          <div
-                            key={`${warn.slotId}-${warn.currentPlayer.spid}`}
-                            className="p-3 rounded-lg bg-white dark:bg-[#111827] border border-amber-500/40 space-y-2"
-                          >
-                            <div className="text-xs font-bold text-slate-900 dark:text-white">
-                              [{warn.slotPosition}] {warn.currentPlayer.name} (급여{" "}
-                              {warn.currentPlayer.salary} FP)
-                            </div>
-                            <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
-                              {warn.warningReason}
-                            </p>
-                            <div className="space-y-1.5 pt-1">
-                              {warn.recommendedAlternatives.map((alt) => {
-                                const altGrade =
-                                  alt.grade || warn.currentPlayer.grade || 8;
-                                return (
-                                  <div
-                                    key={`${warn.slotId}-alt-${alt.spid}`}
-                                    className="p-2 rounded-lg bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2"
-                                  >
-                                    <div className="flex items-center gap-2 min-w-0">
-                                      <PlayerAvatar
-                                        src={alt.thumbUrl}
-                                        spid={alt.spid}
-                                        name={alt.name}
-                                        className="w-7 h-7"
-                                      />
-                                      <div className="min-w-0">
-                                        <div className="flex items-center gap-1">
-                                          <SeasonBadge
-                                            seasonCode={alt.season}
-                                            seasonImg={alt.seasonImg}
-                                          />
-                                          <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                                            {alt.name} (+{altGrade}강)
-                                          </span>
-                                        </div>
-                                        <div className="text-[10px] font-mono text-slate-500">
-                                          체감 {alt.feelScore}점 ·{" "}
-                                          {alt.bpText ||
-                                            formatBpKorean(alt.bp || 0)}{" "}
-                                          BP
-                                        </div>
-                                      </div>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        commitAssignCardToSlot(
-                                          warn.slotId,
-                                          alt.spid,
-                                          altGrade
-                                        )
-                                      }
-                                      className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold shrink-0 cursor-pointer"
-                                    >
-                                      즉시 교체
-                                    </button>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )
-                      )}
-                    </div>
-                  )}
                 </div>
               )}
             </div>
           )}
 
-          {/* 스쿼드 6각형 밸런스 (접기/펴기 지원) */}
+          {/* 스쿼드 6각형 밸런스 */}
           {placedCount > 0 && analysis && (
             <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-3">
               <div className="flex items-center justify-between">
@@ -2728,10 +2614,19 @@ export default function SquadLabView({
         </div>
       </div>
 
-      {/* ==================== 슬롯 선수 검색 및 배치 모달 (Picker Modal) ==================== */}
+      {/* ==================== [요구사항 1-2] 슬롯 클릭 시 오픈되는 선수 검색/교체 모달 (공통 상세 필터 포함) ==================== */}
       {editingSlotId && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-2 sm:p-4">
-          <div className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden shadow-2xl">
+        <div
+          onClick={() => {
+            setDuplicateConfirm(null);
+            setEditingSlotId(null);
+          }}
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-2 sm:p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden shadow-2xl"
+          >
             {/* 모달 헤더 */}
             <div className="px-4 sm:px-5 py-3.5 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-50 dark:bg-[#0E1422]">
               <div className="flex flex-wrap items-center gap-2.5">
@@ -2743,32 +2638,10 @@ export default function SquadLabView({
                   슬롯: {editingSlotId} ({editingSlotPos})
                 </span>
                 <h3 className="text-sm font-extrabold text-slate-900 dark:text-slate-100">
-                  포지션 선수 검색 및 등록
+                  {currentlyPlacedInEditingSlot
+                    ? `${currentlyPlacedInEditingSlot.name} 선수 교체 / 변경`
+                    : `${editingSlotPos} 포지션 선수 검색 및 추가`}
                 </h3>
-
-                <div className="flex items-center gap-1.5 text-xs bg-white dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1">
-                  <span className="text-slate-500 dark:text-slate-400">
-                    강화 단계:
-                  </span>
-                  <select
-                    value={pickerGrade}
-                    onChange={(e) => setPickerGrade(Number(e.target.value))}
-                    className={`rounded px-1.5 py-0.5 text-xs font-mono border outline-none cursor-pointer ${
-                      getEnhanceBadgeStyle(pickerGrade).className
-                    }`}
-                  >
-                    {dynamicEnhanceLevels.map((g) => (
-                      <option
-                        key={g}
-                        value={g}
-                        className="bg-[#0B0F17] text-slate-100"
-                      >
-                        +{g}강 (+
-                        {getEnhanceOvrBoost(g, rules.enhanceOvrBoosts)} OVR)
-                      </option>
-                    ))}
-                  </select>
-                </div>
               </div>
 
               <div className="flex items-center gap-2">
@@ -2782,7 +2655,7 @@ export default function SquadLabView({
                     className="px-2.5 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-xs text-rose-600 dark:text-rose-300 font-bold flex items-center gap-1 cursor-pointer"
                   >
                     <X className="w-3.5 h-3.5" />
-                    현재 배치({currentlyPlacedInEditingSlot.name}) 해제
+                    현재 배치({currentlyPlacedInEditingSlot.name}) 제거
                   </button>
                 )}
                 <button
@@ -2798,98 +2671,100 @@ export default function SquadLabView({
               </div>
             </div>
 
-            {/* 모달 검색 및 필터 컨트롤 */}
-            <div className="p-4 space-y-3 border-b border-slate-200 dark:border-slate-800/80 bg-white dark:bg-[#111827]">
+            {/* 공통 상세 필터 컴포넌트 (PlayerSearchFilter) 연동 */}
+            <div className="p-4 border-b border-slate-200 dark:border-slate-800/80 bg-white dark:bg-[#111827] max-h-[52vh] overflow-y-auto space-y-3">
               <form
-                onSubmit={searchInPicker}
-                className="flex flex-col sm:flex-row gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  setDuplicateConfirm(null);
+                  executeModalSearch(modalQuery, modalFilterState, true);
+                }}
+                className="flex flex-wrap sm:flex-nowrap items-center gap-2"
               >
-                <div className="relative flex-1">
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <div className="relative flex-1 min-w-[200px]">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
-                    value={pickerSearch}
-                    onChange={(e) => setPickerSearch(e.target.value)}
-                    placeholder={`선수 이름 검색 (예: 손흥민, 로드리, 굴리트, 벨링엄...)`}
-                    className="w-full pl-8 pr-8 py-2 bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-700/80 focus:border-emerald-500 rounded-xl text-xs text-slate-900 dark:text-slate-100 outline-none"
+                    value={modalQuery}
+                    onChange={(e) => setModalQuery(e.target.value)}
+                    placeholder={`[${editingSlotPos}] 배치할 선수 이름 검색 (예: 벨링엄, 손흥민, 호나우두, 굴리트...)`}
+                    className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-50 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-700/80 text-xs sm:text-sm font-medium text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-emerald-500"
                   />
-                  {pickerSearch && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPickerSearch("");
-                        fetchPickerPlayers({
-                          query: "",
-                          positionFilter: pickerPosFilter,
-                          seasonFilter: pickerSeasonFilter,
-                          sort: pickerSort,
-                          forceCrawl: false,
-                        });
-                      }}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 cursor-pointer"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  )}
                 </div>
-
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="submit"
-                    disabled={pickerLoading}
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
-                  >
-                    <Search className="w-3.5 h-3.5" />
-                    선수 검색
-                  </button>
-                  {pickerSearch.trim().length > 0 && (
-                    <button
-                      type="button"
-                      disabled={pickerLoading}
-                      onClick={() =>
-                        fetchPickerPlayers({
-                          query: pickerSearch,
-                          positionFilter: pickerPosFilter,
-                          seasonFilter: pickerSeasonFilter,
-                          sort: pickerSort,
-                          forceCrawl: true,
-                        })
-                      }
-                      className="px-3 py-2 bg-slate-100 dark:bg-[#0B0F17] hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 text-emerald-600 dark:text-emerald-300 text-xs font-bold rounded-xl flex items-center gap-1 whitespace-nowrap cursor-pointer"
-                    >
-                      <RefreshCw
-                        className={`w-3.5 h-3.5 ${
-                          pickerLoading ? "animate-spin" : ""
-                        }`}
-                      />
-                      실시간 크롤링
-                    </button>
-                  )}
-                </div>
+                <button
+                  type="submit"
+                  disabled={pickerLoading}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer"
+                >
+                  <Search className="w-3.5 h-3.5" />
+                  선수 검색
+                </button>
+                <PlayerSearchFilterToggleButton
+                  isOpen={isModalFilterOpen}
+                  onToggle={() => setIsModalFilterOpen((prev) => !prev)}
+                  filter={modalFilterState}
+                />
               </form>
 
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-1">
+              <PlayerSearchFilter
+                isOpen={isModalFilterOpen}
+                filter={modalFilterState}
+                onChange={(nextState) => {
+                  setModalFilterState(nextState);
+                }}
+                onApply={(nextState) => {
+                  const targetFilter = nextState || modalFilterState;
+                  setModalFilterState(targetFilter);
+                  setDuplicateConfirm(null);
+                  executeModalSearch(modalQuery, targetFilter, true);
+                }}
+                onReset={() => {
+                  const resetState: PlayerFilterState = {
+                    ...DEFAULT_PLAYER_FILTER_STATE,
+                    position: editingSlotPos,
+                    grade: 8,
+                    adaptBonus: 0,
+                  };
+                  setModalFilterState(resetState);
+                  setDuplicateConfirm(null);
+                  executeModalSearch(modalQuery, resetState, false);
+                }}
+                maxEnhanceLevel={rules.maxEnhanceLevel || 13}
+              />
+
+              {/* 빠른 포지션 전환 & 정렬 바 */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1 mr-1">
-                    <Filter className="w-3 h-3 text-emerald-500" />
-                    포지션:
-                  </span>
                   <button
                     type="button"
-                    onClick={() => handlePositionFilterChange(editingSlotPos)}
+                    onClick={() => {
+                      const next = {
+                        ...modalFilterState,
+                        position: editingSlotPos,
+                      };
+                      setModalFilterState(next);
+                      executeModalSearch(modalQuery, next, false);
+                    }}
                     className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-colors cursor-pointer ${
-                      pickerPosFilter === editingSlotPos
+                      modalFilterState.position === editingSlotPos
                         ? "bg-emerald-600 text-white"
                         : "bg-slate-100 dark:bg-[#0B0F17] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-800"
                     }`}
                   >
-                    {editingSlotPos} 전용
+                    {editingSlotPos} 포지션만
                   </button>
                   <button
                     type="button"
-                    onClick={() => handlePositionFilterChange("ALL")}
+                    onClick={() => {
+                      const next = {
+                        ...modalFilterState,
+                        position: "ALL",
+                      };
+                      setModalFilterState(next);
+                      executeModalSearch(modalQuery, next, false);
+                    }}
                     className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-colors cursor-pointer ${
-                      pickerPosFilter === "ALL"
+                      modalFilterState.position === "ALL"
                         ? "bg-emerald-600 text-white"
                         : "bg-slate-100 dark:bg-[#0B0F17] text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800"
                     }`}
@@ -2898,25 +2773,37 @@ export default function SquadLabView({
                   </button>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <select
-                    value={pickerSeasonFilter}
-                    onChange={(e) => handleSeasonFilterChange(e.target.value)}
-                    className="bg-slate-100 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1 text-xs font-mono text-slate-800 dark:text-slate-200 outline-none cursor-pointer"
-                  >
-                    <option value="ALL">전체 시즌</option>
-                    {availablePickerSeasons.map((sc) => (
-                      <option key={sc} value={sc}>
-                        {sc} 시즌
-                      </option>
-                    ))}
-                  </select>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 bg-slate-100 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-1">
+                    <span className="text-[11px] text-slate-500">배치 강화:</span>
+                    <select
+                      value={pickerGrade}
+                      onChange={(e) =>
+                        setModalFilterState((prev) => ({
+                          ...prev,
+                          grade: Number(e.target.value),
+                        }))
+                      }
+                      className="bg-transparent text-xs font-mono font-bold text-amber-500 outline-none cursor-pointer"
+                    >
+                      {dynamicEnhanceLevels.map((g) => (
+                        <option
+                          key={g}
+                          value={g}
+                          className="bg-[#0B0F17] text-slate-100"
+                        >
+                          +{g}강 (+
+                          {getEnhanceOvrBoost(g, rules.enhanceOvrBoosts)} OVR)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
                   <div className="flex items-center gap-1 bg-slate-100 dark:bg-[#0B0F17] border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-1">
                     <ArrowUpDown className="w-3 h-3 text-emerald-500" />
                     <select
                       value={pickerSort}
-                      onChange={(e) => handleSortChange(e.target.value)}
+                      onChange={(e) => setPickerSort(e.target.value)}
                       className="bg-transparent text-xs font-mono font-bold text-emerald-600 dark:text-emerald-300 outline-none cursor-pointer"
                     >
                       <option value="ovr_desc" className="bg-[#0B0F17]">
@@ -2952,7 +2839,7 @@ export default function SquadLabView({
                       </div>
                       <p className="mt-0.5 text-slate-700 dark:text-amber-200/90">
                         이미 [{duplicateConfirm.conflictSlotId} (
-                        {duplicateConfirm.conflictPosition})] 슬롯에 등록되어 있습니다. 위치를 맞교환하시겠습니까?
+                        {duplicateConfirm.conflictPosition})] 슬롯에 등록되어 있습니다. 두 슬롯의 위치를 맞교환하시겠습니까?
                       </p>
                     </div>
                   </div>
@@ -2990,7 +2877,7 @@ export default function SquadLabView({
                 <div className="p-12 text-center space-y-2">
                   <RefreshCw className="w-6 h-6 text-emerald-500 animate-spin mx-auto" />
                   <div className="text-xs font-bold text-slate-600 dark:text-slate-300">
-                    선수 목록을 불러오고 있습니다...
+                    FC 온라인 데이터센터에서 선수 목록을 불러오고 있습니다...
                   </div>
                 </div>
               ) : pickerError ? (
@@ -3005,120 +2892,102 @@ export default function SquadLabView({
                   <div className="text-sm font-bold text-slate-700 dark:text-slate-300">
                     조건에 해당하는 선수가 없습니다.
                   </div>
-                  <div className="flex flex-wrap items-center justify-center gap-2">
-                    {pickerPosFilter !== "ALL" && (
-                      <button
-                        type="button"
-                        onClick={() => handlePositionFilterChange("ALL")}
-                        className="px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer"
-                      >
-                        전체 포지션(ALL)으로 보기
-                      </button>
-                    )}
-                    {pickerSearch.trim().length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          fetchPickerPlayers({
-                            query: pickerSearch,
-                            positionFilter: pickerPosFilter,
-                            seasonFilter: "ALL",
-                            sort: pickerSort,
-                            forceCrawl: true,
-                          })
-                        }
-                        className="px-3 py-1.5 rounded-lg bg-emerald-600 text-xs text-white font-bold cursor-pointer"
-                      >
-                        &ldquo;{pickerSearch}&rdquo; 실시간 크롤링
-                      </button>
-                    )}
-                  </div>
+                  <p className="text-xs text-slate-500">
+                    선수 이름을 입력하거나 상세 필터에서 시즌·팀컬러를 선택한 뒤 [선수 검색] 버튼을 눌러보세요.
+                  </p>
                 </div>
               ) : (
                 sortedPickerCards.map((c) => {
-                  const effOvr =
-                    c.ovr +
-                    getEnhanceOvrBoost(pickerGrade, rules.enhanceOvrBoosts);
-                  const gradePriceObj = c.prices?.[String(pickerGrade)];
-                  const priceLabel = gradePriceObj?.text
-                    ? `${gradePriceObj.text} BP`
-                    : c.bp_8 && pickerGrade >= 8
-                    ? `${formatBpKorean(c.bp_8)} BP`
-                    : c.bp_5 && pickerGrade >= 5
-                    ? `${formatBpKorean(c.bp_5)} BP`
-                    : c.bp_1 > 0
-                    ? `${formatBpKorean(c.bp_1)} BP`
-                    : "시세 조회 가능";
-
-                  const conflictSlot = findDuplicateSlot(
-                    editingSlotId,
-                    c.spid,
-                    c.pid
+                  const isAlreadyPlaced = slots.some((s) => s.spid === c.spid);
+                  const isSamePersonInOtherSlot =
+                    !isAlreadyPlaced &&
+                    Boolean(findDuplicateSlot(editingSlotId, c.spid, c.pid));
+                  const boost = getEnhanceOvrBoost(
+                    pickerGrade,
+                    rules.enhanceOvrBoosts
                   );
-                  const isAlreadyInThisSlot =
-                    slots.find((s) => s.slot_id === editingSlotId)?.spid ===
-                    c.spid;
+                  const displayOvr = c.ovr + boost;
+                  const gradePriceObj = c.prices?.[String(pickerGrade)];
+                  const displayBp =
+                    gradePriceObj && gradePriceObj.bp > 0
+                      ? gradePriceObj.bp
+                      : pickerGrade === 8 && c.bp_8
+                      ? c.bp_8
+                      : c.bp_1 || 0;
+                  const badgeStyle = getEnhanceBadgeStyle(pickerGrade);
 
                   return (
                     <div
                       key={c.spid}
-                      className={`px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
-                        isAlreadyInThisSlot
-                          ? "bg-emerald-500/10"
-                          : "hover:bg-slate-100 dark:hover:bg-slate-800/50"
-                      }`}
+                      onClick={() => handleSelectCardInPicker(c, pickerGrade)}
+                      className="p-3 hover:bg-slate-100 dark:hover:bg-[#141D2E] transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer"
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <PlayerAvatar
                           src={c.thumb_url}
                           spid={c.spid}
                           name={c.name}
-                          className="w-11 h-11 shrink-0"
+                          className="w-11 h-11 rounded-xl bg-slate-900 border border-slate-800 p-0.5 shrink-0"
                         />
-                        <div className="min-w-0 space-y-1">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <SeasonBadge
-                              seasonImg={c.season_img}
-                              seasonCode={c.season_code}
-                            />
-                            <span className="text-sm font-extrabold text-slate-900 dark:text-slate-100">
-                              {c.name}
-                            </span>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <span
-                              className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
-                                getEnhanceBadgeStyle(pickerGrade).className
-                              }`}
-                            >
-                              +{pickerGrade}강
-                            </span>
-                            {isAlreadyInThisSlot && (
-                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 flex items-center gap-1">
-                                <CheckCircle2 className="w-3 h-3" />
-                                현재 배치됨
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs font-mono text-slate-600 dark:text-slate-300">
-                            <span
-                              className={`font-bold ${getPositionToneClass(
+                              className={`text-xs font-mono font-bold ${getPositionToneClass(
                                 c.primary_position
                               )}`}
                             >
                               {c.primary_position}
                             </span>
-                            <span>·</span>
-                            <span className="text-emerald-600 dark:text-emerald-400 font-bold">
-                              OVR {effOvr}
+                            <SeasonBadge
+                              seasonImg={c.season_img}
+                              seasonCode={c.season_code}
+                            />
+                            <span className="text-sm font-extrabold text-slate-900 dark:text-slate-100 truncate">
+                              {c.name}
+                            </span>
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-mono border ${badgeStyle.className}`}
+                            >
+                              +{pickerGrade}강
+                            </span>
+                            {isAlreadyPlaced && (
+                              <span className="text-[10px] font-bold text-emerald-500">
+                                · 현재 배치중
+                              </span>
+                            )}
+                            {isSamePersonInOtherSlot && (
+                              <span className="text-[10px] font-bold text-amber-500">
+                                · 타 슬롯 배치중(맞교환 가능)
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-mono mt-1 flex-wrap">
+                            <span>
+                              OVR{" "}
+                              <strong className="text-slate-900 dark:text-white">
+                                {displayOvr}
+                              </strong>
                             </span>
                             <span>·</span>
-                            <span className="text-sky-600 dark:text-sky-300 font-bold">
-                              급여 {c.salary} FP
+                            <span>
+                              급여{" "}
+                              <strong className="text-sky-600 dark:text-sky-400">
+                                {c.salary}
+                              </strong>
                             </span>
                             <span>·</span>
-                            <span className="text-amber-600 dark:text-amber-300 font-bold">
-                              {priceLabel}
+                            <span className="text-amber-600 dark:text-amber-400 font-bold">
+                              {displayBp > 0
+                                ? `${formatBpKorean(displayBp)} BP`
+                                : "시세 조회 가능"}
                             </span>
+                            {c.foot && (
+                              <>
+                                <span>·</span>
+                                <span>양발/약발 {c.foot}</span>
+                              </>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -3126,21 +2995,13 @@ export default function SquadLabView({
                       <div className="flex items-center justify-end gap-2 shrink-0">
                         <button
                           type="button"
-                          onClick={() => onInspectPlayerInLab(c.spid)}
-                          className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSelectCardInPicker(c, pickerGrade);
+                          }}
+                          className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors cursor-pointer"
                         >
-                          상세 정보
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleSelectCardInPicker(c, pickerGrade)
-                          }
-                          className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer"
-                        >
-                          {conflictSlot
-                            ? `위치 이동 (+${pickerGrade}강)`
-                            : `+${pickerGrade}강 등록`}
+                          +{pickerGrade}강 배치
                         </button>
                       </div>
                     </div>
